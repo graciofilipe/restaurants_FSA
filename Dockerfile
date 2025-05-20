@@ -11,7 +11,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application's code from the host to the image's filesystem at /app
-COPY app.py .
+COPY st_app.py .
 
 # Run app.py when the container launches
-ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=$PORT", "--server.address=0.0.0.0"]
+ENTRYPOINT streamlit run st_app.py --server.port=$PORT --server.address=0.0.0.0
