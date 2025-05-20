@@ -1,0 +1,118 @@
+{
+    "?xml": {
+        "@version": "1.0"
+    },
+    "FHRSEstablishment": {
+        "Header": {
+            "#text": "",
+            "ExtractDate": "2025-05-20",
+            "ItemCount": "1116",
+            "ReturnCode": "Success",
+            "PageNumber": "1",
+            "PageSize": "500",
+            "PageCount": "3"
+        },
+        "EstablishmentCollection": {
+            "@xmlns:xsd": "http://www.w3.org/2001/XMLSchema",
+            "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+            "EstablishmentDetail": [
+                {
+                    "FHRSID": "1355210",
+                    "LocalAuthorityBusinessID": "PI/000427717",
+                    "BusinessName": "Rooster N Pizza",
+                    "BusinessType": "Restaurant/Cafe/Canteen",
+                    "BusinessTypeID": "1",
+                    "AddressLine1": "20 South Lodge Avenue",
+                    "AddressLine2": "Mitcham",
+                    "AddressLine3": null,
+                    "AddressLine4": null,
+                    "PostCode": "CR4 1LU",
+                    "RatingValue": "3",
+                    "RatingKey": "fhrs_3_en-gb",
+                    "RightToReply": null,
+                    "RatingDate": "12 September 2024",
+                    "LocalAuthorityCode": "524",
+                    "LocalAuthorityName": "Merton",
+                    "LocalAuthorityWebSite": "http://www.merton.gov.uk",
+                    "LocalAuthorityEmailAddress": "foodandsafety@merton.gov.uk",
+                    "Scores": {
+                        "Hygiene": "10",
+                        "Structural": "10",
+                        "ConfidenceInManagement": "10"
+                    },
+                    "SchemeType": "FHRS",
+                    "NewRatingPending": "false",
+                    "Geocode": {
+                        "Longitude": "-0.132595",
+                        "Latitude": "51.39978"
+                    },
+                    "Distance": "0.0231720768"
+                },
+                {
+                    "FHRSID": "1424397",
+                    "LocalAuthorityBusinessID": "PI/000095014",
+                    "BusinessName": "Ceylin's",
+                    "BusinessType": "Restaurant/Cafe/Canteen",
+                    "BusinessTypeID": "1",
+                    "AddressLine1": "158-160 Chestnut Grove",
+                    "AddressLine2": "Mitcham",
+                    "AddressLine3": null,
+                    "AddressLine4": null,
+                    "PostCode": "CR4 1RB",
+                    "RatingValue": "5",
+                    "RatingKey": "fhrs_5_en-gb",
+                    "RightToReply": null,
+                    "RatingDate": "02 April 2025",
+                    "LocalAuthorityCode": "524",
+                    "LocalAuthorityName": "Merton",
+                    "LocalAuthorityWebSite": "http://www.merton.gov.uk",
+                    "LocalAuthorityEmailAddress": "foodandsafety@merton.gov.uk",
+                    "Scores": {
+                        "Hygiene": "0",
+                        "Structural": "0",
+                        "ConfidenceInManagement": "5"
+                    },
+                    "SchemeType": "FHRS",
+                    "NewRatingPending": "false",
+                    "Geocode": {
+                        "Longitude": "-0.1329721",
+                        "Latitude": "51.3994522"
+                    },
+                    "Distance": "0.03792551"
+                },
+                {
+                    "FHRSID": "1788202",
+                    "LocalAuthorityBusinessID": "PI/000490256",
+                    "BusinessName": "Heat Point",
+                    "BusinessType": "Restaurant/Cafe/Canteen",
+                    "BusinessTypeID": "1",
+                    "AddressLine1": "Unit 1",
+                    "AddressLine2": "20 Totterdown Street",
+                    "AddressLine3": "London",
+                    "AddressLine4": null,
+                    "PostCode": "SW17 8TA",
+                    "RatingValue": "3",
+                    "RatingKey": "fhrs_3_en-gb",
+                    "RightToReply": null,
+                    "RatingDate": "30 January 2025",
+                    "LocalAuthorityCode": "532",
+                    "LocalAuthorityName": "Wandsworth",
+                    "LocalAuthorityWebSite": "http://www.wandsworth.gov.uk",
+                    "LocalAuthorityEmailAddress": "foodandsafety@merton.gov.uk",
+                    "Scores": {
+                        "Hygiene": "10",
+                        "Structural": "5",
+                        "ConfidenceInManagement": "10"
+                    },
+                    "SchemeType": "FHRS",
+                    "NewRatingPending": "false",
+                    "Geocode": {
+                        "Longitude": "-0.164482",
+                        "Latitude": "51.4284935"
+                    },
+                    "Distance": "2.39079213"
+                }
+            ]
+        }
+    }
+}
