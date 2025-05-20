@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import json
+import pandas as pd
 
 # Set the title of the Streamlit app
 st.title("Food Standards Agency API Explorer")
@@ -22,6 +23,15 @@ if st.button("Fetch Data"):
         if response.status_code == 200:
             # Store the JSON response
             data = response.json()
+
+            try:
+                establishments = data['FHRSEstablishment']['EstablishmentCollection']['EstablishmentDetail']
+                df = pd.json_normalize(establishments)
+                st.dataframe(df)
+            except KeyError:
+                st.error("Error: Could not find the expected data structure in the API response.")
+            except TypeError: # Handles cases where establishments might be None if the key path is valid but no data
+                st.warning("No establishment data found in the response, or the data format is unexpected.")
 
             # Display a download button for the JSON data
             st.download_button(
