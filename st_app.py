@@ -154,7 +154,7 @@ if st.button("Fetch Data"):
                         blob_path = os.path.join(blob_name_prefix, file_name)
                         bucket = storage_client.bucket(bucket_name)
                         blob = bucket.blob(blob_path)
-                        blob.upload_from_string(json.dumps(data, indent=4), content_type='application/json')
+                        blob.upload_from_string(json.dumps(restaurants_master_list, indent=4), content_type='application/json')
                         st.success(f"Successfully uploaded raw API data to gs://{bucket_name}/{blob_path}")
                     except Exception as e:
                         st.error(f"Error uploading raw API data to GCS: {e}")
@@ -186,7 +186,7 @@ if st.button("Fetch Data"):
             # Display a download button for the JSON data - uses original 'data' from API
             st.download_button(
                 label="Download JSON Data",
-                data=json.dumps(data, indent=4),
+                data=json.dumps(restaurants_master_list, indent=4),
                 file_name="food_standards_data.json",
                 mime="application/json",
             )
