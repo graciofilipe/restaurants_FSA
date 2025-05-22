@@ -64,7 +64,7 @@ longitude = st.number_input("Enter Longitude", format="%.6f")
 latitude = st.number_input("Enter Latitude", format="%.6f")
 
 # Create an input field for the GCS destination folder URI
-gcs_destination_uri = st.text_input("Enter GCS Destination Folder URI for API Response (e.g., gs://bucket-name/folder-name)")
+gcs_destination_uri = st.text_input("Enter GCS destination folder for the scan (e.g., gs://bucket-name/scans-folder/)")
 
 # Create an input field for the master restaurant list URI
 master_list_uri = st.text_input("Enter Master Restaurant List URI (e.g., gs://bucket/file.json or /path/to/file.json)")
