@@ -67,10 +67,10 @@ latitude = st.number_input("Enter Latitude", format="%.6f")
 gcs_destination_uri = st.text_input("Enter GCS destination folder for the scan (e.g., gs://bucket-name/scans-folder/)")
 
 # Create an input field for the master restaurant list URI
-master_list_uri = st.text_input("Enter Master Restaurant List URI (e.g., gs://bucket/file.json or /path/to/file.json)")
+master_list_uri = st.text_input("Enter Master Restaurant Data URI (JSON) (e.g., gs://bucket/file.json or /path/to/file.json)")
 
-# Create an input field for the GCS destination for the master dictionary
-gcs_master_dictionary_output_uri = st.text_input("Enter GCS URI for Master Dictionary Output (e.g., gs://bucket-name/path/filename.json)")
+# Create an input field for the GCS destination for the master restaurant data
+gcs_master_dictionary_output_uri = st.text_input("Enter GCS URI for Master Restaurant Data Output (e.g., gs://bucket-name/path/filename.json)")
 
 # Create a button to trigger the API call
 if st.button("Fetch Data"):
@@ -86,31 +86,31 @@ if st.button("Fetch Data"):
             # Store the JSON response
             data = response.json()
 
-            # 1.a. Load Master List
-            restaurants_master_list = []
+            # 1.a. Load Master Restaurant Data
+            master_restaurant_data = []
             if master_list_uri:
                 loaded_data = load_json_from_uri(master_list_uri)
                 if loaded_data is not None:
                     if isinstance(loaded_data, list):
-                        restaurants_master_list = loaded_data
-                        if restaurants_master_list:
-                            st.success(f"Successfully loaded master list with {len(restaurants_master_list)} items from {master_list_uri}.")
+                        master_restaurant_data = loaded_data
+                        if master_restaurant_data:
+                            st.success(f"Successfully loaded master restaurant data with {len(master_restaurant_data)} records from {master_list_uri}.")
                         else:
-                            st.warning(f"Master list loaded from {master_list_uri}, but it's an empty list.")
+                            st.warning(f"Master restaurant data loaded from {master_list_uri}, but it's empty.")
                     else:
                         # This case should ideally not happen if load_json_from_uri is robust
                         # and the JSON structure is expected to be a list at the root.
-                        st.warning(f"Data loaded from {master_list_uri} is not a list (type: {type(loaded_data)}). Proceeding with an empty master list.")
-                        restaurants_master_list = []
+                        st.warning(f"Data loaded from {master_list_uri} is not in the expected format (e.g., a list of records). Type found: {type(loaded_data)}. Proceeding with empty master restaurant data.")
+                        master_restaurant_data = []
                 else:
                     # load_json_from_uri handles st.error for specific loading issues.
-                    st.warning(f"Failed to load master list from {master_list_uri} (or it was empty/invalid). Proceeding with an empty master list.")
-                    restaurants_master_list = [] # Ensure it's an empty list on failure
+                    st.warning(f"Failed to load master restaurant data from {master_list_uri} (or it was empty/invalid). Proceeding with empty master restaurant data.")
+                    master_restaurant_data = [] # Ensure it's an empty list on failure
             else:
-                st.info("No master list URI provided. Starting with an empty master list.")
-                restaurants_master_list = [] # Ensure it's an empty list if no URI
+                st.info("No master restaurant data URI provided. Starting with empty master restaurant data.")
+                master_restaurant_data = [] # Ensure it's an empty list if no URI
 
-            # 1.b. Process API Response and Update Master List
+            # 1.b. Process API Response and Update Master Restaurant Data
             api_establishments = data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
             if api_establishments is None: 
                 api_establishments = []
@@ -119,7 +119,7 @@ if st.button("Fetch Data"):
                  st.info("API response contained no establishments in 'EstablishmentDetail'.")
 
 
-            existing_fhrsid_set = {est['FHRSID'] for est in restaurants_master_list if isinstance(est, dict) and 'FHRSID' in est}
+            existing_fhrsid_set = {est['FHRSID'] for est in master_restaurant_data if isinstance(est, dict) and 'FHRSID' in est}
             today_date = datetime.now().strftime("%Y-%m-%d")
             new_restaurants_added_count = 0
 
@@ -127,11 +127,11 @@ if st.button("Fetch Data"):
                 if isinstance(api_establishment, dict) and 'FHRSID' in api_establishment:
                     if api_establishment['FHRSID'] not in existing_fhrsid_set:
                         api_establishment['first_seen'] = today_date
-                        restaurants_master_list.append(api_establishment)
+                        master_restaurant_data.append(api_establishment)
                         existing_fhrsid_set.add(api_establishment['FHRSID']) # Add to set to prevent duplicates from API response itself
                         new_restaurants_added_count += 1
             
-            st.success(f"Processed API response. Added {new_restaurants_added_count} new restaurants. Total unique establishments: {len(restaurants_master_list)}")
+            st.success(f"Processed API response. Added {new_restaurants_added_count} new restaurant records. Total unique records: {len(master_restaurant_data)}")
 
             # 1. Upload Raw API Response to gcs_destination_uri (folder)
             if gcs_destination_uri:
@@ -163,10 +163,10 @@ if st.button("Fetch Data"):
                     except Exception as e:
                         st.error(f"Error uploading raw API response to GCS: {e}")
             
-            # 2. Upload Master Dictionary to gcs_master_dictionary_output_uri (full file path)
+            # 2. Upload Master Restaurant Data to gcs_master_dictionary_output_uri (full file path)
             if gcs_master_dictionary_output_uri:
                 if not gcs_master_dictionary_output_uri.startswith("gs://"):
-                    st.error("Invalid GCS URI for Master Dictionary. It must start with gs://")
+                    st.error("Invalid GCS URI for Master Restaurant Data. It must start with gs://")
                 else:
                     try:
                         storage_client = storage.Client() # Initialize client
@@ -175,39 +175,39 @@ if st.button("Fetch Data"):
                         blob_name_master = "/".join(gcs_master_dictionary_output_uri.split("/")[3:])
 
                         if not blob_name_master: 
-                            st.error("Invalid GCS URI for Master Dictionary: File name is missing.")
+                            st.error("Invalid GCS URI for Master Restaurant Data: File name is missing.")
                         else:
                             bucket_master = storage_client.bucket(bucket_name_master)
                             blob_master = bucket_master.blob(blob_name_master)
                             
-                            blob_master.upload_from_string(json.dumps(restaurants_master_list, indent=4), content_type='application/json')
-                            st.success(f"Successfully uploaded master dictionary to {gcs_master_dictionary_output_uri}")
+                            blob_master.upload_from_string(json.dumps(master_restaurant_data, indent=4), content_type='application/json')
+                            st.success(f"Successfully uploaded master restaurant data to {gcs_master_dictionary_output_uri}")
                     except Exception as e:
-                        st.error(f"Error uploading master dictionary to GCS: {e}")
+                        st.error(f"Error uploading master restaurant data to GCS: {e}")
 
             # DataFrame display logic
             try:
-                if not restaurants_master_list:
-                    st.warning("No establishment data to display (master list is empty after processing).")
+                if not master_restaurant_data:
+                    st.warning("No restaurant data to display (master restaurant data is empty after processing).")
                 else:
                     # Ensure all items are dictionaries before normalization
-                    valid_items_for_df = [item for item in restaurants_master_list if isinstance(item, dict)]
+                    valid_items_for_df = [item for item in master_restaurant_data if isinstance(item, dict)]
                     if not valid_items_for_df:
-                        st.warning("Master list contains no dictionary items, cannot display as table.")
-                    elif len(valid_items_for_df) < len(restaurants_master_list):
-                        st.warning(f"Some items in the master list were not dictionaries and were excluded from the table display. Displaying {len(valid_items_for_df)} items.")
+                        st.warning("Master restaurant data contains no dictionary items, cannot display as table.")
+                    elif len(valid_items_for_df) < len(master_restaurant_data):
+                        st.warning(f"Some items in the master restaurant data were not dictionaries and were excluded from the table display. Displaying {len(valid_items_for_df)} records.")
                         df = pd.json_normalize(valid_items_for_df)
                         st.dataframe(df)
                     else:
-                        df = pd.json_normalize(restaurants_master_list)
+                        df = pd.json_normalize(master_restaurant_data)
                         st.dataframe(df)
             except Exception as e: 
-                st.error(f"Error displaying DataFrame from master list: {e}")
-                st.info("Attempting to show raw master list as JSON.")
+                st.error(f"Error displaying DataFrame from master restaurant data: {e}")
+                st.info("Attempting to show raw master restaurant data as JSON.")
                 try:
-                    st.json(restaurants_master_list)
+                    st.json(master_restaurant_data)
                 except Exception as json_e:
-                    st.error(f"Could not even display master list as JSON: {json_e}")
+                    st.error(f"Could not even display master restaurant data as JSON: {json_e}")
 
         else:
             # Display an error message if the API request fails
