@@ -64,10 +64,13 @@ longitude = st.number_input("Enter Longitude", format="%.6f")
 latitude = st.number_input("Enter Latitude", format="%.6f")
 
 # Create an input field for the GCS destination folder URI
-gcs_destination_uri = st.text_input("Enter GCS Destination Folder URI (e.g., gs://bucket-name/folder-name)")
+gcs_destination_uri = st.text_input("Enter GCS Destination Folder URI for API Response (e.g., gs://bucket-name/folder-name)")
 
 # Create an input field for the master restaurant list URI
 master_list_uri = st.text_input("Enter Master Restaurant List URI (e.g., gs://bucket/file.json or /path/to/file.json)")
+
+# Create an input field for the GCS destination for the master dictionary
+gcs_master_dictionary_output_uri = st.text_input("Enter GCS URI for Master Dictionary Output (e.g., gs://bucket-name/path/filename.json)")
 
 # Create a button to trigger the API call
 if st.button("Fetch Data"):
@@ -130,26 +133,59 @@ if st.button("Fetch Data"):
             
             st.success(f"Processed API response. Added {new_restaurants_added_count} new restaurants. Total unique establishments: {len(restaurants_master_list)}")
 
-            # GCS Upload Logic - uses original 'data' from API
-            if gcs_destination_uri: 
+            # 1. Upload Raw API Response to gcs_destination_uri (folder)
+            if gcs_destination_uri:
                 if not gcs_destination_uri.startswith("gs://"):
-                    st.error("Invalid GCS URI. It must start with gs://")
+                    st.error("Invalid GCS URI for API Response. It must start with gs://")
                 else:
                     try:
+                        storage_client = storage.Client() # Initialize client
                         current_date = datetime.now().strftime("%Y-%m-%d")
-                        file_name = f"food_standards_data_{current_date}.json" # Original API data
-                        storage_client = storage.Client()
-                        bucket_name = gcs_destination_uri.split("/")[2]
-                        blob_name_prefix = "/".join(gcs_destination_uri.split("/")[3:])
-                        blob_path = os.path.join(blob_name_prefix, file_name)
-                        bucket = storage_client.bucket(bucket_name)
-                        blob = bucket.blob(blob_path)
-                        blob.upload_from_string(json.dumps(restaurants_master_list, indent=4), content_type='application/json')
-                        st.success(f"Successfully uploaded raw API data to gs://{bucket_name}/{blob_path}")
+                        api_response_filename = f"api_response_{current_date}.json"
+                        
+                        bucket_name_api = gcs_destination_uri.split("/")[2]
+                        folder_path_api = "/".join(gcs_destination_uri.split("/")[3:])
+                        
+                        # Ensure folder_path_api ends with a slash if it's not empty
+                        if folder_path_api and not folder_path_api.endswith('/'):
+                            folder_path_api += '/'
+                        
+                        # Construct blob_path_api, removing leading slash if folder_path_api was empty
+                        blob_path_api = f"{folder_path_api}{api_response_filename}"
+                        if blob_path_api.startswith('/'): 
+                           blob_path_api = blob_path_api[1:]
+
+                        bucket_api = storage_client.bucket(bucket_name_api)
+                        blob_api = bucket_api.blob(blob_path_api)
+                        
+                        blob_api.upload_from_string(json.dumps(data, indent=4), content_type='application/json')
+                        st.success(f"Successfully uploaded raw API response to gs://{bucket_name_api}/{blob_path_api}")
                     except Exception as e:
-                        st.error(f"Error uploading raw API data to GCS: {e}")
+                        st.error(f"Error uploading raw API response to GCS: {e}")
             
-            # 2. Modify DataFrame Creation - uses 'restaurants_master_list'
+            # 2. Upload Master Dictionary to gcs_master_dictionary_output_uri (full file path)
+            if gcs_master_dictionary_output_uri:
+                if not gcs_master_dictionary_output_uri.startswith("gs://"):
+                    st.error("Invalid GCS URI for Master Dictionary. It must start with gs://")
+                else:
+                    try:
+                        storage_client = storage.Client() # Initialize client
+                        
+                        bucket_name_master = gcs_master_dictionary_output_uri.split("/")[2]
+                        blob_name_master = "/".join(gcs_master_dictionary_output_uri.split("/")[3:])
+
+                        if not blob_name_master: 
+                            st.error("Invalid GCS URI for Master Dictionary: File name is missing.")
+                        else:
+                            bucket_master = storage_client.bucket(bucket_name_master)
+                            blob_master = bucket_master.blob(blob_name_master)
+                            
+                            blob_master.upload_from_string(json.dumps(restaurants_master_list, indent=4), content_type='application/json')
+                            st.success(f"Successfully uploaded master dictionary to {gcs_master_dictionary_output_uri}")
+                    except Exception as e:
+                        st.error(f"Error uploading master dictionary to GCS: {e}")
+
+            # DataFrame display logic
             try:
                 if not restaurants_master_list:
                     st.warning("No establishment data to display (master list is empty after processing).")
