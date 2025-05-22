@@ -88,33 +88,40 @@ if st.button("Fetch Data"):
             if master_list_uri:
                 loaded_master_data = load_json_from_uri(master_list_uri)
                 if loaded_master_data is not None:
-                    if isinstance(loaded_master_data, dict) and \
-                       'FHRSEstablishment' in loaded_master_data and \
-                       'EstablishmentCollection' in loaded_master_data.get('FHRSEstablishment', {}) and \
-                       'EstablishmentDetail' in loaded_master_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}):
-                        restaurants_master_list = loaded_master_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
-                        if not restaurants_master_list: # handles None or empty list from .get
-                             st.warning("Master list loaded but no establishments found within the expected structure (FHRSEstablishment.EstablishmentCollection.EstablishmentDetail).")
-                        else:
-                            st.info(f"Successfully loaded {len(restaurants_master_list)} establishments from master list (structured format).")
-                    elif isinstance(loaded_master_data, list):
+                    if isinstance(loaded_master_data, list):
                         restaurants_master_list = loaded_master_data
-                        if not restaurants_master_list:
-                            st.warning("Master list loaded but it's an empty list.")
+                        if restaurants_master_list:
+                            st.info(f"Successfully loaded master list with {len(restaurants_master_list)} items.")
                         else:
-                            st.info(f"Successfully loaded {len(restaurants_master_list)} establishments from master list (assumed list format).")
-                    else:
-                        st.warning(f"Master list loaded from {master_list_uri} but is not a recognized format (expected a dictionary with FHRSEstablishment structure or a list of establishments). Starting with an empty master list.")
-                        restaurants_master_list = [] 
+                            st.warning("Master list loaded, but it's an empty list.")
+                    elif isinstance(loaded_master_data, dict):
+                        if loaded_master_data: # If dictionary is not empty
+                            found_list_in_dict = False
+                            for value in loaded_master_data.values():
+                                if isinstance(value, list):
+                                    restaurants_master_list = value
+                                    st.info(f"Master list loaded. Found a list with {len(restaurants_master_list)} items within the dictionary.")
+                                    found_list_in_dict = True
+                                    break 
+                            if not found_list_in_dict:
+                                restaurants_master_list = [loaded_master_data]
+                                st.info("Master list loaded. Treating the non-empty dictionary as a single record.")
+                        else: # Empty dictionary
+                            st.warning("Master list loaded, but it's an empty dictionary. Proceeding with an empty master list.")
+                            restaurants_master_list = [] # Ensure it's empty
+                    else: # Not a list or dict (e.g. string, number)
+                        st.warning(f"Master list loaded from {master_list_uri}, but it is not a list or dictionary (type: {type(loaded_master_data)}). Proceeding with an empty master list.")
+                        restaurants_master_list = [] # Ensure it's empty
                 else:
                     # load_json_from_uri already shows an error via st.error
-                    st.warning("Failed to load master list or it was empty. Proceeding with an empty master list.")
-                    restaurants_master_list = []
+                    st.warning("Failed to load master list (it was None or loading failed). Proceeding with an empty master list.")
+                    restaurants_master_list = [] # Ensure it's empty
             else:
                 st.info("No master list URI provided. Starting with an empty master list.")
             
+            # Ensure restaurants_master_list is always a list, even if logic above has a flaw
             if not isinstance(restaurants_master_list, list):
-                st.warning(f"restaurants_master_list was not a list after loading attempts (type: {type(restaurants_master_list)}). Resetting to an empty list.")
+                st.warning(f"restaurants_master_list was unexpectedly not a list (type: {type(restaurants_master_list)} after processing). Resetting to an empty list.")
                 restaurants_master_list = []
 
             # 1.b. Process API Response and Update Master List
