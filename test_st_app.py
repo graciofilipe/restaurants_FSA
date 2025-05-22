@@ -166,7 +166,6 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_st_error = patch('st_app.st.error').start()
         self.mock_st_dataframe = patch('st_app.st.dataframe').start()
         self.mock_st_json = patch('st_app.st.json').start() # For fallback display
-        self.mock_st_download_button = patch('st_app.st.download_button').start()
 
         # Mock external calls
         self.mock_requests_get = patch('st_app.requests.get').start()
@@ -347,14 +346,6 @@ class TestRestaurantMergingLogic(unittest.TestCase):
                 except Exception as e:
                     self.mock_st_error(f"Error uploading raw API data to GCS: {e}")
         
-        # Download button logic - uses 'restaurants_master_list' (as per recent changes to st_app.py)
-        # This logic is taken from st_app.py and adapted for the test helper
-        self.mock_st_download_button(
-            label="Download JSON Data",
-            data=json.dumps(restaurants_master_list, indent=4), # Should use merged list
-            file_name="food_standards_data.json",
-            mime="application/json",
-        )
         
         return restaurants_master_list 
         # --- End of modified logic block ---
@@ -599,7 +590,6 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_gcs_client_instance.reset_mock()
         self.mock_gcs_bucket_instance.reset_mock()
         self.mock_gcs_blob_instance.reset_mock()
-        self.mock_st_download_button.reset_mock()
 
         # Call the helper function that now encapsulates GCS and Download logic
         # This function will internally make the assertions on GCS client calls like bucket() and blob()
@@ -620,16 +610,6 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         # current_date = self.fixed_date.strftime("%Y-%m-%d")
         # expected_blob_name = f"output_folder/food_standards_data_{current_date}.json" 
         # self.mock_gcs_bucket_instance.blob.assert_called_with(expected_blob_name)
-
-
-        # 9. Assert that st.download_button was called once.
-        # 10. Assert that the data keyword argument passed to st.download_button was correct.
-        self.mock_st_download_button.assert_called_once_with(
-            label="Download JSON Data",
-            data=expected_data_json_str,
-            file_name="food_standards_data.json",
-            mime="application/json",
-        )
 
 
 if __name__ == '__main__':

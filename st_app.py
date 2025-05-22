@@ -183,13 +183,6 @@ if st.button("Fetch Data"):
                 except Exception as json_e:
                     st.error(f"Could not even display master list as JSON: {json_e}")
 
-            # Display a download button for the JSON data - uses original 'data' from API
-            st.download_button(
-                label="Download JSON Data",
-                data=json.dumps(restaurants_master_list, indent=4),
-                file_name="food_standards_data.json",
-                mime="application/json",
-            )
         else:
             # Display an error message if the API request fails
             st.error(f"Error: Could not fetch data from the API. Status Code: {response.status_code}")
