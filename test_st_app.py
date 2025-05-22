@@ -255,25 +255,45 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         # --- Start of copied logic block (modified for testability) ---
         # (Original st_app.py has this logic within `if response.status_code == 200:`)
 
-        # 1.a. Load Master List (relies on self.mock_load_json_uri and st_app.master_list_uri)
+        # 1.a. Load Master List (New simplified logic)
         restaurants_master_list = []
-        if st_app.master_list_uri: # This will be "dummy_master_uri" or overridden in tests
+        if st_app.master_list_uri:
             loaded_master_data = self.mock_load_json_uri(st_app.master_list_uri)
             if loaded_master_data is not None:
-                if isinstance(loaded_master_data, dict) and \
-                   'FHRSEstablishment' in loaded_master_data and \
-                   'EstablishmentCollection' in loaded_master_data.get('FHRSEstablishment', {}) and \
-                   'EstablishmentDetail' in loaded_master_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}):
-                    restaurants_master_list = loaded_master_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
-                    # messages...
-                elif isinstance(loaded_master_data, list):
+                if isinstance(loaded_master_data, list):
                     restaurants_master_list = loaded_master_data
-                    # messages...
-                # else messages...
-            # else messages...
-        # else messages...
+                    if restaurants_master_list:
+                        self.mock_st_info(f"Successfully loaded master list with {len(restaurants_master_list)} items.")
+                    else:
+                        self.mock_st_warning("Master list loaded, but it's an empty list.")
+                elif isinstance(loaded_master_data, dict):
+                    if loaded_master_data: # If dictionary is not empty
+                        found_list_in_dict = False
+                        for value in loaded_master_data.values():
+                            if isinstance(value, list):
+                                restaurants_master_list = value
+                                self.mock_st_info(f"Master list loaded. Found a list with {len(restaurants_master_list)} items within the dictionary.")
+                                found_list_in_dict = True
+                                break 
+                        if not found_list_in_dict:
+                            restaurants_master_list = [loaded_master_data]
+                            self.mock_st_info("Master list loaded. Treating the non-empty dictionary as a single record.")
+                    else: # Empty dictionary
+                        self.mock_st_warning("Master list loaded, but it's an empty dictionary. Proceeding with an empty master list.")
+                        # restaurants_master_list remains []
+                else: # Not a list or dict (e.g. string, number)
+                    self.mock_st_warning(f"Master list loaded from {st_app.master_list_uri}, but it is not a list or dictionary (type: {type(loaded_master_data)}). Proceeding with an empty master list.")
+                    # restaurants_master_list remains []
+            else: # loaded_master_data is None
+                # load_json_from_uri (mocked here) would have shown an error via st.error in real app
+                self.mock_st_warning("Failed to load master list (it was None or loading failed). Proceeding with an empty master list.")
+                # restaurants_master_list remains []
+        else: # No master_list_uri
+            self.mock_st_info("No master list URI provided. Starting with an empty master list.")
         
+        # Ensure restaurants_master_list is always a list, even if logic above has a flaw
         if not isinstance(restaurants_master_list, list):
+            self.mock_st_warning(f"restaurants_master_list was unexpectedly not a list (type: {type(restaurants_master_list)} after processing). Resetting to an empty list.")
             restaurants_master_list = []
 
         # 1.b. Process API Response and Update Master List
@@ -454,12 +474,14 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_gcs_blob_instance.upload_from_string.assert_not_called()
 
     def test_master_list_structure_dict_input(self):
-        master_data_dict = {
-            "FHRSEstablishment": {"EstablishmentCollection": {"EstablishmentDetail": [
+        # Modified to be compatible with the new loading logic, 
+        # where a list is found as a value in the root dictionary.
+        master_data_dict_compatible_with_new_logic = {
+            "establishments": [ # The new logic will find this list
                 {"FHRSID": 301, "BusinessName": "Master Dict Rest"}
-            ]}}
+            ]
         }
-        self.mock_load_json_uri.return_value = master_data_dict
+        self.mock_load_json_uri.return_value = master_data_dict_compatible_with_new_logic
         
         api_response_data = {"FHRSEstablishment": {"EstablishmentCollection": {"EstablishmentDetail": [
              {"FHRSID": 302, "BusinessName": "API New Rest"}
@@ -610,6 +632,112 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         # current_date = self.fixed_date.strftime("%Y-%m-%d")
         # expected_blob_name = f"output_folder/food_standards_data_{current_date}.json" 
         # self.mock_gcs_bucket_instance.blob.assert_called_with(expected_blob_name)
+
+    # --- New tests for master list loading logic ---
+
+    def _setup_minimal_api_response(self):
+        """Helper to set up a minimal, valid API response."""
+        api_response_data = {"FHRSEstablishment": {"EstablishmentCollection": {"EstablishmentDetail": []}}}
+        mock_api_response = MagicMock()
+        mock_api_response.status_code = 200
+        mock_api_response.json.return_value = api_response_data
+        self.mock_requests_get.return_value = mock_api_response
+        st_app.data = api_response_data # Simulate data loaded from API for _run_fetch_data_logic
+
+    def test_load_master_list_non_empty_dict_extracts_list_value(self):
+        self.mock_st_info.reset_mock()
+        self.mock_st_warning.reset_mock()
+        st_app.master_list_uri = "gs://dummy/dict_with_list.json" # Ensure URI is set
+        master_data = {"data": [{"id": 1, "name": "Item1"}, {"id": 2, "name": "Item2"}]}
+        self.mock_load_json_uri.return_value = master_data
+        self._setup_minimal_api_response()
+
+        result_list = self._run_fetch_data_logic()
+        
+        self.assertEqual(result_list, [{"id": 1, "name": "Item1"}, {"id": 2, "name": "Item2"}])
+        self.mock_st_info.assert_any_call(f"Master list loaded. Found a list with {len(master_data['data'])} items within the dictionary.")
+        self.mock_st_warning.assert_not_called()
+
+    def test_load_master_list_non_empty_dict_no_list_value_wraps_dict(self):
+        self.mock_st_info.reset_mock()
+        self.mock_st_warning.reset_mock()
+        st_app.master_list_uri = "gs://dummy/dict_no_list.json"
+        master_data = {"id": 1, "name": "item"}
+        self.mock_load_json_uri.return_value = master_data
+        self._setup_minimal_api_response()
+
+        result_list = self._run_fetch_data_logic()
+
+        self.assertEqual(result_list, [{"id": 1, "name": "item"}])
+        self.mock_st_info.assert_any_call("Master list loaded. Treating the non-empty dictionary as a single record.")
+        self.mock_st_warning.assert_not_called()
+
+    def test_load_master_list_empty_dict(self):
+        self.mock_st_info.reset_mock()
+        self.mock_st_warning.reset_mock()
+        st_app.master_list_uri = "gs://dummy/empty_dict.json"
+        self.mock_load_json_uri.return_value = {}
+        self._setup_minimal_api_response()
+
+        result_list = self._run_fetch_data_logic()
+
+        self.assertEqual(result_list, [])
+        self.mock_st_warning.assert_any_call("Master list loaded, but it's an empty dictionary. Proceeding with an empty master list.")
+        self.mock_st_info.assert_not_called() # Or check it wasn't the "success" messages for list loading
+
+    def test_load_master_list_empty_list(self):
+        self.mock_st_info.reset_mock()
+        self.mock_st_warning.reset_mock()
+        st_app.master_list_uri = "gs://dummy/empty_list.json"
+        self.mock_load_json_uri.return_value = []
+        self._setup_minimal_api_response()
+
+        result_list = self._run_fetch_data_logic()
+
+        self.assertEqual(result_list, [])
+        self.mock_st_warning.assert_any_call("Master list loaded, but it's an empty list.")
+        # self.mock_st_info.assert_not_called() # No "successfully loaded" for empty list
+
+    def test_load_master_list_is_none(self):
+        self.mock_st_info.reset_mock()
+        self.mock_st_warning.reset_mock()
+        st_app.master_list_uri = "gs://dummy/none_list.json"
+        self.mock_load_json_uri.return_value = None
+        self._setup_minimal_api_response()
+
+        result_list = self._run_fetch_data_logic()
+
+        self.assertEqual(result_list, [])
+        self.mock_st_warning.assert_any_call("Failed to load master list (it was None or loading failed). Proceeding with an empty master list.")
+        # self.mock_st_info.assert_not_called()
+
+    def test_load_master_list_is_string(self):
+        self.mock_st_info.reset_mock()
+        self.mock_st_warning.reset_mock()
+        st_app.master_list_uri = "gs://dummy/string_list.json" # URI must be non-empty for this path
+        test_string = "just a string"
+        self.mock_load_json_uri.return_value = test_string
+        self._setup_minimal_api_response()
+
+        result_list = self._run_fetch_data_logic()
+
+        self.assertEqual(result_list, [])
+        self.mock_st_warning.assert_any_call(f"Master list loaded from {st_app.master_list_uri}, but it is not a list or dictionary (type: {type(test_string)}). Proceeding with an empty master list.")
+        # self.mock_st_info.assert_not_called()
+
+    def test_no_master_list_uri_provided(self):
+        self.mock_st_info.reset_mock()
+        self.mock_st_warning.reset_mock()
+        # Crucially, set master_list_uri to empty or None for this test
+        # The _run_fetch_data_logic uses current_master_list_uri parameter, or st_app.master_list_uri
+        # We will pass "" to the helper.
+        self._setup_minimal_api_response()
+
+        result_list = self._run_fetch_data_logic(current_master_list_uri="")
+
+        self.assertEqual(result_list, [])
+        self.mock_st_info.assert_any_call("No master list URI provided. Starting with an empty master list.")
+        self.mock_st_warning.assert_not_called()
 
 
 if __name__ == '__main__':
