@@ -192,17 +192,17 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         # These are module-level in st_app.py, so we patch them there
         # We use self.addCleanup to ensure these are stopped after each test
         # This is better than managing start/stop manually or using a class-level patcher for instance-specific values
-        self.patcher_master_list_uri = patch('st_app.master_list_uri', "dummy_master_uri")
+        self.patcher_master_restaurant_data_uri = patch('st_app.master_list_uri', "dummy_master_uri") # Patches st_app.master_list_uri
         self.patcher_gcs_destination_uri = patch('st_app.gcs_destination_uri', "") # Default to no GCS for most tests
-        self.patcher_gcs_master_dict_output_uri = patch('st_app.gcs_master_dictionary_output_uri', "")
+        self.patcher_gcs_master_data_output_uri = patch('st_app.gcs_master_dictionary_output_uri', "") # Patches st_app.gcs_master_dictionary_output_uri
 
-        self.st_app_master_list_uri = self.patcher_master_list_uri.start()
+        self.st_app_master_list_uri = self.patcher_master_restaurant_data_uri.start()
         self.st_app_gcs_destination_uri = self.patcher_gcs_destination_uri.start()
-        self.st_app_gcs_master_dict_output_uri = self.patcher_gcs_master_dict_output_uri.start()
+        self.st_app_gcs_master_data_output_uri = self.patcher_gcs_master_data_output_uri.start()
         
-        self.addCleanup(self.patcher_master_list_uri.stop)
+        self.addCleanup(self.patcher_master_restaurant_data_uri.stop)
         self.addCleanup(self.patcher_gcs_destination_uri.stop)
-        self.addCleanup(self.patcher_gcs_master_dict_output_uri.stop)
+        self.addCleanup(self.patcher_gcs_master_data_output_uri.stop)
 
 
     def tearDown(self):
@@ -222,28 +222,28 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         
         # --- Replicated logic from st_app.py ---
 
-        # 1.a. Load Master List
-        restaurants_master_list = []
+        # 1.a. Load Master Restaurant Data
+        master_restaurant_data = []
         if st_app.master_list_uri:
             loaded_data = self.mock_load_json_uri(st_app.master_list_uri)
             if loaded_data is not None:
                 if isinstance(loaded_data, list):
-                    restaurants_master_list = loaded_data
-                    if restaurants_master_list:
-                        self.mock_st_success(f"Successfully loaded master list with {len(restaurants_master_list)} items from {st_app.master_list_uri}.")
+                    master_restaurant_data = loaded_data
+                    if master_restaurant_data:
+                        self.mock_st_success(f"Successfully loaded master restaurant data with {len(master_restaurant_data)} records from {st_app.master_list_uri}.")
                     else:
-                        self.mock_st_warning(f"Master list loaded from {st_app.master_list_uri}, but it's an empty list.")
+                        self.mock_st_warning(f"Master restaurant data loaded from {st_app.master_list_uri}, but it's empty.")
                 else:
-                    self.mock_st_warning(f"Data loaded from {st_app.master_list_uri} is not a list (type: {type(loaded_data)}). Proceeding with an empty master list.")
-                    restaurants_master_list = []
+                    self.mock_st_warning(f"Data loaded from {st_app.master_list_uri} is not in the expected format (e.g., a list of records). Type found: {type(loaded_data)}. Proceeding with empty master restaurant data.")
+                    master_restaurant_data = []
             else:
-                self.mock_st_warning(f"Failed to load master list from {st_app.master_list_uri} (or it was empty/invalid). Proceeding with an empty master list.")
-                restaurants_master_list = []
+                self.mock_st_warning(f"Failed to load master restaurant data from {st_app.master_list_uri} (or it was empty/invalid). Proceeding with empty master restaurant data.")
+                master_restaurant_data = []
         else:
-            self.mock_st_info("No master list URI provided. Starting with an empty master list.")
-            restaurants_master_list = []
+            self.mock_st_info("No master restaurant data URI provided. Starting with empty master restaurant data.")
+            master_restaurant_data = []
 
-        # 1.b. Process API Response and Update Master List
+        # 1.b. Process API Response and Update Master Restaurant Data
         api_data_response = self.mock_requests_get() # Mocked requests.get
         api_data_response.raise_for_status() # Simulate check or assume 200 for tests using this helper
         api_json_content = api_data_response.json() # This is the raw API data
@@ -252,7 +252,7 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         if api_establishments is None: 
             api_establishments = []
 
-        existing_fhrsid_set = {est['FHRSID'] for est in restaurants_master_list if isinstance(est, dict) and 'FHRSID' in est}
+        existing_fhrsid_set = {est['FHRSID'] for est in master_restaurant_data if isinstance(est, dict) and 'FHRSID' in est}
         today_date_str = self.mock_datetime_now.now().strftime("%Y-%m-%d") # Uses mocked datetime from setUp
         new_restaurants_added_count = 0
 
@@ -260,11 +260,11 @@ class TestRestaurantMergingLogic(unittest.TestCase):
             if isinstance(api_establishment, dict) and 'FHRSID' in api_establishment:
                 if api_establishment['FHRSID'] not in existing_fhrsid_set:
                     api_establishment['first_seen'] = today_date_str
-                    restaurants_master_list.append(api_establishment)
+                    master_restaurant_data.append(api_establishment)
                     existing_fhrsid_set.add(api_establishment['FHRSID'])
                     new_restaurants_added_count += 1
         
-        self.mock_st_success(f"Processed API response. Added {new_restaurants_added_count} new restaurants. Total unique establishments: {len(restaurants_master_list)}")
+        self.mock_st_success(f"Processed API response. Added {new_restaurants_added_count} new restaurant records. Total unique records: {len(master_restaurant_data)}")
 
         # GCS Upload Logic (New Two-Part Logic)
         # Part 1: Upload Raw API Response
@@ -304,10 +304,10 @@ class TestRestaurantMergingLogic(unittest.TestCase):
                 except Exception as e:
                     self.mock_st_error(f"Error uploading raw API response to GCS: {e}")
         
-        # Part 2: Upload Master Dictionary
-        if st_app.gcs_master_dictionary_output_uri: # Patched by test method
+        # Part 2: Upload Master Restaurant Data
+        if st_app.gcs_master_dictionary_output_uri: # Patched by test method (st_app.gcs_master_dictionary_output_uri)
             if not st_app.gcs_master_dictionary_output_uri.startswith("gs://"):
-                self.mock_st_error("Invalid GCS URI for Master Dictionary. It must start with gs://")
+                self.mock_st_error("Invalid GCS URI for Master Restaurant Data. It must start with gs://") # Updated error message
             else:
                 try:
                     # self.mock_gcs_client_instance is from setUp
@@ -315,7 +315,7 @@ class TestRestaurantMergingLogic(unittest.TestCase):
                     blob_name_master = "/".join(st_app.gcs_master_dictionary_output_uri.split("/")[3:])
 
                     if not blob_name_master: 
-                        self.mock_st_error("Invalid GCS URI for Master Dictionary: File name is missing.")
+                        self.mock_st_error("Invalid GCS URI for Master Restaurant Data: File name is missing.") # Updated error message
                     else:
                         # self.mock_gcs_bucket_instance.blob will be called here again
                         # bucket_master = self.mock_gcs_client_instance.bucket(bucket_name_master)
@@ -324,35 +324,35 @@ class TestRestaurantMergingLogic(unittest.TestCase):
                         self.mock_gcs_bucket_instance.blob(blob_name_master)
 
                         self.mock_gcs_blob_instance.upload_from_string(
-                            json.dumps(restaurants_master_list, indent=4), 
+                            json.dumps(master_restaurant_data, indent=4), 
                             content_type='application/json'
                         )
-                        self.mock_st_success(f"Successfully uploaded master dictionary to {st_app.gcs_master_dictionary_output_uri}")
+                        self.mock_st_success(f"Successfully uploaded master restaurant data to {st_app.gcs_master_dictionary_output_uri}") # Updated success message
                 except Exception as e:
-                    self.mock_st_error(f"Error uploading master dictionary to GCS: {e}")
+                    self.mock_st_error(f"Error uploading master restaurant data to GCS: {e}") # Updated error message
 
         # DataFrame Creation part
         try:
-            if not restaurants_master_list:
-                self.mock_st_warning("No establishment data to display (master list is empty after processing).")
+            if not master_restaurant_data:
+                self.mock_st_warning("No restaurant data to display (master restaurant data is empty after processing).") # Updated warning
             else:
-                valid_items_for_df = [item for item in restaurants_master_list if isinstance(item, dict)]
+                valid_items_for_df = [item for item in master_restaurant_data if isinstance(item, dict)]
                 if not valid_items_for_df:
-                    self.mock_st_warning("Master list contains no dictionary items, cannot display as table.")
-                elif len(valid_items_for_df) < len(restaurants_master_list):
-                    self.mock_st_warning(f"Some items in the master list were not dictionaries and were excluded from the table display. Displaying {len(valid_items_for_df)} items.")
+                    self.mock_st_warning("Master restaurant data contains no dictionary items, cannot display as table.") # Updated warning
+                elif len(valid_items_for_df) < len(master_restaurant_data):
+                    self.mock_st_warning(f"Some items in the master restaurant data were not dictionaries and were excluded from the table display. Displaying {len(valid_items_for_df)} records.") # Updated warning
                     self.mock_pd_normalize(valid_items_for_df) # Mocked pd.json_normalize
                 else:
-                    self.mock_pd_normalize(restaurants_master_list) # Mocked pd.json_normalize
+                    self.mock_pd_normalize(master_restaurant_data) # Mocked pd.json_normalize
         except Exception as e: 
-            self.mock_st_error(f"Error displaying DataFrame from master list: {e}")
+            self.mock_st_error(f"Error displaying DataFrame from master restaurant data: {e}") # Updated error
         
-        return restaurants_master_list, api_json_content
+        return master_restaurant_data, api_json_content
         # --- End of replicated logic ---
 
 
-    def test_empty_master_list_new_api_restaurants(self):
-        self.mock_load_json_uri.return_value = None # Empty master list
+    def test_empty_master_restaurant_data_new_api_restaurants(self): # Renamed test
+        self.mock_load_json_uri.return_value = None # Empty master restaurant data
         # Ensure GCS is not triggered for this specific test if not relevant
         st_app.gcs_destination_uri = "" # Override default from setUp if needed, or pass to helper
         
@@ -375,14 +375,14 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         # Simulate the state after API call and master list load
         st_app.data = api_response_data # Simulate data loaded from API
         
-        # The actual merge logic in st_app.py happens after data is loaded and master_list is attempted
+        # The actual merge logic in st_app.py happens after data is loaded and master_restaurant_data is attempted
         # We will call a helper that encapsulates this logic, or directly test its effects
         
 
-        final_list = self._run_fetch_data_logic(current_gcs_destination_uri="") # Explicitly no GCS for this test
+        final_data = self._run_fetch_data_logic() # Explicitly no GCS for this test as gcs_destination_uri is "" by default in helper via setup
 
-        self.assertEqual(len(final_list), 2)
-        self.assertTrue(all('first_seen' in item and item['first_seen'] == self.fixed_date_str for item in final_list))
+        self.assertEqual(len(final_data), 2)
+        self.assertTrue(all('first_seen' in item and item['first_seen'] == self.fixed_date_str for item in final_data))
         self.mock_pd_normalize.assert_called_once()
         call_arg = self.mock_pd_normalize.call_args[0][0]
         self.assertEqual(len(call_arg), 2)
@@ -391,12 +391,12 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_gcs_blob_instance.upload_from_string.assert_not_called() # Ensure GCS was not called
 
 
-    def test_populated_master_some_new_some_duplicates(self):
-        master_data = [
+    def test_populated_master_data_some_new_some_duplicates(self): # Renamed test
+        master_data_input = [ # Renamed variable for clarity
             {"FHRSID": 101, "BusinessName": "Restaurant A", "first_seen": "2023-12-01"},
             {"FHRSID": 103, "BusinessName": "Restaurant C Old"} # No first_seen
         ]
-        self.mock_load_json_uri.return_value = master_data # Simple list format
+        self.mock_load_json_uri.return_value = master_data_input
 
         api_response_data = {
             "FHRSEstablishment": {"EstablishmentCollection": {"EstablishmentDetail": [
@@ -412,30 +412,30 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         
         st_app.data = api_response_data # Simulate
 
-        final_list = self._run_fetch_data_logic(current_gcs_destination_uri="") # Explicitly no GCS
+        final_data = self._run_fetch_data_logic() # Explicitly no GCS
 
-        self.assertEqual(len(final_list), 4)
+        self.assertEqual(len(final_data), 4)
         self.mock_pd_normalize.assert_called_once()
         # ... (rest of assertions for this test remain the same)
-        ids_in_final_list = {item['FHRSID'] for item in final_list}
-        self.assertEqual(ids_in_final_list, {101, 102, 103, 104})
-        item101 = next(item for item in final_list if item['FHRSID'] == 101)
+        ids_in_final_data = {item['FHRSID'] for item in final_data} # Renamed var
+        self.assertEqual(ids_in_final_data, {101, 102, 103, 104})
+        item101 = next(item for item in final_data if item['FHRSID'] == 101)
         self.assertEqual(item101.get('first_seen'), "2023-12-01")
-        self.assertEqual(item101.get('BusinessName'), "Restaurant A")
-        item102 = next(item for item in final_list if item['FHRSID'] == 102)
+        self.assertEqual(item101.get('BusinessName'), "Restaurant A") # Name from master_data, not API
+        item102 = next(item for item in final_data if item['FHRSID'] == 102)
         self.assertEqual(item102.get('first_seen'), self.fixed_date_str)
-        item103 = next(item for item in final_list if item['FHRSID'] == 103)
-        self.assertNotIn('first_seen', item103)
-        item104 = next(item for item in final_list if item['FHRSID'] == 104)
+        item103 = next(item for item in final_data if item['FHRSID'] == 103)
+        self.assertNotIn('first_seen', item103) # Original item without first_seen
+        item104 = next(item for item in final_data if item['FHRSID'] == 104)
         self.assertEqual(item104.get('first_seen'), self.fixed_date_str)
         self.mock_gcs_blob_instance.upload_from_string.assert_not_called()
 
-    def test_empty_api_response_populated_master(self):
-        master_data = [
+    def test_empty_api_response_populated_master_data(self): # Renamed test
+        master_data_input = [ # Renamed variable
             {"FHRSID": 201, "BusinessName": "Old Place"},
             {"FHRSID": 202, "BusinessName": "Another Old Place", "first_seen": "2023-01-01"}
         ]
-        self.mock_load_json_uri.return_value = master_data
+        self.mock_load_json_uri.return_value = master_data_input
 
         api_response_data = {"FHRSEstablishment": {"EstablishmentCollection": {"EstablishmentDetail": []}}} # Empty API
         mock_api_response = MagicMock()
@@ -445,26 +445,24 @@ class TestRestaurantMergingLogic(unittest.TestCase):
 
         st_app.data = api_response_data
 
-        final_list = self._run_fetch_data_logic(current_gcs_destination_uri="")
+        final_data = self._run_fetch_data_logic()
 
-        self.assertEqual(len(final_list), 2)
+        self.assertEqual(len(final_data), 2)
         self.mock_pd_normalize.assert_called_once()
         call_arg = self.mock_pd_normalize.call_args[0][0]
-        self.assertEqual(call_arg, master_data) 
+        self.assertEqual(call_arg, master_data_input) 
         self.mock_gcs_blob_instance.upload_from_string.assert_not_called()
 
-    def test_master_list_structure_dict_input(self):
-        # Modified to be compatible with the new loading logic, 
-        # where a list is found as a value in the root dictionary.
-        master_data_dict_compatible_with_new_logic = {
-            "establishments": [ # The new logic will find this list
-                {"FHRSID": 301, "BusinessName": "Master Dict Rest"}
-            ]
+    def test_master_data_loaded_as_dictionary_not_list(self): # Renamed to reflect what's tested
+        # This test checks st_app's handling when load_json_from_uri returns a dict, not a list for master data.
+        # The st_app logic should then proceed with an empty master_restaurant_data.
+        master_data_as_dict = { # This is not a list, so st_app should treat it as invalid master data structure
+            "FHRSID": 301, "BusinessName": "Master Dict Rest"
         }
-        self.mock_load_json_uri.return_value = master_data_dict_compatible_with_new_logic
+        self.mock_load_json_uri.return_value = master_data_as_dict
         
         api_response_data = {"FHRSEstablishment": {"EstablishmentCollection": {"EstablishmentDetail": [
-             {"FHRSID": 302, "BusinessName": "API New Rest"}
+             {"FHRSID": 302, "BusinessName": "API New Rest"} # API adds a new item
         ]}}}
         mock_api_response = MagicMock()
         mock_api_response.status_code = 200
@@ -472,18 +470,22 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_requests_get.return_value = mock_api_response
 
         st_app.data = api_response_data
-        final_list = self._run_fetch_data_logic(current_gcs_destination_uri="")
+        final_data = self._run_fetch_data_logic()
 
-        self.assertEqual(len(final_list), 2)
-        ids_in_final_list = {item['FHRSID'] for item in final_list}
-        self.assertEqual(ids_in_final_list, {301, 302})
-        item302 = next(item for item in final_list if item['FHRSID'] == 302)
+        # Expected: master_restaurant_data should be empty (due to invalid input type)
+        # and only the API data should be present.
+        self.assertEqual(len(final_data), 1) 
+        ids_in_final_data = {item['FHRSID'] for item in final_data}
+        self.assertEqual(ids_in_final_data, {302})
+        item302 = next(item for item in final_data if item['FHRSID'] == 302)
         self.assertEqual(item302.get('first_seen'), self.fixed_date_str)
         self.mock_gcs_blob_instance.upload_from_string.assert_not_called()
+        # Check for the specific warning
+        self.mock_st_warning.assert_any_call(f"Data loaded from {st_app.master_list_uri} is not in the expected format (e.g., a list of records). Type found: {type(master_data_as_dict)}. Proceeding with empty master restaurant data.")
 
-    def test_master_list_structure_list_input(self):
-        master_data_list = [{"FHRSID": 401, "BusinessName": "Master List Rest"}]
-        self.mock_load_json_uri.return_value = master_data_list
+    def test_master_data_loaded_as_list(self): # Renamed test
+        master_data_as_list = [{"FHRSID": 401, "BusinessName": "Master List Rest"}] # Correct list format
+        self.mock_load_json_uri.return_value = master_data_as_list
         
         api_response_data = {"FHRSEstablishment": {"EstablishmentCollection": {"EstablishmentDetail": [
              {"FHRSID": 402, "BusinessName": "API New Rest From List Master"}
@@ -494,17 +496,17 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_requests_get.return_value = mock_api_response
 
         st_app.data = api_response_data
-        final_list = self._run_fetch_data_logic(current_gcs_destination_uri="")
+        final_data = self._run_fetch_data_logic()
 
-        self.assertEqual(len(final_list), 2)
-        ids_in_final_list = {item['FHRSID'] for item in final_list}
-        self.assertEqual(ids_in_final_list, {401, 402})
-        item402 = next(item for item in final_list if item['FHRSID'] == 402)
+        self.assertEqual(len(final_data), 2)
+        ids_in_final_data = {item['FHRSID'] for item in final_data}
+        self.assertEqual(ids_in_final_data, {401, 402})
+        item402 = next(item for item in final_data if item['FHRSID'] == 402)
         self.assertEqual(item402.get('first_seen'), self.fixed_date_str)
         self.mock_gcs_blob_instance.upload_from_string.assert_not_called()
 
-    def test_fhrsid_missing_in_api_data(self):
-        self.mock_load_json_uri.return_value = [] # Empty master
+    def test_fhrsid_missing_in_api_data_record(self): # Renamed
+        self.mock_load_json_uri.return_value = [] # Empty master restaurant data
         
         api_response_data = {
             "FHRSEstablishment": {"EstablishmentCollection": {"EstablishmentDetail": [
@@ -518,19 +520,19 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_requests_get.return_value = mock_api_response
 
         st_app.data = api_response_data
-        final_list = self._run_fetch_data_logic(current_gcs_destination_uri="")
+        final_data = self._run_fetch_data_logic()
         
-        self.assertEqual(len(final_list), 1)
-        self.assertEqual(final_list[0]['FHRSID'], 501)
-        self.assertEqual(final_list[0]['first_seen'], self.fixed_date_str)
+        self.assertEqual(len(final_data), 1)
+        self.assertEqual(final_data[0]['FHRSID'], 501)
+        self.assertEqual(final_data[0]['first_seen'], self.fixed_date_str)
         self.mock_gcs_blob_instance.upload_from_string.assert_not_called()
 
-    def test_fhrsid_missing_in_master_data(self):
-        master_data = [
-            {"BusinessName": "Master NoID"},
+    def test_fhrsid_missing_in_master_data_record(self): # Renamed
+        master_data_input = [ # Renamed var
+            {"BusinessName": "Master NoID"}, # This record is kept as is
             {"FHRSID": 601, "BusinessName": "Master WithID"}
         ]
-        self.mock_load_json_uri.return_value = master_data
+        self.mock_load_json_uri.return_value = master_data_input
         
         api_response_data = {
             "FHRSEstablishment": {"EstablishmentCollection": {"EstablishmentDetail": [
@@ -544,19 +546,18 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_requests_get.return_value = mock_api_response
 
         st_app.data = api_response_data
-        final_list = self._run_fetch_data_logic(current_gcs_destination_uri="")
+        final_data = self._run_fetch_data_logic()
         
-        self.assertEqual(len(final_list), 3) 
-        ids_in_final_list_with_id = {item['FHRSID'] for item in final_list if 'FHRSID' in item}
-        self.assertEqual(ids_in_final_list_with_id, {601, 602})
-        item_master_noid = next(item for item in final_list if 'FHRSID' not in item)
+        self.assertEqual(len(final_data), 3) 
+        ids_in_final_data_with_id = {item['FHRSID'] for item in final_data if 'FHRSID' in item}
+        self.assertEqual(ids_in_final_data_with_id, {601, 602})
+        item_master_noid = next(item for item in final_data if 'FHRSID' not in item)
         self.assertEqual(item_master_noid['BusinessName'], "Master NoID")
-        item602 = next(item for item in final_list if item.get('FHRSID') == 602)
+        item602 = next(item for item in final_data if item.get('FHRSID') == 602)
         self.assertEqual(item602['first_seen'], self.fixed_date_str)
-        # GCS upload not asserted here as per original test structure (was testing merge logic mainly)
-        # self.mock_gcs_blob_instance.upload_from_string.assert_not_called() # If this was intended for all prior tests
+        self.mock_gcs_blob_instance.upload_from_string.assert_not_called()
 
-    # --- Tests for master list loading logic (adapted and new) ---
+    # --- Tests for master restaurant data loading logic ---
 
     def _setup_minimal_api_response(self):
         """Helper to set up a minimal, valid API response for running fetch logic."""
@@ -567,8 +568,8 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_requests_get.return_value = mock_api_response
         st_app.data = api_response_data # Simulate data loaded from API for _run_fetch_data_logic
 
-    def test_load_master_list_empty_list(self):
-        # Kept and Verified: This test checks behavior when an empty list is loaded.
+    def test_load_master_data_empty_list_from_uri(self): # Renamed
+        # This test checks behavior when an empty list is loaded for master data.
         self.mock_st_info.reset_mock()
         self.mock_st_warning.reset_mock()
         self.mock_st_success.reset_mock()
@@ -576,16 +577,16 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_load_json_uri.return_value = [] # Mock load_json_from_uri to return an empty list
         self._setup_minimal_api_response() # Setup minimal API response to allow main logic to run
 
-        result_list = self._run_fetch_data_logic()
+        result_data = self._run_fetch_data_logic()
 
-        self.assertEqual(result_list, []) # Master list should be empty
+        self.assertEqual(result_data, []) # Master restaurant data should be empty
         # Verify st.warning was called with the specific message for an empty list
-        self.mock_st_warning.assert_any_call(f"Master list loaded from {st_app.master_list_uri}, but it's an empty list.")
-        self.mock_st_success.assert_not_called()
-        self.mock_st_info.assert_not_called() # No "No master list URI" message
+        self.mock_st_warning.assert_any_call(f"Master restaurant data loaded from {st_app.master_list_uri}, but it's empty.")
+        self.mock_st_success.assert_not_called() # No success message for loading data
+        self.mock_st_info.assert_not_called() # No "No master restaurant data URI" message
 
-    def test_load_master_list_is_none(self):
-        # Kept and Verified: This test checks behavior when load_json_from_uri returns None.
+    def test_load_master_data_is_none_from_uri(self): # Renamed
+        # This test checks behavior when load_json_from_uri returns None for master data.
         self.mock_st_info.reset_mock()
         self.mock_st_warning.reset_mock()
         self.mock_st_success.reset_mock()
@@ -593,16 +594,16 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_load_json_uri.return_value = None # Mock load_json_from_uri to return None
         self._setup_minimal_api_response()
 
-        result_list = self._run_fetch_data_logic()
+        result_data = self._run_fetch_data_logic()
 
-        self.assertEqual(result_list, []) # Master list should be empty
+        self.assertEqual(result_data, []) # Master restaurant data should be empty
         # Verify st.warning was called with the specific message for load failure
-        self.mock_st_warning.assert_any_call(f"Failed to load master list from {st_app.master_list_uri} (or it was empty/invalid). Proceeding with an empty master list.")
+        self.mock_st_warning.assert_any_call(f"Failed to load master restaurant data from {st_app.master_list_uri} (or it was empty/invalid). Proceeding with empty master restaurant data.")
         self.mock_st_success.assert_not_called()
         self.mock_st_info.assert_not_called()
 
-    def test_no_master_list_uri_provided(self):
-        # Kept and Verified: Checks behavior when no master list URI is provided.
+    def test_no_master_restaurant_data_uri_provided(self): # Renamed
+        # Checks behavior when no master restaurant data URI is provided.
         self.mock_st_info.reset_mock()
         self.mock_st_warning.reset_mock()
         self.mock_st_success.reset_mock()
@@ -610,15 +611,15 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         # We achieve this by passing current_master_list_uri="" to the helper.
         self._setup_minimal_api_response()
 
-        result_list = self._run_fetch_data_logic(current_master_list_uri="") # Simulate no URI
+        result_data = self._run_fetch_data_logic(current_master_list_uri="") # Simulate no URI
 
-        self.assertEqual(result_list, []) # Master list should be empty
-        self.mock_st_info.assert_any_call("No master list URI provided. Starting with an empty master list.")
+        self.assertEqual(result_data, []) # Master restaurant data should be empty
+        self.mock_st_info.assert_any_call("No master restaurant data URI provided. Starting with empty master restaurant data.")
         self.mock_st_warning.assert_not_called()
-        self.mock_st_success.assert_not_called()
+        self.mock_st_success.assert_not_called() # No success for loading
 
-    def test_load_master_list_is_string(self):
-        # Adapted: Checks behavior when loaded data is a string (not a list).
+    def test_load_master_data_is_string_from_uri(self): # Renamed
+        # Checks behavior when loaded master data is a string (not a list).
         self.mock_st_info.reset_mock()
         self.mock_st_warning.reset_mock()
         self.mock_st_success.reset_mock()
@@ -627,17 +628,17 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_load_json_uri.return_value = test_string # Mock load_json_from_uri to return a string
         self._setup_minimal_api_response()
 
-        result_list = self._run_fetch_data_logic()
+        result_data = self._run_fetch_data_logic()
 
-        self.assertEqual(result_list, []) # Master list should be empty
+        self.assertEqual(result_data, []) # Master restaurant data should be empty
         # Verify st.warning was called, indicating data was not a list
-        self.mock_st_warning.assert_any_call(f"Data loaded from {st_app.master_list_uri} is not a list (type: {type(test_string)}). Proceeding with an empty master list.")
+        self.mock_st_warning.assert_any_call(f"Data loaded from {st_app.master_list_uri} is not in the expected format (e.g., a list of records). Type found: {type(test_string)}. Proceeding with empty master restaurant data.")
         self.mock_st_success.assert_not_called()
         self.mock_st_info.assert_not_called()
 
-    # --- New tests as per requirements ---
+    # --- Tests for various master data loading scenarios ---
 
-    def test_load_master_list_valid_non_empty_list(self):
+    def test_load_master_data_valid_non_empty_list_from_uri(self): # Renamed
         self.mock_st_info.reset_mock()
         self.mock_st_warning.reset_mock()
         self.mock_st_success.reset_mock()
@@ -646,34 +647,34 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_load_json_uri.return_value = valid_list_data
         self._setup_minimal_api_response()
 
-        result_list = self._run_fetch_data_logic()
+        result_data = self._run_fetch_data_logic()
 
-        self.assertEqual(result_list, valid_list_data)
-        self.mock_st_success.assert_any_call(f"Successfully loaded master list with {len(valid_list_data)} items from {st_app.master_list_uri}.")
+        self.assertEqual(result_data, valid_list_data)
+        self.mock_st_success.assert_any_call(f"Successfully loaded master restaurant data with {len(valid_list_data)} records from {st_app.master_list_uri}.")
         self.mock_st_warning.assert_not_called()
         self.mock_st_info.assert_not_called()
 
-    def test_load_master_list_returns_dictionary(self):
+    def test_load_master_data_returns_dictionary_instead_of_list(self): # Renamed
         self.mock_st_info.reset_mock()
         self.mock_st_warning.reset_mock()
         self.mock_st_success.reset_mock()
         st_app.master_list_uri = "gs://dummy/dict_data.json"
-        dict_data = {"key": "value", "another_key": "another_value"}
+        dict_data = {"key": "value", "another_key": "another_value"} # This is a dictionary, not a list
         self.mock_load_json_uri.return_value = dict_data
         self._setup_minimal_api_response()
 
-        result_list = self._run_fetch_data_logic()
+        result_data = self._run_fetch_data_logic()
 
-        self.assertEqual(result_list, []) # Master list should be empty
-        self.mock_st_warning.assert_any_call(f"Data loaded from {st_app.master_list_uri} is not a list (type: {type(dict_data)}). Proceeding with an empty master list.")
-        self.mock_st_success.assert_not_called()
+        self.assertEqual(result_data, []) # Master restaurant data should be empty
+        self.mock_st_warning.assert_any_call(f"Data loaded from {st_app.master_list_uri} is not in the expected format (e.g., a list of records). Type found: {type(dict_data)}. Proceeding with empty master restaurant data.")
+        self.mock_st_success.assert_not_called() # No success for loading
         self.mock_st_info.assert_not_called()
 
-    # --- New GCS Upload Tests ---
+    # --- GCS Upload Tests ---
 
     def test_gcs_upload_api_response_only(self):
         st_app.gcs_destination_uri = "gs://api-bucket/api_folder/"
-        st_app.gcs_master_dictionary_output_uri = "" # No master dict upload
+        st_app.gcs_master_dictionary_output_uri = "" # No master data upload
 
         test_api_data = {"FHRSEstablishment": {"EstablishmentCollection": {"EstablishmentDetail": [{"FHRSID": 801, "BusinessName": "API Only Test"}]}}}
         mock_api_response = MagicMock()
@@ -691,7 +692,7 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_gcs_bucket_instance.blob.return_value = self.mock_gcs_blob_instance
 
 
-        _restaurants_master_list, api_data_content = self._run_fetch_data_logic()
+        _master_restaurant_data, api_data_content = self._run_fetch_data_logic() # Renamed var
 
         self.assertEqual(api_data_content, test_api_data)
         
@@ -704,14 +705,14 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         )
         self.mock_st_success.assert_any_call(f"Successfully uploaded raw API response to gs://api-bucket/{expected_api_filename}")
 
-    def test_gcs_upload_master_dictionary_only(self):
+    def test_gcs_upload_master_restaurant_data_only(self): # Renamed test
         st_app.gcs_destination_uri = "" # No API response upload
-        st_app.gcs_master_dictionary_output_uri = "gs://master-bucket/output/master_dict.json"
+        st_app.gcs_master_dictionary_output_uri = "gs://master-bucket/output/master_data.json" # Patched var, updated path for clarity
 
-        initial_master_list = [{"FHRSID": 901, "BusinessName": "Master Only Original"}]
-        self.mock_load_json_uri.return_value = initial_master_list
+        initial_master_data = [{"FHRSID": 901, "BusinessName": "Master Only Original"}] # Renamed var
+        self.mock_load_json_uri.return_value = initial_master_data
         
-        # API returns one new item to make the final master list different
+        # API returns one new item to make the final master data different
         test_api_data = {"FHRSEstablishment": {"EstablishmentCollection": {"EstablishmentDetail": [{"FHRSID": 902, "BusinessName": "Master Only New API"}]}}}
         mock_api_response = MagicMock()
         mock_api_response.status_code = 200
@@ -724,22 +725,22 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         self.mock_gcs_blob_instance.reset_mock()
         self.mock_gcs_bucket_instance.blob.return_value = self.mock_gcs_blob_instance
 
-        final_master_list, _api_data_content = self._run_fetch_data_logic()
+        final_master_data, _api_data_content = self._run_fetch_data_logic() # Renamed var
 
-        self.assertEqual(len(final_master_list), 2) # Original + new from API
+        self.assertEqual(len(final_master_data), 2) # Original + new from API
         
-        expected_master_blob_name = "output/master_dict.json"
+        expected_master_blob_name = "output/master_data.json"
         self.mock_gcs_client_instance.bucket.assert_called_once_with("master-bucket")
         self.mock_gcs_bucket_instance.blob.assert_called_once_with(expected_master_blob_name)
         self.mock_gcs_blob_instance.upload_from_string.assert_called_once_with(
-            json.dumps(final_master_list, indent=4),
+            json.dumps(final_master_data, indent=4),
             content_type='application/json'
         )
-        self.mock_st_success.assert_any_call(f"Successfully uploaded master dictionary to {st_app.gcs_master_dictionary_output_uri}")
+        self.mock_st_success.assert_any_call(f"Successfully uploaded master restaurant data to {st_app.gcs_master_dictionary_output_uri}") # Updated message
 
-    def test_gcs_upload_both_api_and_master(self):
+    def test_gcs_upload_both_api_and_master_data(self): # Renamed test
         st_app.gcs_destination_uri = "gs://dual-api-bucket/responses/"
-        st_app.gcs_master_dictionary_output_uri = "gs://dual-master-bucket/dictionaries/final_master.json"
+        st_app.gcs_master_dictionary_output_uri = "gs://dual-master-bucket/data/final_master_data.json" # Patched var, updated path
 
         test_api_data = {"FHRSEstablishment": {"EstablishmentCollection": {"EstablishmentDetail": [{"FHRSID": 1001, "BusinessName": "Dual Test API"}]}}}
         mock_api_response = MagicMock()
@@ -770,16 +771,16 @@ class TestRestaurantMergingLogic(unittest.TestCase):
             return MagicMock() 
         self.mock_gcs_bucket_instance.blob.side_effect = blob_side_effect
         
-        final_master_list, api_data_content = self._run_fetch_data_logic()
+        final_master_data, api_data_content = self._run_fetch_data_logic() # Renamed var
 
         # Assertions for API Response Upload
         mock_api_blob_instance.upload_from_string.assert_called_once_with(
             json.dumps(api_data_content, indent=4),
             content_type='application/json'
         )
-        # Assertions for Master Dictionary Upload
+        # Assertions for Master Restaurant Data Upload
         mock_master_blob_instance.upload_from_string.assert_called_once_with(
-            json.dumps(final_master_list, indent=4),
+            json.dumps(final_master_data, indent=4), # Renamed var
             content_type='application/json'
         )
         # Check bucket calls (might be tricky with side_effect, ensure client.bucket was called)
@@ -789,7 +790,7 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         
         # Check st.success messages
         self.mock_st_success.assert_any_call(f"Successfully uploaded raw API response to gs://dual-api-bucket/{expected_api_filename}")
-        self.mock_st_success.assert_any_call(f"Successfully uploaded master dictionary to {st_app.gcs_master_dictionary_output_uri}")
+        self.mock_st_success.assert_any_call(f"Successfully uploaded master restaurant data to {st_app.gcs_master_dictionary_output_uri}") # Updated message
 
 
     def test_gcs_upload_api_response_filename_construction(self):
@@ -803,8 +804,8 @@ class TestRestaurantMergingLogic(unittest.TestCase):
         mock_api_response.status_code = 200
         mock_api_response.json.return_value = test_api_data
         self.mock_requests_get.return_value = mock_api_response
-        self.mock_load_json_uri.return_value = []
-        st_app.gcs_master_dictionary_output_uri = "" # No master upload
+        self.mock_load_json_uri.return_value = [] # Empty master data
+        st_app.gcs_master_dictionary_output_uri = "" # No master data upload
 
         for gcs_uri, expected_blob_name, expected_bucket_name in test_cases:
             st_app.gcs_destination_uri = gcs_uri
@@ -825,11 +826,11 @@ class TestRestaurantMergingLogic(unittest.TestCase):
             self.mock_st_success.assert_any_call(f"Successfully uploaded raw API response to gs://{expected_bucket_name}/{expected_blob_name}")
 
 
-    def test_gcs_upload_master_dictionary_error_missing_filename(self):
+    def test_gcs_upload_master_data_error_missing_filename(self): # Renamed test
         st_app.gcs_destination_uri = "" # No API upload
-        st_app.gcs_master_dictionary_output_uri = "gs://master-error-bucket/" # Invalid - missing filename
+        st_app.gcs_master_dictionary_output_uri = "gs://master-error-bucket/" # Invalid - missing filename for master data
 
-        self.mock_load_json_uri.return_value = [{"FHRSID": 1101}] # Some master list data
+        self.mock_load_json_uri.return_value = [{"FHRSID": 1101}] # Some master data
         self._setup_minimal_api_response() # Minimal API response
 
         self.mock_gcs_client_instance.reset_mock()
@@ -839,19 +840,12 @@ class TestRestaurantMergingLogic(unittest.TestCase):
 
         self._run_fetch_data_logic()
 
-        self.mock_st_error.assert_called_once_with("Invalid GCS URI for Master Dictionary: File name is missing.")
-        # Ensure no upload attempt was made for the master dictionary
-        # Check that blob.upload_from_string was not called (for master dict part)
-        # This is a bit tricky since the same mock_gcs_blob_instance might be used.
-        # If only master dict URI is set and it's invalid, then upload_from_string should not be called at all.
+        self.mock_st_error.assert_called_once_with("Invalid GCS URI for Master Restaurant Data: File name is missing.") # Updated error message
+        # Ensure no upload attempt was made for the master data
         self.mock_gcs_blob_instance.upload_from_string.assert_not_called()
-        # Ensure GCS client and bucket were called, but not blob for the master part if error is caught early
+        # Ensure GCS client and bucket were called for the master data part, but not blob if error is caught early
         self.mock_gcs_client_instance.bucket.assert_called_once_with("master-error-bucket")
-        # Blob for master dict should not be called successfully if filename is missing
-        # The check `if not blob_name_master:` in st_app prevents `bucket.blob` for master.
-        # So, if self.mock_gcs_bucket_instance.blob was called, it was for API part (which is off here).
-        # In this specific test, gcs_destination_uri is empty, so bucket.blob() should not be called at all for API.
-        # And for master, it's caught before blob() call.
+        # bucket.blob() for master data should not be called if filename is missing due to the check in st_app.
         self.mock_gcs_bucket_instance.blob.assert_not_called()
 
 
