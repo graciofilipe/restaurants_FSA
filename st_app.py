@@ -4,7 +4,8 @@ import json
 import pandas as pd
 from google.cloud import storage
 from datetime import datetime
-# import os # Removed as it's unused
+import os
+from google.cloud import bigquery
 from typing import Tuple, Optional, List, Dict, Callable, Any
 
 
@@ -241,6 +242,36 @@ def display_data(data_to_display: List[Dict[str, Any]]):
             st.error(f"Could not even display master restaurant data as JSON: {json_e}")
 
 
+def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str):
+    """
+    Writes a Pandas DataFrame to a BigQuery table.
+
+    Args:
+        df: The DataFrame to write.
+        project_id: The Google Cloud project ID.
+        dataset_id: The BigQuery dataset ID.
+        table_id: The BigQuery table ID.
+
+    Returns:
+        True if the write operation was successful, False otherwise.
+    """
+    client = bigquery.Client(project=project_id)
+    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+    
+    job_config = bigquery.LoadJobConfig(
+        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+    )
+    
+    try:
+        job = client.load_table_from_dataframe(df, table_ref_str, job_config=job_config)
+        job.result()  # Wait for the job to complete
+        st.success(f"Successfully wrote data to BigQuery table {table_ref_str}. Overwritten if table existed.")
+        return True
+    except Exception as e:
+        st.error(f"Error writing data to BigQuery table {table_ref_str}: {e}")
+        return False
+
+
 # Set the title of the Streamlit app
 st.title("Food Standards Agency API Explorer")
 
@@ -256,6 +287,9 @@ master_list_uri = st.text_input("Enter Master Restaurant Data URI (JSON) (e.g., 
 
 # Create an input field for the GCS destination for the master restaurant data
 gcs_master_dictionary_output_uri = st.text_input("Enter GCS URI for Master Restaurant Data Output (e.g., gs://bucket-name/path/filename.json)")
+
+# Create an input field for the BigQuery table name
+bq_table_name = st.text_input("Enter BigQuery Table Name (will be overwritten if it exists)")
 
 # Create a button to trigger the API call
 if st.button("Fetch Data"):
@@ -293,4 +327,31 @@ if st.button("Fetch Data"):
 
         # 6. Display Data
         display_data(master_restaurant_data)
+
+        # 7. Write to BigQuery
+        if api_data and bq_table_name: # Ensure there's data and a table name is provided
+            # Convert master_restaurant_data (list of dicts) to DataFrame for BQ
+            # This step is crucial as BQ client expects a DataFrame
+            if master_restaurant_data:
+                df_to_load = pd.json_normalize([item for item in master_restaurant_data if isinstance(item, dict)])
+                if not df_to_load.empty:
+                    dataset_full_id = os.environ.get('BQ_DATASET_ID') # Expects 'project.dataset'
+                    if dataset_full_id:
+                        try:
+                            project_id, dataset_id = dataset_full_id.split('.')
+                            st.info(f"Attempting to write to BigQuery: Project ID '{project_id}', Dataset ID '{dataset_id}', Table ID '{bq_table_name}'")
+                            write_to_bigquery(df_to_load, project_id, dataset_id, bq_table_name)
+                        except ValueError:
+                            st.error(f"Environment variable BQ_DATASET_ID is not in the expected 'project.dataset' format. Value: {dataset_full_id}")
+                        except Exception as e:
+                            st.error(f"An unexpected error occurred during BigQuery operations setup: {e}")
+                    else:
+                        st.warning("Environment variable BQ_DATASET_ID not set. Skipping BigQuery write.")
+                else:
+                    st.warning("Master data is empty or contains no valid records. Skipping BigQuery write.")
+            else:
+                st.warning("Master data is empty. Skipping BigQuery write.")
+        elif bq_table_name: # bq_table_name was provided but api_data was not
+            st.warning("No API data fetched, skipping BigQuery write even though a table name was provided.")
+            
     # If api_data is None, fetch_api_data already displayed an error message.

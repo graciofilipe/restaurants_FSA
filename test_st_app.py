@@ -12,8 +12,10 @@ import requests # For requests.exceptions.RequestException
 import st_app
 from st_app import (
     _parse_gcs_uri, upload_to_gcs, fetch_api_data,
-    load_master_data, load_json_from_uri, process_and_update_master_data
+    load_master_data, load_json_from_uri, process_and_update_master_data,
+    write_to_bigquery # Added import for write_to_bigquery
 )
+from google.cloud import bigquery # For WriteDisposition
 
 
 # Mock Streamlit globally for all tests as it's not running in a true Streamlit environment
@@ -539,3 +541,70 @@ class TestFetchApiData(unittest.TestCase):
         self.assertIsNone(result)
         mock_requests_get.assert_called_once()
         mock_st_error.assert_called_once_with("Error: Could not fetch data from the API. Status Code: 404")
+
+
+class TestBigQueryFunctions(unittest.TestCase):
+
+    @patch('st_app.bigquery.Client') # Mock the BigQuery client in st_app
+    @patch('st_app.st') # Mock Streamlit methods like st.success, st.error
+    def test_write_to_bigquery_success(self, mock_st, mock_bq_client_constructor):
+        # Arrange
+        mock_bq_client_instance = MagicMock()
+        mock_bq_client_constructor.return_value = mock_bq_client_instance
+        
+        sample_data = [{'col1': 'data1', 'col2': 1}, {'col1': 'data2', 'col2': 2}]
+        sample_df = pd.DataFrame(sample_data)
+        
+        project_id = "test_project"
+        dataset_id = "test_dataset"
+        table_id = "test_table"
+        expected_table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+
+        # Act
+        result = write_to_bigquery(sample_df, project_id, dataset_id, table_id)
+
+        # Assert
+        mock_bq_client_constructor.assert_called_once_with(project=project_id)
+        
+        # Check that load_table_from_dataframe was called
+        call_args = mock_bq_client_instance.load_table_from_dataframe.call_args
+        self.assertIsNotNone(call_args, "load_table_from_dataframe was not called")
+
+        # Check the arguments of load_table_from_dataframe
+        loaded_df = call_args[0][0]
+        loaded_table_ref = call_args[0][1]
+        job_config = call_args[1]['job_config']
+
+        pd.testing.assert_frame_equal(loaded_df, sample_df)
+        self.assertEqual(loaded_table_ref, expected_table_ref_str)
+        self.assertEqual(job_config.write_disposition, bigquery.WriteDisposition.WRITE_TRUNCATE)
+        
+        mock_bq_client_instance.load_table_from_dataframe.return_value.result.assert_called_once() # Check job.result() was called
+        mock_st.success.assert_called_once()
+        self.assertTrue(result)
+
+    @patch('st_app.bigquery.Client')
+    @patch('st_app.st')
+    def test_write_to_bigquery_failure(self, mock_st, mock_bq_client_constructor):
+        # Arrange
+        mock_bq_client_instance = MagicMock()
+        mock_bq_client_constructor.return_value = mock_bq_client_instance
+        mock_bq_client_instance.load_table_from_dataframe.side_effect = Exception("Test BQ Error")
+
+        sample_df = pd.DataFrame([{'col1': 'data1'}])
+        project_id = "test_project"
+        dataset_id = "test_dataset"
+        table_id = "test_table"
+        expected_table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+
+        # Act
+        result = write_to_bigquery(sample_df, project_id, dataset_id, table_id)
+
+        # Assert
+        mock_bq_client_constructor.assert_called_once_with(project=project_id)
+        mock_bq_client_instance.load_table_from_dataframe.assert_called_once()
+        mock_st.error.assert_called_once_with(f"Error writing data to BigQuery table {expected_table_ref_str}: Test BQ Error")
+        self.assertFalse(result)
+
+if __name__ == '__main__':
+    unittest.main()
