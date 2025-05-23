@@ -260,6 +260,7 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
     
     job_config = bigquery.LoadJobConfig(
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        column_name_character_map="V2",
     )
     
     try:
