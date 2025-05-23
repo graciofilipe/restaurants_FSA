@@ -277,8 +277,8 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
 st.title("Food Standards Agency API Explorer")
 
 # Create input fields for longitude and latitude
-longitude = st.number_input("Enter Longitude", format="%.6f")
-latitude = st.number_input("Enter Latitude", format="%.6f")
+longitude = st.number_input("Enter Longitude", format="%.3f")
+latitude = st.number_input("Enter Latitude", format="%.3f")
 
 # Create an input field for the GCS destination folder URI
 gcs_destination_uri = st.text_input("Enter GCS destination folder for the scan (e.g., gs://bucket-name/scans-folder/)")
