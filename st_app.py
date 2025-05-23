@@ -278,8 +278,8 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
 st.title("Food Standards Agency API Explorer")
 
 # Create input fields for longitude and latitude
-longitude = st.number_input("Enter Longitude", format="%.6f")
-latitude = st.number_input("Enter Latitude", format="%.6f")
+longitude = st.number_input("Enter Longitude", format="%.3f")
+latitude = st.number_input("Enter Latitude", format="%.3f")
 
 # Create an input field for max results
 max_results_input = st.number_input("Enter Max Results for API Call", min_value=1, max_value=5000, value=200)
