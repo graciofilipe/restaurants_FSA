@@ -117,18 +117,19 @@ def upload_to_gcs(gcs_uri: str, data_string: str, content_type: str = 'applicati
         return False
 
 
-def fetch_api_data(longitude: float, latitude: float) -> Optional[Dict[str, Any]]:
+def fetch_api_data(longitude: float, latitude: float, max_results: int) -> Optional[Dict[str, Any]]:
     """
     Fetches data from the Food Standards Agency API.
 
     Args:
         longitude: The longitude for the API search.
         latitude: The latitude for the API search.
+        max_results: The maximum number of results to fetch from the API.
 
     Returns:
         A dictionary containing the JSON response from the API, or None if an error occurs.
     """
-    api_url = f"https://api1-ratings.food.gov.uk/enhanced-search/en-GB/%5e/%5e/DISTANCE/1/Englad/{longitude}/{latitude}/1/500/json"
+    api_url = f"https://api1-ratings.food.gov.uk/enhanced-search/en-GB/%5e/%5e/DISTANCE/1/Englad/{longitude}/{latitude}/1/{max_results}/json"
     try:
         response = requests.get(api_url)
         if response.status_code == 200:
@@ -280,6 +281,9 @@ st.title("Food Standards Agency API Explorer")
 longitude = st.number_input("Enter Longitude", format="%.6f")
 latitude = st.number_input("Enter Latitude", format="%.6f")
 
+# Create an input field for max results
+max_results_input = st.number_input("Enter Max Results for API Call", min_value=1, max_value=5000, value=200)
+
 # Create an input field for the GCS destination folder URI
 gcs_destination_uri = st.text_input("Enter GCS destination folder for the scan (e.g., gs://bucket-name/scans-folder/)")
 
@@ -295,14 +299,26 @@ bq_full_path = st.text_input("Enter BigQuery Table Path (project.dataset.table)"
 # Create a button to trigger the API call
 if st.button("Fetch Data"):
     # 1. Fetch API Data
-    api_data = fetch_api_data(longitude, latitude)
+    api_data = fetch_api_data(longitude, latitude, max_results_input)
 
     if api_data:
+        # Get establishments and display count
+        establishments_list = api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
+        if establishments_list is None: # Ensure it's a list even if 'EstablishmentDetail' is explicitly null
+            establishments_list = []
+        num_results_returned = len(establishments_list)
+        st.info(f"Number of results returned by API: {num_results_returned}")
+
+        if num_results_returned == max_results_input:
+            st.warning(f"Warning: The API returned {num_results_returned} results, which matches the `max_results` input. This might indicate the results are capped. Consider increasing the 'Max Results for API Call' value if you suspect more data is available.")
+
         # 2. Load Master Restaurant Data
         # Pass the actual load_json_from_uri function as the callable
         master_restaurant_data = load_master_data(master_list_uri, load_json_from_uri)
 
         # 3. Process API Response and Update Master Restaurant Data
+        # Note: process_and_update_master_data also extracts 'EstablishmentDetail',
+        # but we need the count *before* this step for the warning.
         master_restaurant_data, _ = process_and_update_master_data(master_restaurant_data, api_data)
         
         # 4. Upload Raw API Response to gcs_destination_uri (folder)

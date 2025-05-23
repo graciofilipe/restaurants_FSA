@@ -505,10 +505,12 @@ class TestFetchApiData(unittest.TestCase):
         mock_requests_get.return_value = mock_response
 
         longitude, latitude = -0.123, 51.456
-        result = fetch_api_data(longitude, latitude)
+        max_results = 150  # Added max_results
+        result = fetch_api_data(longitude, latitude, max_results)
 
         self.assertEqual(result, expected_data)
-        mock_requests_get.assert_called_once_with(f"https://api1-ratings.food.gov.uk/enhanced-search/en-GB/%5e/%5e/DISTANCE/1/Englad/{longitude}/{latitude}/1/500/json")
+        # Updated URL assertion
+        mock_requests_get.assert_called_once_with(f"https://api1-ratings.food.gov.uk/enhanced-search/en-GB/%5e/%5e/DISTANCE/1/Englad/{longitude}/{latitude}/1/{max_results}/json")
         mock_st_error.assert_not_called()
 
     @patch('st_app.st.error')
@@ -518,7 +520,8 @@ class TestFetchApiData(unittest.TestCase):
         mock_requests_get.side_effect = requests.exceptions.RequestException("Network connection failed")
 
         longitude, latitude = 0.5, 50.5
-        result = fetch_api_data(longitude, latitude)
+        max_results = 150 # Added max_results
+        result = fetch_api_data(longitude, latitude, max_results)
 
         self.assertIsNone(result)
         mock_requests_get.assert_called_once()
@@ -536,11 +539,282 @@ class TestFetchApiData(unittest.TestCase):
         mock_requests_get.return_value = mock_response
 
         longitude, latitude = 1.0, 49.0
-        result = fetch_api_data(longitude, latitude)
+        max_results = 150 # Added max_results
+        result = fetch_api_data(longitude, latitude, max_results)
 
         self.assertIsNone(result)
         mock_requests_get.assert_called_once()
         mock_st_error.assert_called_once_with("Error: Could not fetch data from the API. Status Code: 404")
+
+
+class TestAppMainLogic(unittest.TestCase):
+    # Keep a reference to the original st module
+    original_st = st_app.st
+
+    def setUp(self):
+        # Reset mocks for st specific functions for each test
+        # This ensures that st.info, st.warning etc. are fresh mocks for each test
+        st_app.st = MagicMock()
+        # Mock specific streamlit functions that are called directly in the app
+        st_app.st.title = MagicMock()
+        st_app.st.number_input = MagicMock()
+        st_app.st.text_input = MagicMock()
+        st_app.st.button = MagicMock()
+        st_app.st.info = MagicMock()
+        st_app.st.warning = MagicMock()
+        st_app.st.error = MagicMock() # In case any other part of the script calls it
+        st_app.st.success = MagicMock() # For GCS/BQ uploads
+        st_app.st.dataframe = MagicMock() # For display_data
+        st_app.st.json = MagicMock() # For display_data fallback
+
+    def tearDown(self):
+        # Restore the original st module to avoid interference between test classes
+        st_app.st = self.original_st
+        # Reset all mocks on the original st module if necessary,
+        # but individual mocks are preferred.
+        # For now, we'll rely on the per-test setup.
+
+    def _run_app_script_main_logic(self):
+        # This helper will simulate the execution of the main part of st_app.py
+        # It relies on mocks for input functions (like st.button) to guide execution.
+        # We need to ensure that all global-level st calls in st_app.py are also mocked
+        # if they exist and are problematic. The st_app.st = MagicMock() in setUp
+        # should handle this for st.* calls within the script.
+
+        # The main logic is inside `if st.button("Fetch Data")`
+        # So, we can simulate this by calling the relevant parts of the script.
+        # A robust way is to put the main app logic into a function in st_app.py.
+        # Since we can't change st_app.py, we'll execute the script.
+        # We need to be careful as this re-runs the entire script including imports.
+        
+        # To avoid issues with re-importing and to control the execution flow better,
+        # we will directly call the code block that is under `if st.button("Fetch Data")`
+        # This requires careful mocking of functions called before this block.
+        # For this specific case, the relevant code is already in st_app.py
+        # and will be executed if st.button returns True.
+
+        # We'll use a simplified approach: directly use the current st_app module
+        # and rely on its state after mocks have been applied.
+        # This means the `if st.button("Fetch Data"):` block will be tested
+        # by ensuring `st_app.st.button` returns True and then checking effects.
+
+        # Simulate input values. These will be returned by the mocked st.number_input and st.text_input
+        # The order of calls to st.number_input matters.
+        # 1. longitude, 2. latitude, 3. max_results_input
+        # Other inputs like GCS URIs will be mocked to return empty strings or None
+        # to simplify tests focusing on the API result count logic.
+
+        # Default mock setup for inputs to avoid None values if not specified by the test
+        def number_input_side_effect(label, **kwargs):
+            if "Longitude" in label: return 0.0
+            if "Latitude" in label: return 0.0
+            if "Max Results" in label: return 100 # Default, can be overridden by specific tests
+            return 0 # Default for any other number input
+        
+        st_app.st.number_input.side_effect = number_input_side_effect
+        st_app.st.text_input.return_value = "" # Default for all text inputs
+
+        # Simulate button press
+        st_app.st.button.return_value = True
+
+        # Now, we need to trigger the execution of the code block under `if st.button("Fetch Data")`.
+        # One way to do this without `exec` is to have a function in `st_app.py` that contains this block.
+        # Since that's not the case, we'll rely on the fact that when `test_st_app.py` imports `st_app`,
+        # the `if st.button("Fetch Data")` block is defined.
+        # We can call it by re-evaluating that part of the module or by running the module's main execution path.
+        
+        # Let's try to execute the script's content in a controlled manner.
+        # We'll use a global variable in st_app to store the app's main function if it were refactored.
+        # For now, we assume that by setting st.button to True, and then importing/running st_app,
+        # the logic will execute.
+        # The import `import st_app` at the top of test_st_app.py already executes the script once.
+        # Re-running it via `exec` or `importlib.reload` is tricky with mocks.
+
+        # A simpler simulation:
+        # The `if st.button("Fetch Data")` block in st_app.py is at the global level.
+        # When st_app is imported, this block is defined.
+        # If st.button is mocked to return True *before* this block is encountered by Python interpreter,
+        # then the code inside it would run. However, imports happen first.
+        # So, we need to re-evaluate the part of st_app.py that contains this conditional block.
+
+        # Let's try a slightly different approach for triggering the logic:
+        # We will patch all inputs, then we can "re-run" the script's main definition
+        # by using `importlib.reload`. This is generally safer than exec.
+        # However, it can have side effects with mocks if not handled carefully.
+
+        # For now, let's assume the initial import of st_app in test_st_app.py
+        # already sets up the UI elements. We then trigger the "Fetch Data" button.
+        # The key is that the `if st.button("Fetch Data"):` block is part of the script's main execution path.
+        # So, if we can re-trigger that path after setting mocks, it should work.
+
+        # The easiest way, given the current structure and the global `st_app.st = MagicMock()`
+        # is to encapsulate the main logic of `st_app.py` (from `st.title` onwards)
+        # into a function, then call that function. Since we cannot modify `st_app.py`,
+        # we will simulate the relevant section.
+        
+        # The Streamlit app's structure means the code from st.title() downwards is run on import or re-run.
+        # We'll assume the `if st.button("Fetch Data")` part is what we need to "re-run"
+        # The mocks should already be in place.
+        
+        # Let's refine: the `if st.button("Fetch Data")` block in `st_app.py` uses the *current* values
+        # of `longitude`, `latitude`, `max_results_input` etc., which are defined by `st.number_input` calls
+        # *before* the button.
+        # So, we need to ensure these `st.number_input` mocks are set up correctly.
+
+        # The actual execution of the `if st.button("Fetch Data"):` block happens when st_app.py is run.
+        # Our mocks for st.button, st.number_input etc. need to be in place when this happens.
+        # The import at the top of test_st_app.py runs st_app.py once.
+        # We can use importlib.reload(st_app) to re-run it after setting up mocks for a specific test.
+        
+        # This requires careful handling of mocks so they are active during the reload.
+        # Patching at the class or method level should ensure this.
+
+        # Let's execute the main part of st_app.py.
+        # All functions in st_app are defined when st_app is imported.
+        # The UI rendering and logic execution happens from `st.title(...)` downwards.
+        # We can simulate this by calling a hypothetical main function.
+        # Since it doesn't exist, we'll have to be more direct.
+
+        # The `if st.button("Fetch Data")` block:
+        # We assume our mocks for st.number_input, st.text_input, and st.button are active.
+        # Then we call the function that uses these inputs, which is `fetch_api_data`
+        # and the subsequent logic.
+        
+        # Simplified approach for this specific test:
+        # The code inside `if st.button("Fetch Data")` is what we care about.
+        # We will mock the inputs (`longitude`, `latitude`, `max_results_input`) that are read *before* this block.
+        # Then we will call the sequence of functions as they appear in the `if api_data:` block.
+        
+        # This is still not ideal. The most direct way to test the `if st.button` block
+        # is to ensure st.button() returns true and then the script executes that path.
+        # This happens upon import/reload if the conditions are met.
+
+        # Let's assume the test structure will mock `st.button` to return `True`.
+        # Then, the code inside `if st.button("Fetch Data")` will be executed.
+        # We need to ensure `fetch_api_data` is mocked correctly for each test case.
+        
+        # The `st_app.py` script will be executed (or reloaded).
+        # The critical part is that `st.number_input` calls must be mocked before `max_results_input` is used.
+        # And `fetch_api_data` must be mocked before it's called.
+
+        # Let's try to execute the relevant part of the script directly.
+        # This is fragile. A better way is to refactor st_app.py.
+        # For now, we will mock inputs, then call the sequence of operations
+        # that would happen inside the `if st.button("Fetch Data")` and `if api_data:` blocks.
+        
+        # No, this is also not quite right. We need to test the Streamlit control flow.
+        # The `exec` approach or `importlib.reload` is probably necessary if we can't refactor.
+        
+        # Let's use `importlib.reload` for now. It's cleaner than `exec`.
+        import importlib
+        # All patches should be active when reload happens.
+        # The `st_app.st` mock needs to be correctly configured.
+        
+        # Mock other functions that are called within the button click logic
+        # to avoid side effects not relevant to these specific tests.
+        st_app.load_master_data = MagicMock(return_value=[]) # Assume empty master data
+        st_app.process_and_update_master_data = MagicMock(return_value=([], 0))
+        st_app.upload_to_gcs = MagicMock(return_value=True)
+        st_app.display_data = MagicMock()
+        st_app.write_to_bigquery = MagicMock(return_value=True)
+        st_app.pd.json_normalize = MagicMock(return_value=pd.DataFrame()) # Mock pandas normalization
+
+        importlib.reload(st_app) # This will re-run st_app.py with current mocks
+
+
+    @patch('st_app.fetch_api_data')
+    def test_results_less_than_max(self, mock_fetch_api_data):
+        max_val = 100
+        returned_val = 50
+        
+        # Mock st.number_input to return our max_val for the 'Max Results' input
+        def number_input_side_effect(label, **kwargs):
+            if "Max Results" in label: return max_val
+            if "Longitude" in label: return 0.0
+            if "Latitude" in label: return 0.0
+            return 0
+        st_app.st.number_input.side_effect = number_input_side_effect
+
+        mock_fetch_api_data.return_value = {
+            'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [{} for _ in range(returned_val)]}}
+        }
+        
+        self._run_app_script_main_logic()
+
+        st_app.st.info.assert_any_call(f"Number of results returned by API: {returned_val}")
+        # Ensure warning is not called for this case
+        # Check all calls to st.warning, make sure none match the specific cap warning.
+        for call_args in st_app.st.warning.call_args_list:
+            self.assertNotIn("results, which matches the `max_results` input", call_args[0][0])
+
+
+    @patch('st_app.fetch_api_data')
+    def test_results_equal_to_max_cap_warning(self, mock_fetch_api_data):
+        max_val = 75
+        returned_val = 75
+
+        def number_input_side_effect(label, **kwargs):
+            if "Max Results" in label: return max_val
+            if "Longitude" in label: return 0.0
+            if "Latitude" in label: return 0.0
+            return 0
+        st_app.st.number_input.side_effect = number_input_side_effect
+
+        mock_fetch_api_data.return_value = {
+            'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [{} for _ in range(returned_val)]}}
+        }
+
+        self._run_app_script_main_logic()
+
+        st_app.st.info.assert_any_call(f"Number of results returned by API: {returned_val}")
+        st_app.st.warning.assert_any_call(
+            f"Warning: The API returned {returned_val} results, which matches the `max_results` input. "
+            "This might indicate the results are capped. Consider increasing the 'Max Results for API Call' "
+            "value if you suspect more data is available."
+        )
+
+    @patch('st_app.fetch_api_data')
+    def test_api_returns_no_establishments(self, mock_fetch_api_data):
+        max_val = 100
+        returned_val = 0
+
+        def number_input_side_effect(label, **kwargs):
+            if "Max Results" in label: return max_val
+            if "Longitude" in label: return 0.0
+            if "Latitude" in label: return 0.0
+            return 0
+        st_app.st.number_input.side_effect = number_input_side_effect
+        
+        # Scenario 1: EstablishmentDetail is an empty list
+        mock_fetch_api_data.return_value = {
+            'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': []}}}
+        
+        self._run_app_script_main_logic()
+        st_app.st.info.assert_any_call(f"Number of results returned by API: {returned_val}")
+        for call_args in st_app.st.warning.call_args_list:
+            self.assertNotIn("results, which matches the `max_results` input", call_args[0][0])
+        
+        st_app.st.info.reset_mock()
+        st_app.st.warning.reset_mock()
+
+        # Scenario 2: EstablishmentDetail is None (explicitly null in JSON)
+        mock_fetch_api_data.return_value = {
+            'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': None}}}
+        
+        self._run_app_script_main_logic()
+        st_app.st.info.assert_any_call(f"Number of results returned by API: {returned_val}") # len([]) is 0
+        for call_args in st_app.st.warning.call_args_list:
+            self.assertNotIn("results, which matches the `max_results` input", call_args[0][0])
+
+        st_app.st.info.reset_mock()
+        st_app.st.warning.reset_mock()
+
+        # Scenario 3: EstablishmentCollection is missing (or FHRSEstablishment)
+        mock_fetch_api_data.return_value = {'FHRSEstablishment': {}}
+        self._run_app_script_main_logic()
+        st_app.st.info.assert_any_call(f"Number of results returned by API: {returned_val}") # .get('EstablishmentDetail', [])
+        for call_args in st_app.st.warning.call_args_list:
+            self.assertNotIn("results, which matches the `max_results` input", call_args[0][0])
 
 
 class TestBigQueryFunctions(unittest.TestCase):
