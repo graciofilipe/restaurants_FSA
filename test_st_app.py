@@ -546,6 +546,137 @@ class TestFetchApiData(unittest.TestCase):
         mock_requests_get.assert_called_once()
         mock_st_error.assert_called_once_with("Error: Could not fetch data from the API. Status Code: 404")
 
+# Helper class for mock responses in test_fetch_data_multiple_coordinates
+class MockResponseHelper:
+    def __init__(self, json_data, status_code):
+        self.json_data = json_data
+        self.status_code = status_code
+
+    def json(self):
+        return self.json_data
+
+class TestHandleFetchDataAction(unittest.TestCase):
+
+    @patch('st_app.st.text_area') # Mocked, but value passed directly to handle_fetch_data_action
+    @patch('st_app.st.number_input') # Mocked, but value passed directly
+    @patch('st_app.st.text_input') # Mocked, but values passed directly
+    @patch('st_app.requests.get')
+    @patch('st_app.load_master_data')
+    # process_and_update_master_data is NOT mocked to test its integration
+    @patch('st_app.upload_to_gcs')
+    @patch('st_app.write_to_bigquery')
+    @patch('st_app.display_data') # Mock display_data to avoid actual UI rendering
+    @patch('st_app.st.info')
+    @patch('st_app.st.success')
+    @patch('st_app.st.warning')
+    @patch('st_app.st.error')
+    @patch('st_app.st.write')
+    @patch('st_app.st.stop') # Mock st.stop to prevent test execution halt
+    def test_fetch_data_multiple_coordinates(
+        self, mock_st_stop, mock_st_write, mock_st_error, mock_st_warning, 
+        mock_st_success, mock_st_info, mock_display_data,
+        mock_write_to_bigquery, mock_upload_to_gcs, mock_load_master_data,
+        mock_requests_get, mock_st_text_input_global, 
+        mock_st_number_input_global, mock_st_text_area_global 
+        # Renamed global mocks to avoid clash if st_app.py also had variables with these names
+    ):
+        # --- Configure Mock Return Values (even if values passed directly, mocks might be checked by st_app) ---
+        
+        # For st_app.py's global scope st.text_area, st.number_input, st.text_input calls
+        # These are not directly used by handle_fetch_data_action parameters but are in st_app.py
+        mock_st_text_area_global.return_value = "1.0,2.0\n-3.5,4.8" # Default for global call
+        mock_st_number_input_global.return_value = 200 # Default for global call
+        mock_st_text_input_global.return_value = "gs://dummy_global_uri/" # Default for global calls
+
+
+        # Values to be passed directly to handle_fetch_data_action
+        coordinate_pairs_value = "1.0,2.0\n-3.5,4.8"
+        max_results_value = 150
+        gcs_destination_uri_value = "gs://test-gcs-destination-folder/"
+        master_list_uri_value = "gs://test-master-list-uri/master.json"
+        gcs_master_output_uri_value = "gs://test-gcs-master-output/output.json"
+        bq_full_path_value = "test_project.test_dataset.test_table"
+
+        # Mock requests.get for API calls
+        mock_response_1_data = {
+            'FHRSEstablishment': {
+                'EstablishmentCollection': {
+                    'EstablishmentDetail': [{'FHRSID': 1, 'BusinessName': 'Restaurant A (Coords 1,2)'}]
+                }
+            }
+        }
+        mock_response_2_data = {
+            'FHRSEstablishment': {
+                'EstablishmentCollection': {
+                    'EstablishmentDetail': [
+                        {'FHRSID': 2, 'BusinessName': 'Restaurant B (Coords -3.5,4.8)'},
+                        {'FHRSID': 3, 'BusinessName': 'Restaurant C (Coords -3.5,4.8)'}
+                    ]
+                }
+            }
+        }
+        mock_requests_get.side_effect = [
+            MockResponseHelper(mock_response_1_data, 200),
+            MockResponseHelper(mock_response_2_data, 200)
+        ]
+
+        mock_load_master_data.return_value = [] 
+        mock_upload_to_gcs.return_value = True
+        mock_write_to_bigquery.return_value = True
+        
+        # --- Call the refactored function ---
+        result_master_data = st_app.handle_fetch_data_action(
+            coordinate_pairs_str=coordinate_pairs_value,
+            max_results=max_results_value,
+            gcs_destination_uri_str=gcs_destination_uri_value,
+            master_list_uri_str=master_list_uri_value,
+            gcs_master_output_uri_str=gcs_master_output_uri_value,
+            bq_full_path_str=bq_full_path_value
+        )
+
+        # --- Assertions ---
+        expected_api_calls = [
+            unittest.mock.call(f"https://api1-ratings.food.gov.uk/enhanced-search/en-GB/%5e/%5e/DISTANCE/1/Englad/1.0/2.0/1/{max_results_value}/json"),
+            unittest.mock.call(f"https://api1-ratings.food.gov.uk/enhanced-search/en-GB/%5e/%5e/DISTANCE/1/Englad/-3.5/4.8/1/{max_results_value}/json")
+        ]
+        mock_requests_get.assert_has_calls(expected_api_calls, any_order=False)
+
+        mock_load_master_data.assert_called_once_with(master_list_uri_value, st_app.load_json_from_uri)
+        
+        self.assertIsNotNone(result_master_data)
+        self.assertEqual(len(result_master_data), 3) 
+        fhrsid_list = sorted([item['FHRSID'] for item in result_master_data])
+        self.assertEqual(fhrsid_list, [1, 2, 3])
+        for item in result_master_data:
+            self.assertIn('first_seen', item) # Checked because real process_and_update_master_data runs
+
+        self.assertEqual(mock_upload_to_gcs.call_count, 2)
+        args_raw_upload, _ = mock_upload_to_gcs.call_args_list[0]
+        self.assertTrue(args_raw_upload[0].startswith(gcs_destination_uri_value + "combined_api_response_"))
+        uploaded_raw_data = json.loads(args_raw_upload[1])
+        self.assertEqual(len(uploaded_raw_data['FHRSEstablishment']['EstablishmentCollection']['EstablishmentDetail']), 3)
+
+        args_master_upload, _ = mock_upload_to_gcs.call_args_list[1]
+        self.assertEqual(args_master_upload[0], gcs_master_output_uri_value)
+        uploaded_master_data = json.loads(args_master_upload[1])
+        self.assertEqual(len(uploaded_master_data), 3)
+
+        mock_write_to_bigquery.assert_called_once()
+        # Check the DataFrame passed to write_to_bigquery
+        call_args_bq, _ = mock_write_to_bigquery.call_args
+        df_passed_to_bq = call_args_bq[0]
+        self.assertIsInstance(df_passed_to_bq, pd.DataFrame)
+        self.assertEqual(len(df_passed_to_bq), 3)
+        self.assertEqual(sorted(list(df_passed_to_bq['FHRSID'])), [1,2,3])
+
+
+        mock_st_info.assert_any_call("Found 2 valid coordinate pairs. Fetching data for each...")
+        mock_st_success.assert_any_call("Total establishments fetched from all API calls: 3")
+        # This success call comes from process_and_update_master_data
+        mock_st_success.assert_any_call("Processed API response. Added 3 new restaurant records. Total unique records: 3")
+        # This success call comes from upload_to_gcs (twice) and write_to_bigquery
+        self.assertGreaterEqual(mock_st_success.call_count, 3)
+
 
 class TestAppMainLogic(unittest.TestCase):
     # Keep a reference to the original st module
@@ -574,6 +705,9 @@ class TestAppMainLogic(unittest.TestCase):
         # but individual mocks are preferred.
         # For now, we'll rely on the per-test setup.
 
+    # _run_app_script_main_logic and the tests that use it might need to be adapted
+    # if the global st_app.py structure changed significantly due to refactoring for
+    # handle_fetch_data_action. For now, assuming they test other parts or are separate.
     def _run_app_script_main_logic(self):
         # This helper will simulate the execution of the main part of st_app.py
         # It relies on mocks for input functions (like st.button) to guide execution.

@@ -277,9 +277,8 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
 # Set the title of the Streamlit app
 st.title("Food Standards Agency API Explorer")
 
-# Create input fields for longitude and latitude
-longitude = st.number_input("Enter Longitude", format="%.3f")
-latitude = st.number_input("Enter Latitude", format="%.3f")
+# Create input field for coordinate pairs
+coordinate_pairs_input = st.text_area("Enter longitude,latitude pairs (one per line):")
 
 # Create an input field for max results
 max_results_input = st.number_input("Enter Max Results for API Call", min_value=1, max_value=5000, value=200)
@@ -296,88 +295,149 @@ gcs_master_dictionary_output_uri = st.text_input("Enter GCS URI for Master Resta
 # Create an input field for the BigQuery full path
 bq_full_path = st.text_input("Enter BigQuery Table Path (project.dataset.table)")
 
+
+def handle_fetch_data_action(
+    coordinate_pairs_str: str, 
+    max_results: int, 
+    gcs_destination_uri_str: str, 
+    master_list_uri_str: str, 
+    gcs_master_output_uri_str: str, 
+    bq_full_path_str: str
+) -> List[Dict[str, Any]]:
+    """
+    Handles the core logic of fetching, processing, and saving data 
+    when the 'Fetch Data' button is clicked.
+    """
+    coordinate_lines = coordinate_pairs_str.strip().split('\n')
+    valid_coords = []
+    for i, line in enumerate(coordinate_lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            lon_str, lat_str = line.split(',')
+            lon = float(lon_str.strip())
+            lat = float(lat_str.strip())
+            valid_coords.append((lon, lat))
+        except ValueError:
+            st.error(f"Error parsing line {i+1}: '{line}'. Expected 'longitude,latitude'. Skipping this line.")
+            continue
+
+    if not valid_coords:
+        st.error("No valid coordinate pairs found. Please enter coordinates in 'longitude,latitude' format, one per line.")
+        st.stop() # Stop further processing in this block
+
+    all_api_establishments = []
+    total_results_from_all_calls = 0
+
+    st.info(f"Found {len(valid_coords)} valid coordinate pairs. Fetching data for each...")
+
+    for lon, lat in valid_coords:
+        st.write(f"Fetching data for Longitude: {lon}, Latitude: {lat}...")
+        api_response = fetch_api_data(lon, lat, max_results_input)
+        
+        if api_response:
+            establishments_list = api_response.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
+            if establishments_list is None: # Ensure it's a list
+                establishments_list = []
+            
+            num_results_this_call = len(establishments_list)
+            total_results_from_all_calls += num_results_this_call
+            st.info(f"API call for ({lon}, {lat}) returned {num_results_this_call} establishments.")
+
+            if num_results_this_call == max_results_input:
+                st.warning(f"Warning for ({lon}, {lat}): The API returned {num_results_this_call} results, matching `max_results`. Results might be capped.")
+            
+            all_api_establishments.extend(establishments_list)
+        # fetch_api_data itself will show an error if the call fails
+
+    if not all_api_establishments:
+        st.info("No establishments found from any of the API calls. Nothing to process further.")
+        st.stop()
+
+    st.success(f"Total establishments fetched from all API calls: {len(all_api_establishments)}")
+    
+    # This combined_api_data will be used for subsequent processing steps
+    combined_api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': all_api_establishments}}}
+    
+    # For compatibility with existing logic that expects an 'api_data' variable for GCS upload and BQ.
+    # This means the raw GCS upload will store the *combined* data.
+    api_data = combined_api_data 
+
+    # 2. Load Master Restaurant Data
+    # Pass the actual load_json_from_uri function as the callable
+    master_restaurant_data = load_master_data(master_list_uri, load_json_from_uri)
+
+    # 3. Process API Response (Combined) and Update Master Restaurant Data
+    master_restaurant_data, new_additions_count = process_and_update_master_data(master_restaurant_data, combined_api_data)
+    # The success message from process_and_update_master_data already states new additions and total.
+    
+    # 4. Upload Combined Raw API Response to gcs_destination_uri_str (folder)
+    # The variable 'api_data' now holds 'combined_api_data'
+    if gcs_destination_uri_str:
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        # Consider a more descriptive filename if multiple coords are common, e.g., including hash or range
+        api_response_filename = f"combined_api_response_{current_date}.json" 
+        
+        gcs_destination_uri_folder = gcs_destination_uri_str
+        if not gcs_destination_uri_folder.endswith('/'):
+            gcs_destination_uri_folder += '/'
+        
+        full_gcs_path_api_response = f"{gcs_destination_uri_folder}{api_response_filename}"
+
+        if upload_to_gcs(full_gcs_path_api_response, json.dumps(api_data, indent=4)):
+            st.success(f"Successfully uploaded combined raw API response to {full_gcs_path_api_response}")
+        # upload_to_gcs handles its own st.error messages on failure
+    
+    # 5. Upload Master Restaurant Data to gcs_master_output_uri_str (full file path)
+    if gcs_master_output_uri_str:
+        if upload_to_gcs(gcs_master_output_uri_str, json.dumps(master_restaurant_data, indent=4)):
+            st.success(f"Successfully uploaded master restaurant data to {gcs_master_output_uri_str}")
+        # upload_to_gcs handles its own st.error messages on failure
+
+    # 6. Display Data
+    display_data(master_restaurant_data)
+
+    # 7. Write to BigQuery
+    # The variable 'api_data' (holding combined_api_data) can be used to check if any data was fetched.
+    if api_data and api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail'): 
+        if master_restaurant_data: # Check if master data (potentially enriched) exists
+            df_to_load = pd.json_normalize([item for item in master_restaurant_data if isinstance(item, dict)])
+            if df_to_load is not None and not df_to_load.empty:
+                if bq_full_path_str:
+                    try:
+                        path_parts = bq_full_path_str.split('.')
+                        if len(path_parts) == 3: 
+                            project_id, dataset_id, table_id = path_parts
+                            if len(project_id) > 0 and len(dataset_id) > 0 and len(table_id) > 0:
+                                st.info(f"Attempting to write to BigQuery table: {bq_full_path_str}")
+                                write_to_bigquery(df_to_load, project_id, dataset_id, table_id)
+                            else: 
+                                st.error(f"Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty. Got: '{bq_full_path_str}'. Skipping BigQuery write.")
+                        else: 
+                            st.error(f"Invalid BigQuery Table Path format. Expected 'project.dataset.table' (3 parts), but got {len(path_parts)} part(s) from '{bq_full_path_str}'. Skipping BigQuery write.")
+                    except ValueError: 
+                        st.error(f"Invalid BigQuery Table Path format. Expected 'project.dataset.table'. Error during parsing '{bq_full_path_str}'. Skipping BigQuery write.")
+                    except Exception as e:
+                        st.error(f"An unexpected error occurred during BigQuery operations setup or write: {e}")
+                else:
+                    st.warning("Master data is ready, but the BigQuery Table Path is missing. Skipping BigQuery write.")
+            else:
+                st.warning("Master data is empty or contains no valid records after processing. Skipping BigQuery write.")
+        else:
+            st.warning("Master data is empty (was not loaded or was cleared). Skipping BigQuery write.")
+    else:
+        st.info("No API data was fetched or processed successfully, so skipping BigQuery write.")
+    return master_restaurant_data
+
+
 # Create a button to trigger the API call
 if st.button("Fetch Data"):
-    # 1. Fetch API Data
-    api_data = fetch_api_data(longitude, latitude, max_results_input)
-
-    if api_data:
-        # Get establishments and display count
-        establishments_list = api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
-        if establishments_list is None: # Ensure it's a list even if 'EstablishmentDetail' is explicitly null
-            establishments_list = []
-        num_results_returned = len(establishments_list)
-        st.info(f"Number of results returned by API: {num_results_returned}")
-
-        if num_results_returned == max_results_input:
-            st.warning(f"Warning: The API returned {num_results_returned} results, which matches the `max_results` input. This might indicate the results are capped. Consider increasing the 'Max Results for API Call' value if you suspect more data is available.")
-
-        # 2. Load Master Restaurant Data
-        # Pass the actual load_json_from_uri function as the callable
-        master_restaurant_data = load_master_data(master_list_uri, load_json_from_uri)
-
-        # 3. Process API Response and Update Master Restaurant Data
-        # Note: process_and_update_master_data also extracts 'EstablishmentDetail',
-        # but we need the count *before* this step for the warning.
-        master_restaurant_data, _ = process_and_update_master_data(master_restaurant_data, api_data)
-        
-        # 4. Upload Raw API Response to gcs_destination_uri (folder)
-        if gcs_destination_uri:
-            current_date = datetime.now().strftime("%Y-%m-%d")
-            api_response_filename = f"api_response_{current_date}.json"
-            
-            gcs_destination_uri_folder = gcs_destination_uri
-            if not gcs_destination_uri_folder.endswith('/'):
-                gcs_destination_uri_folder += '/'
-            
-            full_gcs_path_api_response = f"{gcs_destination_uri_folder}{api_response_filename}"
-
-            if upload_to_gcs(full_gcs_path_api_response, json.dumps(api_data, indent=4)):
-                st.success(f"Successfully uploaded raw API response to {full_gcs_path_api_response}")
-            # upload_to_gcs handles its own st.error messages on failure
-        
-        # 5. Upload Master Restaurant Data to gcs_master_dictionary_output_uri (full file path)
-        if gcs_master_dictionary_output_uri:
-            if upload_to_gcs(gcs_master_dictionary_output_uri, json.dumps(master_restaurant_data, indent=4)):
-                st.success(f"Successfully uploaded master restaurant data to {gcs_master_dictionary_output_uri}")
-            # upload_to_gcs handles its own st.error messages on failure
-
-        # 6. Display Data
-        display_data(master_restaurant_data)
-
-        # 7. Write to BigQuery
-        if api_data: # Only proceed if API data was fetched successfully
-            if master_restaurant_data:
-                df_to_load = pd.json_normalize([item for item in master_restaurant_data if isinstance(item, dict)])
-                if df_to_load is not None and not df_to_load.empty:
-                    if bq_full_path:
-                        try:
-                            path_parts = bq_full_path.split('.')
-                            if len(path_parts) == 3: # Check if split produced three parts
-                                project_id, dataset_id, table_id = path_parts
-                                if len(project_id) > 0 and len(dataset_id) > 0 and len(table_id) > 0: # Basic check for non-empty parts
-                                    st.info(f"Attempting to write to BigQuery table: {bq_full_path}")
-                                    write_to_bigquery(df_to_load, project_id, dataset_id, table_id)
-                                else: # Handles cases like ".dataset.table" or "project.."
-                                    st.error(f"Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty. Got: '{bq_full_path}'. Skipping BigQuery write.")
-                            else: # Handles cases where split does not return 3 parts (e.g. "proj.dataset" or "proj.dataset.table.extra")
-                                st.error(f"Invalid BigQuery Table Path format. Expected 'project.dataset.table' (3 parts), but got {len(path_parts)} part(s) from '{bq_full_path}'. Skipping BigQuery write.")
-                        except ValueError: # Should not be strictly necessary due to the len check, but good for safety.
-                            st.error(f"Invalid BigQuery Table Path format. Expected 'project.dataset.table'. Error during parsing '{bq_full_path}'. Skipping BigQuery write.")
-                        except Exception as e:
-                            st.error(f"An unexpected error occurred during BigQuery operations setup or write: {e}")
-                    else:
-                        st.warning("Master data is ready, but the BigQuery Table Path is missing. Skipping BigQuery write.")
-                else:
-                    st.warning("Master data is empty or contains no valid records after processing. Skipping BigQuery write.")
-            else:
-                st.warning("Master data is empty (was not loaded or was cleared). Skipping BigQuery write.")
-        # else: # api_data is False. fetch_api_data already displayed an error.
-        # else: # This would mean api_data is False. fetch_api_data handles its own error message.
-            # No explicit message needed here if api_data is None, as fetch_api_data handles it.
-            # However, if only bq_table_name was provided without api_data, the old message was:
-            # "No API data fetched, skipping BigQuery write even though a table name was provided."
-            # This is now implicitly covered. If api_data is False, the first 'if' fails.
-            # If api_data is True, but BQ details are missing, the 'elif api_data:' handles it.
-
-    # If api_data is None, fetch_api_data already displayed an error message.
+    handle_fetch_data_action(
+        coordinate_pairs_str=coordinate_pairs_input,
+        max_results=max_results_input,
+        gcs_destination_uri_str=gcs_destination_uri,
+        master_list_uri_str=master_list_uri,
+        gcs_master_output_uri_str=gcs_master_dictionary_output_uri,
+        bq_full_path_str=bq_full_path
+    )
