@@ -288,8 +288,8 @@ master_list_uri = st.text_input("Enter Master Restaurant Data URI (JSON) (e.g., 
 # Create an input field for the GCS destination for the master restaurant data
 gcs_master_dictionary_output_uri = st.text_input("Enter GCS URI for Master Restaurant Data Output (e.g., gs://bucket-name/path/filename.json)")
 
-# Create an input field for the BigQuery table name
-bq_table_name = st.text_input("Enter BigQuery Table Name (will be overwritten if it exists)")
+# Create an input field for the BigQuery full path
+bq_full_path = st.text_input("Enter BigQuery Table Path (project.dataset.table)")
 
 # Create a button to trigger the API call
 if st.button("Fetch Data"):
@@ -329,29 +329,38 @@ if st.button("Fetch Data"):
         display_data(master_restaurant_data)
 
         # 7. Write to BigQuery
-        if api_data and bq_table_name: # Ensure there's data and a table name is provided
-            # Convert master_restaurant_data (list of dicts) to DataFrame for BQ
-            # This step is crucial as BQ client expects a DataFrame
+        if api_data: # Only proceed if API data was fetched successfully
             if master_restaurant_data:
                 df_to_load = pd.json_normalize([item for item in master_restaurant_data if isinstance(item, dict)])
-                if not df_to_load.empty:
-                    dataset_full_id = os.environ.get('BQ_DATASET_ID') # Expects 'project.dataset'
-                    if dataset_full_id:
+                if df_to_load is not None and not df_to_load.empty:
+                    if bq_full_path:
                         try:
-                            project_id, dataset_id = dataset_full_id.split('.')
-                            st.info(f"Attempting to write to BigQuery: Project ID '{project_id}', Dataset ID '{dataset_id}', Table ID '{bq_table_name}'")
-                            write_to_bigquery(df_to_load, project_id, dataset_id, bq_table_name)
-                        except ValueError:
-                            st.error(f"Environment variable BQ_DATASET_ID is not in the expected 'project.dataset' format. Value: {dataset_full_id}")
+                            path_parts = bq_full_path.split('.')
+                            if len(path_parts) == 3: # Check if split produced three parts
+                                project_id, dataset_id, table_id = path_parts
+                                if len(project_id) > 0 and len(dataset_id) > 0 and len(table_id) > 0: # Basic check for non-empty parts
+                                    st.info(f"Attempting to write to BigQuery table: {bq_full_path}")
+                                    write_to_bigquery(df_to_load, project_id, dataset_id, table_id)
+                                else: # Handles cases like ".dataset.table" or "project.."
+                                    st.error(f"Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty. Got: '{bq_full_path}'. Skipping BigQuery write.")
+                            else: # Handles cases where split does not return 3 parts (e.g. "proj.dataset" or "proj.dataset.table.extra")
+                                st.error(f"Invalid BigQuery Table Path format. Expected 'project.dataset.table' (3 parts), but got {len(path_parts)} part(s) from '{bq_full_path}'. Skipping BigQuery write.")
+                        except ValueError: # Should not be strictly necessary due to the len check, but good for safety.
+                            st.error(f"Invalid BigQuery Table Path format. Expected 'project.dataset.table'. Error during parsing '{bq_full_path}'. Skipping BigQuery write.")
                         except Exception as e:
-                            st.error(f"An unexpected error occurred during BigQuery operations setup: {e}")
+                            st.error(f"An unexpected error occurred during BigQuery operations setup or write: {e}")
                     else:
-                        st.warning("Environment variable BQ_DATASET_ID not set. Skipping BigQuery write.")
+                        st.warning("Master data is ready, but the BigQuery Table Path is missing. Skipping BigQuery write.")
                 else:
-                    st.warning("Master data is empty or contains no valid records. Skipping BigQuery write.")
+                    st.warning("Master data is empty or contains no valid records after processing. Skipping BigQuery write.")
             else:
-                st.warning("Master data is empty. Skipping BigQuery write.")
-        elif bq_table_name: # bq_table_name was provided but api_data was not
-            st.warning("No API data fetched, skipping BigQuery write even though a table name was provided.")
-            
+                st.warning("Master data is empty (was not loaded or was cleared). Skipping BigQuery write.")
+        # else: # api_data is False. fetch_api_data already displayed an error.
+        # else: # This would mean api_data is False. fetch_api_data handles its own error message.
+            # No explicit message needed here if api_data is None, as fetch_api_data handles it.
+            # However, if only bq_table_name was provided without api_data, the old message was:
+            # "No API data fetched, skipping BigQuery write even though a table name was provided."
+            # This is now implicitly covered. If api_data is False, the first 'if' fails.
+            # If api_data is True, but BQ details are missing, the 'elif api_data:' handles it.
+
     # If api_data is None, fetch_api_data already displayed an error message.
