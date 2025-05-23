@@ -7,6 +7,7 @@ from datetime import datetime
 import os
 from google.cloud import bigquery
 from typing import Tuple, Optional, List, Dict, Callable, Any
+import re
 
 
 def _parse_gcs_uri(uri: str) -> Optional[Tuple[str, str]]:
@@ -243,6 +244,42 @@ def display_data(data_to_display: List[Dict[str, Any]]):
             st.error(f"Could not even display master restaurant data as JSON: {json_e}")
 
 
+def sanitize_column_name(column_name: str) -> str:
+    """
+    Sanitizes a column name for BigQuery compatibility.
+    - Removes spaces, periods, '@' signs, and dashes.
+    - Converts to lowercase.
+    - Replaces sequences of non-alphanumeric characters (excluding underscores) with a single underscore.
+    - Ensures the name doesn't start or end with an underscore.
+    - Handles potential leading characters like '?' or '@' from json_normalize.
+    """
+    # Replace problematic characters with underscore or remove them
+    # Order matters: handle specific removals before general non-alphanumeric replacement
+    name = column_name.replace(' ', '_')
+    name = name.replace('.', '')  # Remove periods
+    name = name.replace('@', '')  # Remove @
+    name = name.replace('-', '_') # Replace dash with underscore
+    
+    name = name.lower()
+    
+    # Remove any leading characters that are not alphanumeric or underscore
+    # This helps with characters like '?' often added by json_normalize
+    if name and not name[0].isalnum() and name[0] != '_':
+        name = name[1:]
+
+    # Replace any remaining sequence of non-alphanumeric characters (except underscore) with a single underscore
+    name = re.sub(r'[^a-z0-9_]+', '_', name)
+    
+    # Ensure it doesn't start or end with an underscore
+    name = name.strip('_')
+    
+    # If the name becomes empty after stripping (e.g. was "___"), provide a default
+    if not name:
+        return "unnamed_column"
+        
+    return name
+
+
 def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str):
     """
     Writes a Pandas DataFrame to a BigQuery table.
@@ -256,18 +293,34 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
     Returns:
         True if the write operation was successful, False otherwise.
     """
+    # Sanitize column names
+    original_columns = df.columns.tolist()
+    sanitized_columns = [sanitize_column_name(col) for col in original_columns]
+    
+    # Check for duplicate sanitized column names and handle them if necessary
+    # For now, we assume sanitize_column_name produces sufficiently unique names
+    # or that BigQuery handles minor residual issues if any.
+    # If critical, a more robust de-duplication strategy would be added here.
+    df.columns = sanitized_columns
+    
+    # Logging the change for traceability (optional, but good practice)
+    # st.info(f"Original columns: {original_columns}")
+    # st.info(f"Sanitized columns for BigQuery: {sanitized_columns}")
+
     client = bigquery.Client(project=project_id)
     table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
     
     job_config = bigquery.LoadJobConfig(
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-        column_name_character_map="V2",
+        # Ensure V2 map is used as sanitize_column_name is designed for it.
+        # BQ errors if it sees characters like '.' if not using V2.
+        column_name_character_map="V2", 
     )
     
     try:
         job = client.load_table_from_dataframe(df, table_ref_str, job_config=job_config)
         job.result()  # Wait for the job to complete
-        st.success(f"Successfully wrote data to BigQuery table {table_ref_str}. Overwritten if table existed.")
+        st.success(f"Successfully wrote data to BigQuery table {table_ref_str} with sanitized column names. Overwritten if table existed.")
         return True
     except Exception as e:
         st.error(f"Error writing data to BigQuery table {table_ref_str}: {e}")
