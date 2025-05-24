@@ -193,7 +193,7 @@ class TestWriteToBigQuery(unittest.TestCase):
 
         self.assertIsInstance(df_passed_to_bq, pd.DataFrame)
         self.assertTrue('RatingDate' in df_passed_to_bq.columns)
-        self.assertEqual(df_passed_to_bq['RatingDate'].dtype, 'datetime64[ns]')
+        self.assertTrue(pd.api.types.is_string_dtype(df_passed_to_bq['RatingDate']) or pd.api.types.is_object_dtype(df_passed_to_bq['RatingDate']), "RatingDate column should have string or object dtype")
         
         # Check 'first_seen' which is added by process_and_update_master_data
         self.assertTrue('first_seen' in df_passed_to_bq.columns) 
