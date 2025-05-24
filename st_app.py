@@ -299,6 +299,12 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
     # Subset the DataFrame to include only the selected columns
     df_subset = df[columns_to_select].copy() # Use .copy() to avoid SettingWithCopyWarning
 
+    # Convert Geocode columns to numeric, coercing errors to NaN
+    if 'Geocode.Latitude' in df_subset.columns:
+        df_subset['Geocode.Latitude'] = pd.to_numeric(df_subset['Geocode.Latitude'], errors='coerce')
+    if 'Geocode.Longitude' in df_subset.columns:
+        df_subset['Geocode.Longitude'] = pd.to_numeric(df_subset['Geocode.Longitude'], errors='coerce')
+
     # Sanitize column names for the subset
     original_columns = df_subset.columns.tolist()
     sanitized_columns = [sanitize_column_name(col) for col in original_columns]
