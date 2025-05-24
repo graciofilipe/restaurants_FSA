@@ -510,6 +510,14 @@ def handle_fetch_data_action(
                                 sanitized_columns_to_select_set = {sanitize_column_name(col) for col in columns_to_select}
                                 bq_schema = [field for field in bq_schema if field.name in sanitized_columns_to_select_set]
 
+                                # Convert 'Scores.Hygiene' to Int64
+                                hygiene_col = 'Scores.Hygiene'
+                                if hygiene_col in df_to_load.columns:
+                                    st.write(f"Attempting to convert column: {hygiene_col}") # Added for debugging visibility
+                                    df_to_load[hygiene_col] = pd.to_numeric(df_to_load[hygiene_col], errors='coerce')
+                                    df_to_load[hygiene_col] = df_to_load[hygiene_col].astype('Int64')
+                                    st.write(f"Conversion of {hygiene_col} complete. Dtype: {df_to_load[hygiene_col].dtype}") # Added for debugging
+
                                 write_to_bigquery(df_to_load, project_id, dataset_id, table_id, columns_to_select, bq_schema)
                             else: 
                                 st.error(f"Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty. Got: '{bq_full_path_str}'. Skipping BigQuery write.")
