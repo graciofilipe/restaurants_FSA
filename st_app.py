@@ -463,6 +463,18 @@ def handle_fetch_data_action(
     if api_data and api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail'): 
         if master_restaurant_data: # Check if master data (potentially enriched) exists
             df_to_load = pd.json_normalize([item for item in master_restaurant_data if isinstance(item, dict)])
+
+            # Convert 'RatingDate' to datetime objects
+            if 'RatingDate' in df_to_load.columns:
+                df_to_load['RatingDate'] = pd.to_datetime(df_to_load['RatingDate'], errors='coerce')
+            else:
+                st.warning("Column 'RatingDate' not found in DataFrame. Skipping datetime conversion for it.")
+
+            # Ensure other potential date columns are handled if necessary,
+            # for now, the issue is specifically with 'RatingDate'.
+            # The 'first_seen' column is already a string in 'YYYY-MM-DD' format,
+            # and its schema in BigQuery is 'DATE', which should be compatible.
+
             if df_to_load is not None and not df_to_load.empty:
                 if bq_full_path_str:
                     try:
