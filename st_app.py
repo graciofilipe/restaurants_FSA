@@ -280,47 +280,54 @@ def sanitize_column_name(column_name: str) -> str:
     return name
 
 
-def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str):
+def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str, columns_to_select: List[str], bq_schema: List[bigquery.SchemaField]):
     """
-    Writes a Pandas DataFrame to a BigQuery table.
+    Writes a Pandas DataFrame to a BigQuery table, with column selection and schema definition.
 
     Args:
         df: The DataFrame to write.
         project_id: The Google Cloud project ID.
         dataset_id: The BigQuery dataset ID.
         table_id: The BigQuery table ID.
+        columns_to_select: A list of column names to select from the DataFrame.
+        bq_schema: A list of bigquery.SchemaField objects for the BigQuery table.
+
 
     Returns:
         True if the write operation was successful, False otherwise.
     """
-    # Sanitize column names
-    original_columns = df.columns.tolist()
+    # Subset the DataFrame to include only the selected columns
+    df_subset = df[columns_to_select].copy() # Use .copy() to avoid SettingWithCopyWarning
+
+    # Sanitize column names for the subset
+    original_columns = df_subset.columns.tolist()
     sanitized_columns = [sanitize_column_name(col) for col in original_columns]
     
     # Check for duplicate sanitized column names and handle them if necessary
     # For now, we assume sanitize_column_name produces sufficiently unique names
     # or that BigQuery handles minor residual issues if any.
     # If critical, a more robust de-duplication strategy would be added here.
-    df.columns = sanitized_columns
+    df_subset.columns = sanitized_columns
     
     # Logging the change for traceability (optional, but good practice)
-    # st.info(f"Original columns: {original_columns}")
-    # st.info(f"Sanitized columns for BigQuery: {sanitized_columns}")
+    # st.info(f"Original selected columns: {original_columns}")
+    # st.info(f"Sanitized selected columns for BigQuery: {sanitized_columns}")
 
     client = bigquery.Client(project=project_id)
     table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
     
     job_config = bigquery.LoadJobConfig(
+        schema=bq_schema,
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
         # Ensure V2 map is used as sanitize_column_name is designed for it.
         # BQ errors if it sees characters like '.' if not using V2.
-        column_name_character_map="V2", 
+        column_name_character_map="V2",
     )
     
     try:
-        job = client.load_table_from_dataframe(df, table_ref_str, job_config=job_config)
+        job = client.load_table_from_dataframe(df_subset, table_ref_str, job_config=job_config)
         job.result()  # Wait for the job to complete
-        st.success(f"Successfully wrote data to BigQuery table {table_ref_str} with sanitized column names. Overwritten if table existed.")
+        st.success(f"Successfully wrote data to BigQuery table {table_ref_str} with schema and sanitized column names. Overwritten if table existed.")
         return True
     except Exception as e:
         st.error(f"Error writing data to BigQuery table {table_ref_str}: {e}")
@@ -464,10 +471,44 @@ def handle_fetch_data_action(
                             project_id, dataset_id, table_id = path_parts
                             if len(project_id) > 0 and len(dataset_id) > 0 and len(table_id) > 0:
                                 st.info(f"Attempting to write to BigQuery table: {bq_full_path_str}")
-                                write_to_bigquery(df_to_load, project_id, dataset_id, table_id)
+                                # Define columns to select and BigQuery schema
+                                columns_to_select = [
+                                    'FHRSID', 'BusinessName', 'BusinessType', 'BusinessTypeID', 
+                                    'AddressLine1', 'AddressLine2', 'AddressLine3', 'PostCode', 
+                                    'RatingValue', 'RatingKey', 'RatingDate', 'LocalAuthorityName', 
+                                    'LocalAuthorityWebSite', 'LocalAuthorityEmailAddress', 'Longitude', 'Latitude',
+                                    'first_seen' 
+                                ]
+                                # Filter out columns that are not in df_to_load to prevent errors
+                                columns_to_select = [col for col in columns_to_select if col in df_to_load.columns]
+
+                                bq_schema = [
+                                    bigquery.SchemaField(sanitize_column_name('FHRSID'), 'INTEGER'),
+                                    bigquery.SchemaField(sanitize_column_name('BusinessName'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('BusinessType'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('BusinessTypeID'), 'INTEGER'),
+                                    bigquery.SchemaField(sanitize_column_name('AddressLine1'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('AddressLine2'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('AddressLine3'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('PostCode'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('RatingValue'), 'STRING'), # RatingValue can be non-numeric e.g. "Exempt"
+                                    bigquery.SchemaField(sanitize_column_name('RatingKey'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('RatingDate'), 'TIMESTAMP'),
+                                    bigquery.SchemaField(sanitize_column_name('LocalAuthorityName'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('LocalAuthorityWebSite'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('LocalAuthorityEmailAddress'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('Longitude'), 'FLOAT'),
+                                    bigquery.SchemaField(sanitize_column_name('Latitude'), 'FLOAT'),
+                                    bigquery.SchemaField(sanitize_column_name('first_seen'), 'DATE')
+                                ]
+                                # Filter schema to only include selected and sanitized columns
+                                sanitized_columns_to_select_set = {sanitize_column_name(col) for col in columns_to_select}
+                                bq_schema = [field for field in bq_schema if field.name in sanitized_columns_to_select_set]
+
+                                write_to_bigquery(df_to_load, project_id, dataset_id, table_id, columns_to_select, bq_schema)
                             else: 
                                 st.error(f"Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty. Got: '{bq_full_path_str}'. Skipping BigQuery write.")
-                        else: 
+                        else:
                             st.error(f"Invalid BigQuery Table Path format. Expected 'project.dataset.table' (3 parts), but got {len(path_parts)} part(s) from '{bq_full_path_str}'. Skipping BigQuery write.")
                     except ValueError: 
                         st.error(f"Invalid BigQuery Table Path format. Expected 'project.dataset.table'. Error during parsing '{bq_full_path_str}'. Skipping BigQuery write.")
