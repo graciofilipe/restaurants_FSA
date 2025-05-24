@@ -9,11 +9,14 @@ import os
 # Add the parent directory to the Python path to find st_app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from st_app import write_to_bigquery, sanitize_column_name, handle_fetch_data_action
+# Updated imports based on refactoring
+from bq_utils import write_to_bigquery, sanitize_column_name
+from st_app import handle_fetch_data_action
+# google.cloud.bigquery is imported directly where needed (e.g., TestWriteToBigQuery uses bigquery.SchemaField)
 
 class TestWriteToBigQuery(unittest.TestCase):
-    @patch('st_app.bigquery.Client') # Patch where 'bigquery.Client' is looked up (in st_app module)
-    @patch('st_app.st') # Mock streamlit module within st_app.py
+    @patch('bq_utils.bigquery.Client') # Patched in bq_utils
+    @patch('bq_utils.st') # Patched in bq_utils
     def test_write_to_bigquery_with_selection_and_schema(self, mock_st, mock_bigquery_client):
         # Mock the client and its methods
         mock_client_instance = mock_bigquery_client.return_value
@@ -120,20 +123,21 @@ class TestWriteToBigQuery(unittest.TestCase):
         mock_st.success.assert_called_once() 
         mock_st.error.assert_not_called()
 
-    @patch('st_app.st')
-    @patch('st_app.time') # Added
-    @patch('st_app.write_to_bigquery')
-    @patch('st_app.upload_to_gcs')
-    @patch('st_app.load_master_data')
-    @patch('st_app.fetch_api_data')
+    # Patches updated to reflect new module locations for the mocked functions
+    @patch('st_app.st') # For st calls directly within handle_fetch_data_action
+    @patch('st_app.time') # For time.sleep directly within handle_fetch_data_action
+    @patch('bq_utils.write_to_bigquery') # Mocked function now in bq_utils
+    @patch('gcs_utils.upload_to_gcs') # Mocked function now in gcs_utils
+    @patch('data_processing.load_master_data') # Mocked function now in data_processing
+    @patch('api_client.fetch_api_data') # Mocked function now in api_client
     def test_handle_fetch_data_action_rating_date_conversion(
-        self, 
-        mock_fetch_api_data, 
-        mock_load_master_data, 
-        mock_upload_to_gcs, 
-        mock_write_to_bigquery, 
-        mock_st_streamlit_api, # Renamed to avoid conflict with mock_st from the class level if it were used
-        mock_time # Added
+        self,
+        mock_fetch_api_data,
+        mock_load_master_data,
+        mock_upload_to_gcs,
+        mock_write_to_bigquery,
+        mock_st, # Renamed to mock_st for clarity, matches the decorator name
+        mock_time
     ):
         # 1. Configure mocks
         # Define two different API responses for two calls
@@ -214,15 +218,17 @@ class TestWriteToBigQuery(unittest.TestCase):
         
         # Check for specific success calls using assert_any_call
         # We expect 2 total from API calls, and since they are unique, 2 new records added.
-        mock_st_streamlit_api.success.assert_any_call("Total establishments fetched from all API calls: 2")
-        mock_st_streamlit_api.success.assert_any_call("Processed API response. Added 2 new restaurant records. Total unique records: 2")
-        mock_st_streamlit_api.success.assert_any_call(f"Successfully uploaded combined raw API response to {gcs_destination_uri_str}combined_api_response_{current_date_str}.json")
-        mock_st_streamlit_api.success.assert_any_call(f"Successfully uploaded master restaurant data to {gcs_master_output_uri_str}")
+        mock_st.success.assert_any_call("Total establishments fetched from all API calls: 2")
+        mock_st.success.assert_any_call("Processed API response. Added 2 new restaurant records. Total unique records: 2")
+        mock_st.success.assert_any_call(f"Successfully uploaded combined raw API response to {gcs_destination_uri_str}combined_api_response_{current_date_str}.json")
+        mock_st.success.assert_any_call(f"Successfully uploaded master restaurant data to {gcs_master_output_uri_str}")
         
         # Check for potential warnings
-        warning_calls = [call_args[0][0] for call_args in mock_st_streamlit_api.warning.call_args_list]
+        warning_calls = [call_args[0][0] for call_args in mock_st.warning.call_args_list]
         self.assertNotIn("Column 'RatingDate' not found in DataFrame. Skipping datetime conversion for it.", warning_calls)
 
+    # This test does not need modification as it tests pandas functionality directly
+    # and does not involve the refactored app structure in terms of imports or mocks.
     def test_first_seen_conversion_to_datetime(self):
         """
         Tests that the 'first_seen' column is correctly converted to datetime64[ns]
