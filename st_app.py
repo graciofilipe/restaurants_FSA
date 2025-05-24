@@ -289,29 +289,95 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
         project_id: The Google Cloud project ID.
         dataset_id: The BigQuery dataset ID.
         table_id: The BigQuery table ID.
-        columns_to_select: A list of column names to select from the DataFrame.
-        bq_schema: A list of bigquery.SchemaField objects for the BigQuery table.
-
+        columns_to_select: A list of *original* column names to select from the DataFrame.
+        bq_schema: A list of bigquery.SchemaField objects for the BigQuery table,
+                   where field names are expected to be already sanitized.
 
     Returns:
         True if the write operation was successful, False otherwise.
     """
-    # Subset the DataFrame to include only the selected columns
-    df_subset = df[columns_to_select].copy() # Use .copy() to avoid SettingWithCopyWarning
+    original_all_columns = df.columns.tolist()
+    sanitized_all_columns = []
+    sanitized_name_counts = {}
+    original_to_sanitized_map = {}
 
-    # Sanitize column names for the subset
-    original_columns = df_subset.columns.tolist()
-    sanitized_columns = [sanitize_column_name(col) for col in original_columns]
+    # Sanitize all column names and handle duplicates
+    for col_name in original_all_columns:
+        sanitized_name = sanitize_column_name(col_name)
+        if sanitized_name in sanitized_name_counts:
+            sanitized_name_counts[sanitized_name] += 1
+            unique_sanitized_name = f"{sanitized_name}_{sanitized_name_counts[sanitized_name]}"
+        else:
+            sanitized_name_counts[sanitized_name] = 0
+            unique_sanitized_name = sanitized_name
+        
+        sanitized_all_columns.append(unique_sanitized_name)
+        original_to_sanitized_map[col_name] = unique_sanitized_name
+
+    # Create a copy of the DataFrame to modify its columns
+    df_processed = df.copy()
+    df_processed.columns = sanitized_all_columns
     
-    # Check for duplicate sanitized column names and handle them if necessary
-    # For now, we assume sanitize_column_name produces sufficiently unique names
-    # or that BigQuery handles minor residual issues if any.
-    # If critical, a more robust de-duplication strategy would be added here.
-    df_subset.columns = sanitized_columns
-    
-    # Logging the change for traceability (optional, but good practice)
-    # st.info(f"Original selected columns: {original_columns}")
-    # st.info(f"Sanitized selected columns for BigQuery: {sanitized_columns}")
+    # Determine the sanitized column names to select based on the original names provided
+    sanitized_columns_to_select = []
+    missing_original_cols = []
+    for original_col_to_select in columns_to_select:
+        sanitized_version = original_to_sanitized_map.get(original_col_to_select)
+        if sanitized_version:
+            sanitized_columns_to_select.append(sanitized_version)
+        else:
+            # This case should ideally not happen if columns_to_select contains valid original column names
+            missing_original_cols.append(original_col_to_select)
+            # st.warning(f"Original column '{original_col_to_select}' not found in DataFrame after sanitization mapping. It will be excluded.")
+
+    if missing_original_cols:
+        st.warning(f"The following original columns specified for selection were not found in the DataFrame: {missing_original_cols}. They will be excluded from the BigQuery load.")
+
+    # Subset the DataFrame using the identified sanitized column names
+    # Ensure only columns that actually exist in df_processed (after sanitization) are selected
+    final_columns_for_subset = [col for col in sanitized_columns_to_select if col in df_processed.columns]
+    df_subset = df_processed[final_columns_for_subset].copy()
+
+    # Logging for traceability
+    # st.info(f"Original column names in source DF: {original_all_columns}")
+    # st.info(f"Sanitized column names in source DF: {sanitized_all_columns}")
+    # st.info(f"Original columns requested for selection: {columns_to_select}")
+    # st.info(f"Sanitized columns selected for BigQuery: {df_subset.columns.tolist()}")
+    # st.info(f"Schema field names provided: {[field.name for field in bq_schema]}")
+
+    # Coerce 'RatingValue' to nullable integer if it's in the selected columns
+    rating_value_original_name = 'RatingValue'
+    ratingvalue_sanitized_final_name = original_to_sanitized_map.get(rating_value_original_name)
+
+    if ratingvalue_sanitized_final_name and ratingvalue_sanitized_final_name in df_subset.columns:
+        # st.info(f"Attempting to coerce column: {ratingvalue_sanitized_final_name} (original: {rating_value_original_name}) to nullable integer.")
+        original_non_null_count = df_subset[ratingvalue_sanitized_final_name].count() # Count of non-NA values before
+        
+        # Attempt conversion to numeric, coercing errors to NaT/NaN
+        df_subset[ratingvalue_sanitized_final_name] = pd.to_numeric(
+            df_subset[ratingvalue_sanitized_final_name], errors='coerce'
+        )
+        
+        # Convert to nullable integer type (Int64)
+        # This handles NaN by converting them to pd.NA, which BigQuery understands as NULL for integer columns
+        try:
+            df_subset[ratingvalue_sanitized_final_name] = df_subset[ratingvalue_sanitized_final_name].astype(pd.Int64Dtype())
+        except Exception as e:
+            st.error(f"Could not convert sanitized column '{ratingvalue_sanitized_final_name}' to Int64Dtype after pd.to_numeric. Error: {e}")
+            # Depending on policy, might want to return False or raise error
+            # For now, continue and let BQ potentially fail if type is incompatible
+
+        coerced_na_count = df_subset[ratingvalue_sanitized_final_name].isna().sum()
+        values_became_na = coerced_na_count - (len(df_subset) - original_non_null_count)
+
+        if values_became_na > 0:
+            st.warning(
+                f"{values_became_na} non-numeric value(s) found in column '{rating_value_original_name}' (sanitized: '{ratingvalue_sanitized_final_name}') "
+                f"were coerced to NULL for BigQuery loading. Please review the source data if this was unexpected."
+            )
+    # else:
+        # st.info(f"Column '{rating_value_original_name}' (sanitized: {ratingvalue_sanitized_final_name}) not found in df_subset or not mapped, skipping coercion.")
+
 
     client = bigquery.Client(project=project_id)
     table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
@@ -473,33 +539,35 @@ def handle_fetch_data_action(
                                 st.info(f"Attempting to write to BigQuery table: {bq_full_path_str}")
                                 # Define columns to select and BigQuery schema
                                 columns_to_select = [
-                                    'FHRSID', 'BusinessName', 'BusinessType', 'BusinessTypeID', 
+                                    'FHRSID', 'LocalAuthorityBusinessID', 'BusinessName', 
                                     'AddressLine1', 'AddressLine2', 'AddressLine3', 'PostCode', 
                                     'RatingValue', 'RatingKey', 'RatingDate', 'LocalAuthorityName', 
-                                    'LocalAuthorityWebSite', 'LocalAuthorityEmailAddress', 'Longitude', 'Latitude',
-                                    'first_seen' 
+                                    'NewRatingPending', 'first_seen', 'Scores.Hygiene', 
+                                    'Scores.Structural', 'Scores.ConfidenceInManagement', 
+                                    'geocode.longitude', 'geocode.latitude'
                                 ]
                                 # Filter out columns that are not in df_to_load to prevent errors
                                 columns_to_select = [col for col in columns_to_select if col in df_to_load.columns]
 
                                 bq_schema = [
-                                    bigquery.SchemaField(sanitize_column_name('FHRSID'), 'INTEGER'),
+                                    bigquery.SchemaField(sanitize_column_name('FHRSID'), 'STRING'), # Changed from INTEGER to STRING
+                                    bigquery.SchemaField(sanitize_column_name('LocalAuthorityBusinessID'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('BusinessName'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('BusinessType'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('BusinessTypeID'), 'INTEGER'),
                                     bigquery.SchemaField(sanitize_column_name('AddressLine1'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('AddressLine2'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('AddressLine3'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('PostCode'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('RatingValue'), 'STRING'), # RatingValue can be non-numeric e.g. "Exempt"
+                                    bigquery.SchemaField(sanitize_column_name('RatingValue'), 'INTEGER'), # Changed from STRING to INTEGER
                                     bigquery.SchemaField(sanitize_column_name('RatingKey'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('RatingDate'), 'TIMESTAMP'),
+                                    bigquery.SchemaField(sanitize_column_name('RatingDate'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('LocalAuthorityName'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('LocalAuthorityWebSite'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('LocalAuthorityEmailAddress'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('Longitude'), 'FLOAT'),
-                                    bigquery.SchemaField(sanitize_column_name('Latitude'), 'FLOAT'),
-                                    bigquery.SchemaField(sanitize_column_name('first_seen'), 'DATE')
+                                    bigquery.SchemaField(sanitize_column_name('NewRatingPending'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('first_seen'), 'DATE'),
+                                    bigquery.SchemaField(sanitize_column_name('Scores.Hygiene'), 'INTEGER'),
+                                    bigquery.SchemaField(sanitize_column_name('Scores.Structural'), 'INTEGER'),
+                                    bigquery.SchemaField(sanitize_column_name('Scores.ConfidenceInManagement'), 'INTEGER'),
+                                    bigquery.SchemaField(sanitize_column_name('geocode.longitude'), 'FLOAT'),
+                                    bigquery.SchemaField(sanitize_column_name('geocode.latitude'), 'FLOAT')
                                 ]
                                 # Filter schema to only include selected and sanitized columns
                                 sanitized_columns_to_select_set = {sanitize_column_name(col) for col in columns_to_select}
