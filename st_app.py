@@ -464,12 +464,6 @@ def handle_fetch_data_action(
         if master_restaurant_data: # Check if master data (potentially enriched) exists
             df_to_load = pd.json_normalize([item for item in master_restaurant_data if isinstance(item, dict)])
 
-            # Convert 'RatingDate' to datetime objects
-            if 'RatingDate' in df_to_load.columns:
-                df_to_load['RatingDate'] = pd.to_datetime(df_to_load['RatingDate'], errors='coerce')
-            else:
-                st.warning("Column 'RatingDate' not found in DataFrame. Skipping datetime conversion for it.")
-
             # Ensure other potential date columns are handled if necessary,
             # for now, the issue is specifically with 'RatingDate'.
             # The 'first_seen' column is already a string in 'YYYY-MM-DD' format,
@@ -503,7 +497,7 @@ def handle_fetch_data_action(
                                     bigquery.SchemaField(sanitize_column_name('PostCode'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('RatingValue'), 'STRING'), # RatingValue can be non-numeric e.g. "Exempt"
                                     bigquery.SchemaField(sanitize_column_name('RatingKey'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('RatingDate'), 'TIMESTAMP'),
+                                    bigquery.SchemaField(sanitize_column_name('RatingDate'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('LocalAuthorityName'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('Scores.Hygiene'), 'INTEGER'),
                                     bigquery.SchemaField(sanitize_column_name('Scores.Structural'), 'STRING'),
