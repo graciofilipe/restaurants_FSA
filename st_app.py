@@ -439,6 +439,14 @@ def handle_fetch_data_action(
     # 3. Process API Response (Combined) and Update Master Restaurant Data
     master_restaurant_data, new_additions_count = process_and_update_master_data(master_restaurant_data, combined_api_data)
     # The success message from process_and_update_master_data already states new additions and total.
+
+    # Prepare data for display filtering
+    today_date_for_filtering = datetime.now().strftime("%Y-%m-%d")
+    restaurants_to_display = []
+    for restaurant in master_restaurant_data:
+        if isinstance(restaurant, dict) and 'first_seen' in restaurant:
+            if restaurant['first_seen'] == today_date_for_filtering:
+                restaurants_to_display.append(restaurant)
     
     # 4. Upload Combined Raw API Response to gcs_destination_uri_str (folder)
     # The variable 'api_data' now holds 'combined_api_data'
