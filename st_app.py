@@ -5,6 +5,7 @@ import pandas as pd
 from google.cloud import storage
 from datetime import datetime
 import os
+import time
 from google.cloud import bigquery
 from typing import Tuple, Optional, List, Dict, Callable, Any
 import re
@@ -401,6 +402,7 @@ def handle_fetch_data_action(
     for lon, lat in valid_coords:
         st.write(f"Fetching data for Longitude: {lon}, Latitude: {lat}...")
         api_response = fetch_api_data(lon, lat, max_results_input)
+        time.sleep(4) # Pause for 4 seconds between API calls
         
         if api_response:
             establishments_list = api_response.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])

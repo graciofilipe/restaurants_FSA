@@ -121,6 +121,7 @@ class TestWriteToBigQuery(unittest.TestCase):
         mock_st.error.assert_not_called()
 
     @patch('st_app.st')
+    @patch('st_app.time') # Added
     @patch('st_app.write_to_bigquery')
     @patch('st_app.upload_to_gcs')
     @patch('st_app.load_master_data')
@@ -131,41 +132,44 @@ class TestWriteToBigQuery(unittest.TestCase):
         mock_load_master_data, 
         mock_upload_to_gcs, 
         mock_write_to_bigquery, 
-        mock_st_streamlit_api # Renamed to avoid conflict with mock_st from the class level if it were used
+        mock_st_streamlit_api, # Renamed to avoid conflict with mock_st from the class level if it were used
+        mock_time # Added
     ):
         # 1. Configure mocks
-        mock_fetch_api_data.return_value = {
+        # Define two different API responses for two calls
+        api_response_1 = {
             'FHRSEstablishment': {
                 'EstablishmentCollection': {
                     'EstablishmentDetail': [{
-                        'FHRSID': '123',
-                        'BusinessName': 'Test Cafe',
-                        'RatingDate': '2023-01-16T00:00:00', # String date
-                        'PostCode': 'AB1 2CD', # Added to match one of the selected columns
-                        'LocalAuthorityName': 'Test Authority', # Added
-                        # Add other minimal required fields if json_normalize needs them or if they are part of columns_to_select
-                        # For this test, we are mainly concerned with RatingDate.
-                        # The columns_to_select in handle_fetch_data_action includes more fields.
-                        # To make pd.json_normalize and subsequent selection work without errors,
-                        # we should provide those fields or ensure they are handled (e.g. by being optional).
-                        'AddressLine1': '1 Test Street',
-                        'RatingValue': '5',
-                        'Scores.Hygiene': 5, # Assuming this might be expected by schema
-                        'Geocode.Longitude': '0.1',
-                        'Geocode.Latitude': '51.1',
-                        # 'Scores.Structural': None, # Example if some fields can be None
-                        # 'Scores.ConfidenceInManagement': None, # Example
-                        # 'first_seen': '2023-01-01' # This is added by process_and_update_master_data
+                        'FHRSID': '123', 'BusinessName': 'Test Cafe 1', 
+                        'RatingDate': '2023-01-16T00:00:00', 'PostCode': 'AB1 2CD',
+                        'LocalAuthorityName': 'Test Authority 1', 'AddressLine1': '1 Test Street',
+                        'RatingValue': '5', 'Scores.Hygiene': 5, 
+                        'Geocode.Longitude': '0.1', 'Geocode.Latitude': '51.1'
                     }]
                 }
             }
         }
+        api_response_2 = {
+            'FHRSEstablishment': {
+                'EstablishmentCollection': {
+                    'EstablishmentDetail': [{
+                        'FHRSID': '456', 'BusinessName': 'Test Cafe 2',
+                        'RatingDate': '2023-02-20T00:00:00', 'PostCode': 'EF3 4GH',
+                        'LocalAuthorityName': 'Test Authority 2', 'AddressLine1': '2 Other Street',
+                        'RatingValue': '4', 'Scores.Hygiene': 4,
+                        'Geocode.Longitude': '0.2', 'Geocode.Latitude': '51.2'
+                    }]
+                }
+            }
+        }
+        mock_fetch_api_data.side_effect = [api_response_1, api_response_2]
         mock_load_master_data.return_value = []  # No existing master data
         mock_upload_to_gcs.return_value = True
         # mock_write_to_bigquery is already a mock from the decorator
 
         # 2. Prepare inputs for handle_fetch_data_action
-        coordinate_pairs_str = "0.0,0.0"
+        coordinate_pairs_str = "0.0,0.0\n1.0,1.0" # Two coordinate pairs
         max_results = 10
         gcs_destination_uri_str = "gs://bucket/folder/"
         master_list_uri_str = "gs://bucket/master.json" # Will be loaded by mock_load_master_data
@@ -184,37 +188,38 @@ class TestWriteToBigQuery(unittest.TestCase):
         )
 
         # 4. Assertions
+        self.assertEqual(mock_fetch_api_data.call_count, 2) # Called for each coordinate pair
+        mock_time.sleep.assert_has_calls([call(4), call(4)]) # Called with 4 seconds
+        self.assertEqual(mock_time.sleep.call_count, 2) # Called after each API fetch
+
         mock_write_to_bigquery.assert_called_once()
 
         # Retrieve the DataFrame passed to write_to_bigquery
-        # The arguments are (df, project_id, dataset_id, table_id, columns_to_select, bq_schema)
         args_call_to_bq, _ = mock_write_to_bigquery.call_args
         df_passed_to_bq = args_call_to_bq[0]
 
         self.assertIsInstance(df_passed_to_bq, pd.DataFrame)
+        self.assertEqual(len(df_passed_to_bq), 2) # Should contain two records
         self.assertTrue('RatingDate' in df_passed_to_bq.columns)
         self.assertTrue(pd.api.types.is_string_dtype(df_passed_to_bq['RatingDate']) or pd.api.types.is_object_dtype(df_passed_to_bq['RatingDate']), "RatingDate column should have string or object dtype")
         
-        # Check 'first_seen' which is added by process_and_update_master_data
         self.assertTrue('first_seen' in df_passed_to_bq.columns) 
-        # The 'first_seen' column is a string 'YYYY-MM-DD', so its dtype should be object or string
-        # In the BigQuery schema, it's DATE, but in the DataFrame before BQ client, it's often string/object.
-        # The BQ client library handles the conversion if the string is in the correct format.
         self.assertTrue(pd.api.types.is_string_dtype(df_passed_to_bq['first_seen']) or \
                         pd.api.types.is_object_dtype(df_passed_to_bq['first_seen']))
 
-        # Check that streamlit success messages were called (e.g. for API fetch, GCS uploads, BQ write)
-        # The exact number of calls can be tricky, so check for specific important ones or >= 1
-        mock_st_streamlit_api.success.assert_any_call(f"Total establishments fetched from all API calls: 1")
-        mock_st_streamlit_api.success.assert_any_call(f"Processed API response. Added 1 new restaurant records. Total unique records: 1")
-        mock_st_streamlit_api.success.assert_any_call(f"Successfully uploaded combined raw API response to {gcs_destination_uri_str}combined_api_response_{pd.Timestamp.now().strftime('%Y-%m-%d')}.json")
+        # Check Streamlit success messages
+        # Note: The exact date in the filename might be tricky if the test runs near midnight.
+        # Consider mocking datetime.now() if this becomes an issue. For now, assume it's stable enough.
+        current_date_str = pd.Timestamp.now().strftime('%Y-%m-%d')
+        
+        # Check for specific success calls using assert_any_call
+        # We expect 2 total from API calls, and since they are unique, 2 new records added.
+        mock_st_streamlit_api.success.assert_any_call("Total establishments fetched from all API calls: 2")
+        mock_st_streamlit_api.success.assert_any_call("Processed API response. Added 2 new restaurant records. Total unique records: 2")
+        mock_st_streamlit_api.success.assert_any_call(f"Successfully uploaded combined raw API response to {gcs_destination_uri_str}combined_api_response_{current_date_str}.json")
         mock_st_streamlit_api.success.assert_any_call(f"Successfully uploaded master restaurant data to {gcs_master_output_uri_str}")
-        # The success message for BQ is inside write_to_bigquery, which is mocked. 
-        # If we wanted to test st.success from within the *original* write_to_bigquery, we'd need a different approach (e.g. partial mock).
-        # But since we mock write_to_bigquery itself, we assert it was called.
-
-        # Check for potential warnings, e.g. if 'RatingDate' was missing (it shouldn't be in this test)
-        # Create a list of all calls to st.warning
+        
+        # Check for potential warnings
         warning_calls = [call_args[0][0] for call_args in mock_st_streamlit_api.warning.call_args_list]
         self.assertNotIn("Column 'RatingDate' not found in DataFrame. Skipping datetime conversion for it.", warning_calls)
 
