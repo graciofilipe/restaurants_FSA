@@ -476,6 +476,10 @@ def handle_fetch_data_action(
             # and its schema in BigQuery is 'DATE', which should be compatible.
 
             if df_to_load is not None and not df_to_load.empty:
+                # Convert 'first_seen' to datetime objects if the column exists
+                if 'first_seen' in df_to_load.columns:
+                    df_to_load['first_seen'] = pd.to_datetime(df_to_load['first_seen'], errors='coerce')
+
                 if bq_full_path_str:
                     try:
                         path_parts = bq_full_path_str.split('.')

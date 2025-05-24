@@ -218,6 +218,35 @@ class TestWriteToBigQuery(unittest.TestCase):
         warning_calls = [call_args[0][0] for call_args in mock_st_streamlit_api.warning.call_args_list]
         self.assertNotIn("Column 'RatingDate' not found in DataFrame. Skipping datetime conversion for it.", warning_calls)
 
+    def test_first_seen_conversion_to_datetime(self):
+        """
+        Tests that the 'first_seen' column is correctly converted to datetime64[ns]
+        and that unparseable dates are handled by becoming NaT.
+        This test simulates the conversion that happens in handle_fetch_data_action
+        right before data is passed to write_to_bigquery.
+        """
+        # 1. Create a sample Pandas DataFrame
+        data = {
+            'FHRSID': [1, 2, 3, 4],
+            'first_seen': ["2023-01-15", "2024-02-20", "not-a-date", None],
+            'other_col': ['a', 'b', 'c', 'd']
+        }
+        df = pd.DataFrame(data)
+
+        # 2. Apply the datetime conversion logic (as done in handle_fetch_data_action)
+        if 'first_seen' in df.columns:
+            df['first_seen'] = pd.to_datetime(df['first_seen'], errors='coerce')
+
+        # 3. Assert that the dtype of the 'first_seen' column is datetime64[ns]
+        self.assertEqual(df['first_seen'].dtype, 'datetime64[ns]')
+
+        # 4. Assert that values that were unparseable are now pd.NaT
+        #    and valid dates are correctly converted.
+        self.assertEqual(df['first_seen'].iloc[0], pd.Timestamp("2023-01-15"))
+        self.assertEqual(df['first_seen'].iloc[1], pd.Timestamp("2024-02-20"))
+        self.assertTrue(pd.isna(df['first_seen'].iloc[2])) # Check for NaT for "not-a-date"
+        self.assertTrue(pd.isna(df['first_seen'].iloc[3])) # Check for NaT for None
+
 
 if __name__ == '__main__':
     unittest.main()
