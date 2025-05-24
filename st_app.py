@@ -473,20 +473,18 @@ def handle_fetch_data_action(
                                 st.info(f"Attempting to write to BigQuery table: {bq_full_path_str}")
                                 # Define columns to select and BigQuery schema
                                 columns_to_select = [
-                                    'FHRSID', 'BusinessName', 'BusinessType', 'BusinessTypeID', 
-                                    'AddressLine1', 'AddressLine2', 'AddressLine3', 'PostCode', 
+                                    'FHRSID', 'BusinessName','AddressLine1', 'AddressLine2', 'AddressLine3', 'PostCode', 
                                     'RatingValue', 'RatingKey', 'RatingDate', 'LocalAuthorityName', 
-                                    'LocalAuthorityWebSite', 'LocalAuthorityEmailAddress', 'Longitude', 'Latitude',
-                                    'first_seen' 
+                                    'Scores.Hygiene', 'Scores.Structural', 
+                                    'Scores.ConfidenceInManagement', 'SchemeType', 'NewRatingPending', 
+                                    'Geocode.Latitude', 'Geocode.Longitude', 'first_seen'
                                 ]
                                 # Filter out columns that are not in df_to_load to prevent errors
                                 columns_to_select = [col for col in columns_to_select if col in df_to_load.columns]
 
                                 bq_schema = [
-                                    bigquery.SchemaField(sanitize_column_name('FHRSID'), 'INTEGER'),
+                                    bigquery.SchemaField(sanitize_column_name('FHRSID'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('BusinessName'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('BusinessType'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('BusinessTypeID'), 'INTEGER'),
                                     bigquery.SchemaField(sanitize_column_name('AddressLine1'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('AddressLine2'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('AddressLine3'), 'STRING'),
@@ -495,10 +493,11 @@ def handle_fetch_data_action(
                                     bigquery.SchemaField(sanitize_column_name('RatingKey'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('RatingDate'), 'TIMESTAMP'),
                                     bigquery.SchemaField(sanitize_column_name('LocalAuthorityName'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('LocalAuthorityWebSite'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('LocalAuthorityEmailAddress'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('Longitude'), 'FLOAT'),
-                                    bigquery.SchemaField(sanitize_column_name('Latitude'), 'FLOAT'),
+                                    bigquery.SchemaField(sanitize_column_name('Scores.Hygiene'), 'INTEGER'),
+                                    bigquery.SchemaField(sanitize_column_name('Scores.Structural'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('Scores.ConfidenceInManagement'), 'STRING'),
+                                    bigquery.SchemaField(sanitize_column_name('Geocode.Longitude'), 'FLOAT'),
+                                    bigquery.SchemaField(sanitize_column_name('Geocode.Latitude'), 'FLOAT'),
                                     bigquery.SchemaField(sanitize_column_name('first_seen'), 'DATE')
                                 ]
                                 # Filter schema to only include selected and sanitized columns
