@@ -11,7 +11,7 @@ from google.cloud import bigquery # For bigquery.SchemaField, kept `google.cloud
 
 # Local Modules
 from api_client import fetch_api_data
-from bq_utils import sanitize_column_name, write_to_bigquery
+from bq_utils import sanitize_column_name, write_to_bigquery, read_from_bigquery
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
 from gcs_utils import load_json_from_gcs, upload_to_gcs
 
@@ -53,8 +53,14 @@ def display_data(data_to_display: List[Dict[str, Any]]):
 # Set the title of the Streamlit app
 st.title("Food Standards Agency API Explorer")
 
-# Create input field for coordinate pairs
-coordinate_pairs_input = st.text_area("Enter longitude,latitude pairs (one per line):")
+# Add navigation for different app modes
+app_mode = st.radio("Choose an action:", ("Fetch API Data", "FHRSID Lookup"))
+
+# Conditional UI for "Fetch API Data" mode
+if app_mode == "Fetch API Data":
+    st.subheader("Fetch API Data and Update Master List")
+    # Create input field for coordinate pairs
+    coordinate_pairs_input = st.text_area("Enter longitude,latitude pairs (one per line):")
 
 # Create an input field for max results
 max_results_input = st.number_input("Enter Max Results for API Call", min_value=1, max_value=5000, value=200)
@@ -68,9 +74,47 @@ master_list_uri = st.text_input("Enter Master Restaurant Data URI (JSON) (e.g., 
 # Create an input field for the GCS destination for the master restaurant data
 gcs_master_dictionary_output_uri = st.text_input("Enter GCS URI for Master Restaurant Data Output (e.g., gs://bucket-name/path/filename.json)")
 
-# Create an input field for the BigQuery full path
-bq_full_path = st.text_input("Enter BigQuery Table Path (project.dataset.table)")
+    # Create an input field for the BigQuery full path
+    bq_full_path = st.text_input("Enter BigQuery Table Path (project.dataset.table)")
 
+    # Create a button to trigger the API call
+    if st.button("Fetch Data"):
+        handle_fetch_data_action(
+            coordinate_pairs_str=coordinate_pairs_input,
+            max_results=max_results_input,
+            gcs_destination_uri_str=gcs_destination_uri,
+            master_list_uri_str=master_list_uri,
+            gcs_master_output_uri_str=gcs_master_dictionary_output_uri,
+            bq_full_path_str=bq_full_path
+        )
+
+# Conditional UI for "FHRSID Lookup" mode
+elif app_mode == "FHRSID Lookup":
+    st.subheader("FHRSID Lookup")
+    fhrsid_input = st.text_input("Enter FHRSID:")
+    bq_table_lookup_input = st.text_input("Enter BigQuery Table Path for Lookup (project.dataset.table):")
+
+    if st.button("Lookup FHRSID"):
+        if not fhrsid_input or not bq_table_lookup_input:
+            st.error("FHRSID and BigQuery Table Path are required.")
+        else:
+            try:
+                project_id, dataset_id, table_id = bq_table_lookup_input.split('.')
+                if not project_id or not dataset_id or not table_id: # Basic check for empty parts
+                    st.error("Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty.")
+                else:
+                    retrieved_data = read_from_bigquery(fhrsid_input, project_id, dataset_id, table_id)
+                    if retrieved_data is not None and not retrieved_data.empty:
+                        st.success(f"Data found for FHRSID: {fhrsid_input}")
+                        st.dataframe(retrieved_data)
+                    else:
+                        # read_from_bigquery prints its own messages for "No data found" or "Error querying"
+                        # This message is a fallback or summary for the UI
+                        st.warning(f"No data found for FHRSID: {fhrsid_input} in {bq_table_lookup_input}, or an error occurred during lookup.")
+            except ValueError:
+                st.error("Invalid BigQuery Table Path format. Expected 'project.dataset.table'.")
+            except Exception as e:
+                st.error(f"An unexpected error occurred during lookup: {e}")
 
 def handle_fetch_data_action(
     coordinate_pairs_str: str, 
@@ -276,13 +320,3 @@ def handle_fetch_data_action(
     return master_restaurant_data
 
 
-# Create a button to trigger the API call
-if st.button("Fetch Data"):
-    handle_fetch_data_action(
-        coordinate_pairs_str=coordinate_pairs_input,
-        max_results=max_results_input,
-        gcs_destination_uri_str=gcs_destination_uri,
-        master_list_uri_str=master_list_uri,
-        gcs_master_output_uri_str=gcs_master_dictionary_output_uri,
-        bq_full_path_str=bq_full_path
-    )
