@@ -199,8 +199,14 @@ class TestWriteToBigQuery(unittest.TestCase):
         mock_write_to_bigquery.assert_called_once()
 
         # Retrieve the DataFrame passed to write_to_bigquery
-        args_call_to_bq, _ = mock_write_to_bigquery.call_args
+        args_call_to_bq, kwargs_call_to_bq = mock_write_to_bigquery.call_args
         df_passed_to_bq = args_call_to_bq[0]
+        # project_id is args_call_to_bq[1]
+        # dataset_id is args_call_to_bq[2]
+        # table_id is args_call_to_bq[3]
+        columns_selected_for_bq = args_call_to_bq[4]
+        schema_for_bq = args_call_to_bq[5]
+
 
         self.assertIsInstance(df_passed_to_bq, pd.DataFrame)
         self.assertEqual(len(df_passed_to_bq), 2) # Should contain two records
@@ -210,6 +216,21 @@ class TestWriteToBigQuery(unittest.TestCase):
         self.assertTrue('first_seen' in df_passed_to_bq.columns) 
         self.assertTrue(pd.api.types.is_string_dtype(df_passed_to_bq['first_seen']) or \
                         pd.api.types.is_object_dtype(df_passed_to_bq['first_seen']))
+
+        # Assertions for "manual_review"
+        self.assertIn("manual_review", columns_selected_for_bq)
+
+        expected_manual_review_schema_field = bigquery.SchemaField("manual_review", "STRING", mode="NULLABLE")
+
+        # Check if a field with the name "manual_review" exists and matches the expected definition
+        found_manual_review_field = False
+        for field in schema_for_bq:
+            if field.name == "manual_review":
+                found_manual_review_field = True
+                self.assertEqual(field.field_type, expected_manual_review_schema_field.field_type)
+                self.assertEqual(field.mode, expected_manual_review_schema_field.mode)
+                break
+        self.assertTrue(found_manual_review_field, "SchemaField for 'manual_review' not found in bq_schema")
 
         # Check Streamlit success messages
         # Note: The exact date in the filename might be tricky if the test runs near midnight.
