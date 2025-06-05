@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from google.cloud import bigquery
-from typing import List
+from typing import List, Optional
 import re
 
 def sanitize_column_name(column_name: str) -> str:
@@ -86,3 +86,36 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
     except Exception as e:
         st.error(f"Error writing data to BigQuery table {table_ref_str}: {e}")
         return False
+
+def read_from_bigquery(fhrsid: str, project_id: str, dataset_id: str, table_id: str) -> Optional[pd.DataFrame]:
+    """
+    Reads data from a BigQuery table for a specific FHRSID.
+
+    Args:
+        fhrsid: The FHRSID to filter by.
+        project_id: The Google Cloud project ID.
+        dataset_id: The BigQuery dataset ID.
+        table_id: The BigQuery table ID.
+
+    Returns:
+        A Pandas DataFrame containing the data for the FHRSID, or None if no data is found or an error occurs.
+    """
+    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+    client = bigquery.Client(project=project_id)
+    query = f"SELECT * FROM `{table_ref_str}` WHERE fhrsid = @fhrsid"
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("fhrsid", "STRING", fhrsid)]
+    )
+
+    try:
+        query_job = client.query(query, job_config=job_config)
+        df = query_job.to_dataframe()
+
+        if df.empty:
+            print(f"No data found for FHRSID {fhrsid}")
+            return None
+
+        return df
+    except Exception as e: # Catching generic Exception as per requirement, consider more specific exceptions like google.cloud.exceptions.NotFound
+        print(f"Error querying BigQuery for FHRSID {fhrsid}: {e}")
+        return None
