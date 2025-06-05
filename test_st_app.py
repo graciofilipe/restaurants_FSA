@@ -5,14 +5,19 @@ from pandas.testing import assert_series_equal
 from google.cloud import bigquery
 import sys
 import os
+import importlib
 
 # Add the parent directory to the Python path to find st_app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Updated imports based on refactoring
 from bq_utils import write_to_bigquery, sanitize_column_name
-from st_app import handle_fetch_data_action
 # google.cloud.bigquery is imported directly where needed (e.g., TestWriteToBigQuery uses bigquery.SchemaField)
+
+# IMPORTANT: To avoid issues with Streamlit's singleton nature, tests call functions within st_app
+# directly, mocking their dependencies (like the 'st' object or specific data functions).
+
+import st_app # Can now import st_app at module level.
 
 class TestWriteToBigQuery(unittest.TestCase):
     @patch('bq_utils.bigquery.Client') # Patched in bq_utils
@@ -123,24 +128,24 @@ class TestWriteToBigQuery(unittest.TestCase):
         mock_st.success.assert_called_once() 
         mock_st.error.assert_not_called()
 
-    # Patches updated to reflect new module locations for the mocked functions
-    @patch('st_app.st') # For st calls directly within handle_fetch_data_action
-    @patch('st_app.time') # For time.sleep directly within handle_fetch_data_action
-    @patch('bq_utils.write_to_bigquery') # Mocked function now in bq_utils
-    @patch('gcs_utils.upload_to_gcs') # Mocked function now in gcs_utils
-    @patch('data_processing.load_master_data') # Mocked function now in data_processing
-    @patch('api_client.fetch_api_data') # Mocked function now in api_client
+    @patch('st_app.st')  # To mock st.success, st.info etc. called *within* handle_fetch_data_action
+    @patch('st_app.time')
+    @patch('st_app.write_to_bigquery')
+    @patch('st_app.upload_to_gcs')
+    @patch('st_app.load_master_data')
+    @patch('st_app.fetch_api_data')
+    @patch('st_app.display_data')
     def test_handle_fetch_data_action_rating_date_conversion(
         self,
-        mock_fetch_api_data,
-        mock_load_master_data,
-        mock_upload_to_gcs,
-        mock_write_to_bigquery,
-        mock_st, # Renamed to mock_st for clarity, matches the decorator name
-        mock_time
+        mock_st_app_display_data,
+        mock_st_app_fetch_api_data,
+        mock_st_app_load_master_data,
+        mock_st_app_upload_to_gcs,
+        mock_st_app_write_to_bigquery,
+        mock_st_app_time,
+        mock_st_object # This comes from @patch('st_app.st')
     ):
-        # 1. Configure mocks
-        # Define two different API responses for two calls
+        # 1. Configure mocks for functions imported by st_app
         api_response_1 = {
             'FHRSEstablishment': {
                 'EstablishmentCollection': {
@@ -167,22 +172,20 @@ class TestWriteToBigQuery(unittest.TestCase):
                 }
             }
         }
-        mock_fetch_api_data.side_effect = [api_response_1, api_response_2]
-        mock_load_master_data.return_value = []  # No existing master data
-        mock_upload_to_gcs.return_value = True
-        # mock_write_to_bigquery is already a mock from the decorator
+        mock_st_app_fetch_api_data.side_effect = [api_response_1, api_response_2]
+        mock_st_app_load_master_data.return_value = []
+        mock_st_app_upload_to_gcs.return_value = True
 
         # 2. Prepare inputs for handle_fetch_data_action
-        coordinate_pairs_str = "0.0,0.0\n1.0,1.0" # Two coordinate pairs
+        coordinate_pairs_str = "0.0,0.0\n1.0,1.0"
         max_results = 10
         gcs_destination_uri_str = "gs://bucket/folder/"
-        master_list_uri_str = "gs://bucket/master.json" # Will be loaded by mock_load_master_data
-        gcs_master_output_uri_str = "gs://bucket/master_out.json" # Will be used by mock_upload_to_gcs
-        bq_full_path_str = "project.dataset.table" # Enables the BQ write path
+        master_list_uri_str = "gs://bucket/master.json"
+        gcs_master_output_uri_str = "gs://bucket/master_out.json"
+        bq_full_path_str = "project.dataset.table"
 
-        # 3. Call handle_fetch_data_action
-        # This function is imported from st_app
-        handle_fetch_data_action(
+        # Call the function from the st_app module (already imported at top of test file)
+        st_app.handle_fetch_data_action(
             coordinate_pairs_str,
             max_results,
             gcs_destination_uri_str,
@@ -192,37 +195,28 @@ class TestWriteToBigQuery(unittest.TestCase):
         )
 
         # 4. Assertions
-        self.assertEqual(mock_fetch_api_data.call_count, 2) # Called for each coordinate pair
-        mock_time.sleep.assert_has_calls([call(4), call(4)]) # Called with 4 seconds
-        self.assertEqual(mock_time.sleep.call_count, 2) # Called after each API fetch
+        self.assertEqual(mock_st_app_fetch_api_data.call_count, 2)
+        mock_st_app_time.sleep.assert_has_calls([call(4), call(4)])
+        self.assertEqual(mock_st_app_time.sleep.call_count, 2)
 
-        mock_write_to_bigquery.assert_called_once()
-
-        # Retrieve the DataFrame passed to write_to_bigquery
-        args_call_to_bq, kwargs_call_to_bq = mock_write_to_bigquery.call_args
+        mock_st_app_write_to_bigquery.assert_called_once()
+        args_call_to_bq, kwargs_call_to_bq = mock_st_app_write_to_bigquery.call_args
         df_passed_to_bq = args_call_to_bq[0]
-        # project_id is args_call_to_bq[1]
-        # dataset_id is args_call_to_bq[2]
-        # table_id is args_call_to_bq[3]
         columns_selected_for_bq = args_call_to_bq[4]
         schema_for_bq = args_call_to_bq[5]
 
-
         self.assertIsInstance(df_passed_to_bq, pd.DataFrame)
-        self.assertEqual(len(df_passed_to_bq), 2) # Should contain two records
+        self.assertEqual(len(df_passed_to_bq), 2)
         self.assertTrue('RatingDate' in df_passed_to_bq.columns)
         self.assertTrue(pd.api.types.is_string_dtype(df_passed_to_bq['RatingDate']) or pd.api.types.is_object_dtype(df_passed_to_bq['RatingDate']), "RatingDate column should have string or object dtype")
         
         self.assertTrue('first_seen' in df_passed_to_bq.columns) 
-        self.assertTrue(pd.api.types.is_string_dtype(df_passed_to_bq['first_seen']) or \
-                        pd.api.types.is_object_dtype(df_passed_to_bq['first_seen']))
+        # Corrected assertion: check for datetime dtype as 'first_seen' is converted
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(df_passed_to_bq['first_seen']),
+                        f"Expected 'first_seen' column to be datetime, but got {df_passed_to_bq['first_seen'].dtype}")
 
-        # Assertions for "manual_review"
         self.assertIn("manual_review", columns_selected_for_bq)
-
         expected_manual_review_schema_field = bigquery.SchemaField("manual_review", "STRING", mode="NULLABLE")
-
-        # Check if a field with the name "manual_review" exists and matches the expected definition
         found_manual_review_field = False
         for field in schema_for_bq:
             if field.name == "manual_review":
@@ -232,21 +226,16 @@ class TestWriteToBigQuery(unittest.TestCase):
                 break
         self.assertTrue(found_manual_review_field, "SchemaField for 'manual_review' not found in bq_schema")
 
-        # Check Streamlit success messages
-        # Note: The exact date in the filename might be tricky if the test runs near midnight.
-        # Consider mocking datetime.now() if this becomes an issue. For now, assume it's stable enough.
         current_date_str = pd.Timestamp.now().strftime('%Y-%m-%d')
         
-        # Check for specific success calls using assert_any_call
-        # We expect 2 total from API calls, and since they are unique, 2 new records added.
-        mock_st.success.assert_any_call("Total establishments fetched from all API calls: 2")
-        mock_st.success.assert_any_call("Processed API response. Added 2 new restaurant records. Total unique records: 2")
-        mock_st.success.assert_any_call(f"Successfully uploaded combined raw API response to {gcs_destination_uri_str}combined_api_response_{current_date_str}.json")
-        mock_st.success.assert_any_call(f"Successfully uploaded master restaurant data to {gcs_master_output_uri_str}")
+        # Assertions are made against mock_st_object (which is st_app.st)
+        mock_st_object.success.assert_any_call("Total establishments fetched from all API calls: 2")
+        mock_st_object.success.assert_any_call(f"Successfully uploaded combined raw API response to {gcs_destination_uri_str}combined_api_response_{current_date_str}.json")
+        mock_st_object.success.assert_any_call(f"Successfully uploaded master restaurant data to {gcs_master_output_uri_str}")
         
-        # Check for potential warnings
-        warning_calls = [call_args[0][0] for call_args in mock_st.warning.call_args_list]
+        warning_calls = [c[0][0] for c in mock_st_object.warning.call_args_list]
         self.assertNotIn("Column 'RatingDate' not found in DataFrame. Skipping datetime conversion for it.", warning_calls)
+        mock_st_app_display_data.assert_called_once()
 
     # This test does not need modification as it tests pandas functionality directly
     # and does not involve the refactored app structure in terms of imports or mocks.
@@ -278,6 +267,149 @@ class TestWriteToBigQuery(unittest.TestCase):
         self.assertEqual(df['first_seen'].iloc[1], pd.Timestamp("2024-02-20"))
         self.assertTrue(pd.isna(df['first_seen'].iloc[2])) # Check for NaT for "not-a-date"
         self.assertTrue(pd.isna(df['first_seen'].iloc[3])) # Check for NaT for None
+
+
+# It's assumed that st_app.py imports bq_utils.read_from_bigquery as read_from_bigquery
+# and streamlit as st.
+
+class TestFhrsidLookup(unittest.TestCase):
+
+    @patch('st_app.read_from_bigquery')
+    @patch('st_app.pd.concat')
+    @patch('st_app.st')
+    def test_lookup_single_fhrsid_found(self, mock_st_obj, mock_pd_concat_func, mock_read_from_bq_func):
+        fhrsid_input = "123"
+        bq_path_input = "project.dataset.table"
+        df_data = {'FHRSID': ['123'], 'BusinessName': ['Cafe Uno'], 'fhrsid': ['123']}
+        expected_df = pd.DataFrame(df_data)
+        mock_read_from_bq_func.return_value = expected_df
+
+        st_app.fhrsid_lookup_logic(fhrsid_input, bq_path_input, mock_st_obj, mock_read_from_bq_func, mock_pd_concat_func)
+
+        mock_read_from_bq_func.assert_called_once_with(['123'], 'project', 'dataset', 'table')
+        args, _ = mock_st_obj.dataframe.call_args
+        pd.testing.assert_frame_equal(args[0], expected_df)
+        mock_st_obj.success.assert_called_with("Data found for FHRSIDs: 123")
+        mock_st_obj.warning.assert_not_called()
+        mock_st_obj.error.assert_not_called()
+        mock_pd_concat_func.assert_not_called()
+
+    @patch('st_app.read_from_bigquery')
+    @patch('st_app.pd.concat')
+    @patch('st_app.st')
+    def test_lookup_multiple_fhrsids_all_found(self, mock_st_obj, mock_pd_concat_func, mock_read_from_bq_func):
+        fhrsid_input = "123:456"
+        bq_path_input = "project.dataset.table"
+        concatenated_df_data = {'FHRSID': ['123', '456'], 'BusinessName': ['Cafe Uno', 'Restaurant Dos'], 'fhrsid': ['123', '456']}
+        concatenated_df = pd.DataFrame(concatenated_df_data)
+        mock_read_from_bq_func.return_value = concatenated_df
+
+        st_app.fhrsid_lookup_logic(fhrsid_input, bq_path_input, mock_st_obj, mock_read_from_bq_func, mock_pd_concat_func)
+
+        mock_read_from_bq_func.assert_called_once_with(['123', '456'], 'project', 'dataset', 'table')
+        args, _ = mock_st_obj.dataframe.call_args
+        pd.testing.assert_frame_equal(args[0], concatenated_df)
+        mock_st_obj.success.assert_called_with("Data found for FHRSIDs: 123, 456")
+        mock_st_obj.warning.assert_not_called()
+        mock_st_obj.error.assert_not_called()
+
+    @patch('st_app.read_from_bigquery')
+    @patch('st_app.pd.concat')
+    @patch('st_app.st')
+    def test_lookup_multiple_fhrsids_some_found(self, mock_st_obj, mock_pd_concat_func, mock_read_from_bq_func):
+        fhrsid_input = "123:789:456"
+        bq_path_input = "project.dataset.table"
+        df_data_found = {'FHRSID': ['123', '456'], 'BusinessName': ['Cafe Uno', 'Restaurant Dos'], 'fhrsid': ['123', '456']}
+        expected_df = pd.DataFrame(df_data_found)
+        mock_read_from_bq_func.return_value = expected_df
+
+        st_app.fhrsid_lookup_logic(fhrsid_input, bq_path_input, mock_st_obj, mock_read_from_bq_func, mock_pd_concat_func)
+
+        mock_read_from_bq_func.assert_called_once_with(['123', '789', '456'], 'project', 'dataset', 'table')
+        args, _ = mock_st_obj.dataframe.call_args
+        pd.testing.assert_frame_equal(args[0], expected_df)
+        mock_st_obj.success.assert_called_with("Data found for FHRSIDs: 123, 456")
+        mock_st_obj.warning.assert_called_with("No data found or error for FHRSIDs: 789")
+        mock_st_obj.error.assert_not_called()
+
+    @patch('st_app.read_from_bigquery')
+    @patch('st_app.pd.concat')
+    @patch('st_app.st')
+    def test_lookup_multiple_fhrsids_none_found(self, mock_st_obj, mock_pd_concat_func, mock_read_from_bq_func):
+        fhrsid_input = "789:101"
+        bq_path_input = "project.dataset.table"
+        mock_read_from_bq_func.return_value = None
+
+        st_app.fhrsid_lookup_logic(fhrsid_input, bq_path_input, mock_st_obj, mock_read_from_bq_func, mock_pd_concat_func)
+
+        mock_read_from_bq_func.assert_called_once_with(['789', '101'], 'project', 'dataset', 'table')
+        mock_st_obj.dataframe.assert_not_called()
+        mock_st_obj.success.assert_not_called()
+        mock_st_obj.warning.assert_called_with("No data found for the provided FHRSIDs: 789:101 in project.dataset.table, or an error occurred during lookup for all specified IDs.")
+        mock_st_obj.error.assert_not_called()
+
+    @patch('st_app.read_from_bigquery')
+    @patch('st_app.pd.concat')
+    @patch('st_app.st')
+    def test_lookup_no_fhrsid_entered(self, mock_st_obj, mock_pd_concat_func, mock_read_from_bq_func):
+        fhrsid_input = ""
+        bq_path_input = "project.dataset.table"
+
+        st_app.fhrsid_lookup_logic(fhrsid_input, bq_path_input, mock_st_obj, mock_read_from_bq_func, mock_pd_concat_func)
+
+        mock_st_obj.error.assert_called_with("Please enter one or more FHRSIDs.")
+        mock_read_from_bq_func.assert_not_called()
+        mock_st_obj.dataframe.assert_not_called()
+        mock_st_obj.success.assert_not_called()
+        mock_st_obj.warning.assert_not_called()
+
+    @patch('st_app.read_from_bigquery')
+    @patch('st_app.pd.concat')
+    @patch('st_app.st')
+    def test_lookup_fhrsid_input_is_just_colons(self, mock_st_obj, mock_pd_concat_func, mock_read_from_bq_func):
+        fhrsid_input = ":::"
+        bq_path_input = "project.dataset.table"
+
+        st_app.fhrsid_lookup_logic(fhrsid_input, bq_path_input, mock_st_obj, mock_read_from_bq_func, mock_pd_concat_func)
+
+        mock_st_obj.error.assert_called_with("Please enter valid FHRSIDs.")
+        mock_read_from_bq_func.assert_not_called()
+
+    @patch('st_app.read_from_bigquery')
+    @patch('st_app.pd.concat')
+    @patch('st_app.st')
+    def test_lookup_no_bq_path_entered(self, mock_st_obj, mock_pd_concat_func, mock_read_from_bq_func):
+        fhrsid_input = "123:456"
+        bq_path_input = ""
+
+        st_app.fhrsid_lookup_logic(fhrsid_input, bq_path_input, mock_st_obj, mock_read_from_bq_func, mock_pd_concat_func)
+
+        mock_st_obj.error.assert_called_with("BigQuery Table Path is required.")
+        mock_read_from_bq_func.assert_not_called()
+
+    @patch('st_app.read_from_bigquery')
+    @patch('st_app.pd.concat')
+    @patch('st_app.st')
+    def test_lookup_invalid_bq_path_format_too_few_parts(self, mock_st_obj, mock_pd_concat_func, mock_read_from_bq_func):
+        fhrsid_input = "123:456"
+        bq_path_input = "project.dataset"
+
+        st_app.fhrsid_lookup_logic(fhrsid_input, bq_path_input, mock_st_obj, mock_read_from_bq_func, mock_pd_concat_func)
+
+        mock_st_obj.error.assert_called_with("Invalid BigQuery Table Path format. Expected 'project.dataset.table'.")
+        mock_read_from_bq_func.assert_not_called()
+
+    @patch('st_app.read_from_bigquery')
+    @patch('st_app.pd.concat')
+    @patch('st_app.st')
+    def test_lookup_invalid_bq_path_format_empty_part(self, mock_st_obj, mock_pd_concat_func, mock_read_from_bq_func):
+        fhrsid_input = "123:456"
+        bq_path_input = "project..table"
+
+        st_app.fhrsid_lookup_logic(fhrsid_input, bq_path_input, mock_st_obj, mock_read_from_bq_func, mock_pd_concat_func)
+
+        mock_st_obj.error.assert_called_with("Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty.")
+        mock_read_from_bq_func.assert_not_called()
 
 
 if __name__ == '__main__':

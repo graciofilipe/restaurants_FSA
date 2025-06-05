@@ -87,12 +87,12 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
         st.error(f"Error writing data to BigQuery table {table_ref_str}: {e}")
         return False
 
-def read_from_bigquery(fhrsid: str, project_id: str, dataset_id: str, table_id: str) -> Optional[pd.DataFrame]:
+def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str, table_id: str) -> Optional[pd.DataFrame]:
     """
-    Reads data from a BigQuery table for a specific FHRSID.
+    Reads data from a BigQuery table for a list of FHRSIDs.
 
     Args:
-        fhrsid: The FHRSID to filter by.
+        fhrsid_list: A list of FHRSIDs to filter by.
         project_id: The Google Cloud project ID.
         dataset_id: The BigQuery dataset ID.
         table_id: The BigQuery table ID.
@@ -102,9 +102,9 @@ def read_from_bigquery(fhrsid: str, project_id: str, dataset_id: str, table_id: 
     """
     table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
     client = bigquery.Client(project=project_id)
-    query = f"SELECT * FROM `{table_ref_str}` WHERE fhrsid = @fhrsid"
+    query = f"SELECT * FROM `{table_ref_str}` WHERE fhrsid IN UNNEST(@fhrsid_list)"
     job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter("fhrsid", "STRING", fhrsid)]
+        query_parameters=[bigquery.ArrayQueryParameter("fhrsid_list", "STRING", fhrsid_list)]
     )
 
     try:
@@ -112,10 +112,14 @@ def read_from_bigquery(fhrsid: str, project_id: str, dataset_id: str, table_id: 
         df = query_job.to_dataframe()
 
         if df.empty:
-            print(f"No data found for FHRSID {fhrsid}")
+            # Using st.info for user-facing messages in Streamlit context, print for backend/CLI
+            st.info(f"No data found for FHRSIDs: {', '.join(fhrsid_list)} in table {table_ref_str}")
             return None
 
         return df
-    except Exception as e: # Catching generic Exception as per requirement, consider more specific exceptions like google.cloud.exceptions.NotFound
-        print(f"Error querying BigQuery for FHRSID {fhrsid}: {e}")
+    except Exception as e:
+        # Using st.error for user-facing messages, print for backend/CLI
+        st.error(f"Error querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {e}")
+        # Also print to console for backend logging
+        print(f"Error querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)}: {e}")
         return None
