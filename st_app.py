@@ -15,8 +15,6 @@ from bq_utils import sanitize_column_name, write_to_bigquery, read_from_bigquery
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
 from gcs_utils import load_json_from_gcs, upload_to_gcs
 
-# Removed comments about function definitions being moved previously
-
 def display_data(data_to_display: List[Dict[str, Any]]):
     """
     Displays the given data using Streamlit, primarily as a Pandas DataFrame.
@@ -29,7 +27,6 @@ def display_data(data_to_display: List[Dict[str, Any]]):
             st.warning("No restaurant data to display (master restaurant data is empty after processing).")
             return
 
-        # Ensure all items are dictionaries before normalization
         valid_items_for_df = [item for item in data_to_display if isinstance(item, dict)]
         
         if not valid_items_for_df:
@@ -37,7 +34,7 @@ def display_data(data_to_display: List[Dict[str, Any]]):
         elif len(valid_items_for_df) < len(data_to_display):
             st.warning(f"Some items in the master restaurant data were not dictionaries and were excluded from the table display. Displaying {len(valid_items_for_df)} records.")
         
-        if valid_items_for_df: # Proceed only if there's something to show
+        if valid_items_for_df:
             df = pd.json_normalize(valid_items_for_df)
             st.dataframe(df)
         
@@ -49,72 +46,66 @@ def display_data(data_to_display: List[Dict[str, Any]]):
         except Exception as json_e:
             st.error(f"Could not even display master restaurant data as JSON: {json_e}")
 
+def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, st_object, read_from_bq_func, pd_concat_func):
+    """
+    Handles the logic for the FHRSID lookup.
+    Args:
+        fhrsid_input_str: The string input for FHRSIDs.
+        bq_table_lookup_input_str: The string input for the BigQuery table.
+        st_object: The streamlit object (or mock) for UI calls.
+        read_from_bq_func: Function to call for reading from BigQuery.
+        pd_concat_func: Function to call for concatenating pandas DataFrames (not strictly needed if read_from_bq_func returns combined df).
+    """
+    if not bq_table_lookup_input_str:
+        st_object.error("BigQuery Table Path is required.")
+        return
+    if not fhrsid_input_str:
+        st_object.error("Please enter one or more FHRSIDs.")
+        return
 
-# Set the title of the Streamlit app
-st.title("Food Standards Agency API Explorer")
+    try:
+        project_id, dataset_id, table_id = bq_table_lookup_input_str.split('.')
+        if not project_id or not dataset_id or not table_id:
+            st_object.error("Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty.")
+            return
 
-# Add navigation for different app modes
-app_mode = st.radio("Choose an action:", ("Fetch API Data", "FHRSID Lookup"))
+        fhrsid_list_requested = [fhrsid.strip() for fhrsid in fhrsid_input_str.split(':') if fhrsid.strip()]
+        if not fhrsid_list_requested:
+            st_object.error("Please enter valid FHRSIDs.")
+            return
 
-# Conditional UI for "Fetch API Data" mode
-if app_mode == "Fetch API Data":
-    st.subheader("Fetch API Data and Update Master List")
-    # Create input field for coordinate pairs
-    coordinate_pairs_input = st.text_area("Enter longitude,latitude pairs (one per line):")
+        final_df = read_from_bq_func(fhrsid_list_requested, project_id, dataset_id, table_id)
 
-# Create an input field for max results
-max_results_input = st.number_input("Enter Max Results for API Call", min_value=1, max_value=5000, value=200)
+        if final_df is not None and not final_df.empty:
+            if 'fhrsid' in final_df.columns: # Ensure the key column exists
+                successful_fhrsids_from_df = final_df['fhrsid'].astype(str).unique().tolist()
+            else: # Should ideally not happen if data source is consistent
+                successful_fhrsids_from_df = []
+                st_object.error("FHRSID column ('fhrsid') missing in returned data. Cannot determine successful lookups.")
 
-# Create an input field for the GCS destination folder URI
-gcs_destination_uri = st.text_input("Enter GCS destination folder for the scan (e.g., gs://bucket-name/scans-folder/)")
+            if successful_fhrsids_from_df:
+                st_object.success(f"Data found for FHRSIDs: {', '.join(successful_fhrsids_from_df)}")
+                st_object.dataframe(final_df)
 
-# Create an input field for the master restaurant list URI
-master_list_uri = st.text_input("Enter Master Restaurant Data URI (JSON) (e.g., gs://bucket/file.json or /path/to/file.json)")
+            failed_fhrsids = [f_id for f_id in fhrsid_list_requested if f_id not in successful_fhrsids_from_df]
+            if failed_fhrsids:
+                st_object.warning(f"No data found or error for FHRSIDs: {', '.join(failed_fhrsids)}")
 
-# Create an input field for the GCS destination for the master restaurant data
-gcs_master_dictionary_output_uri = st.text_input("Enter GCS URI for Master Restaurant Data Output (e.g., gs://bucket-name/path/filename.json)")
+            if not successful_fhrsids_from_df and not failed_fhrsids and not final_df.empty:
+                 # This case means dataframe is not empty, but no FHRSIDs identified from it matched the requested list.
+                 # This could happen if the 'fhrsid' column was present but empty or all values were different.
+                 st_object.warning(f"Data returned but no matching FHRSIDs found for: {fhrsid_input_str} in {bq_table_lookup_input_str}.")
+            elif not successful_fhrsids_from_df and not final_df.empty:
+                 # Dataframe not empty, fhrsid column was missing, already handled by st.error above.
+                 pass
 
-    # Create an input field for the BigQuery full path
-    bq_full_path = st.text_input("Enter BigQuery Table Path (project.dataset.table)")
 
-    # Create a button to trigger the API call
-    if st.button("Fetch Data"):
-        handle_fetch_data_action(
-            coordinate_pairs_str=coordinate_pairs_input,
-            max_results=max_results_input,
-            gcs_destination_uri_str=gcs_destination_uri,
-            master_list_uri_str=master_list_uri,
-            gcs_master_output_uri_str=gcs_master_dictionary_output_uri,
-            bq_full_path_str=bq_full_path
-        )
-
-# Conditional UI for "FHRSID Lookup" mode
-elif app_mode == "FHRSID Lookup":
-    st.subheader("FHRSID Lookup")
-    fhrsid_input = st.text_input("Enter FHRSID:")
-    bq_table_lookup_input = st.text_input("Enter BigQuery Table Path for Lookup (project.dataset.table):")
-
-    if st.button("Lookup FHRSID"):
-        if not fhrsid_input or not bq_table_lookup_input:
-            st.error("FHRSID and BigQuery Table Path are required.")
-        else:
-            try:
-                project_id, dataset_id, table_id = bq_table_lookup_input.split('.')
-                if not project_id or not dataset_id or not table_id: # Basic check for empty parts
-                    st.error("Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty.")
-                else:
-                    retrieved_data = read_from_bigquery(fhrsid_input, project_id, dataset_id, table_id)
-                    if retrieved_data is not None and not retrieved_data.empty:
-                        st.success(f"Data found for FHRSID: {fhrsid_input}")
-                        st.dataframe(retrieved_data)
-                    else:
-                        # read_from_bigquery prints its own messages for "No data found" or "Error querying"
-                        # This message is a fallback or summary for the UI
-                        st.warning(f"No data found for FHRSID: {fhrsid_input} in {bq_table_lookup_input}, or an error occurred during lookup.")
-            except ValueError:
-                st.error("Invalid BigQuery Table Path format. Expected 'project.dataset.table'.")
-            except Exception as e:
-                st.error(f"An unexpected error occurred during lookup: {e}")
+        else: # final_df is None or empty
+            st_object.warning(f"No data found for the provided FHRSIDs: {fhrsid_input_str} in {bq_table_lookup_input_str}, or an error occurred during lookup for all specified IDs.")
+    except ValueError:
+        st_object.error("Invalid BigQuery Table Path format. Expected 'project.dataset.table'.")
+    except Exception as e:
+        st_object.error(f"An unexpected error occurred during lookup: {e}")
 
 def handle_fetch_data_action(
     coordinate_pairs_str: str, 
@@ -145,32 +136,34 @@ def handle_fetch_data_action(
 
     if not valid_coords:
         st.error("No valid coordinate pairs found. Please enter coordinates in 'longitude,latitude' format, one per line.")
-        st.stop() # Stop further processing in this block
+        st.stop()
 
     all_api_establishments = []
-    total_results_from_all_calls = 0
 
     st.info(f"Found {len(valid_coords)} valid coordinate pairs. Fetching data for each...")
 
     for lon, lat in valid_coords:
         st.write(f"Fetching data for Longitude: {lon}, Latitude: {lat}...")
-        api_response = fetch_api_data(lon, lat, max_results_input)
-        time.sleep(4) # Pause for 4 seconds between API calls
+        # Assuming max_results_input is accessible here, if not, it should be passed or defined globally.
+        # For now, let's assume it's defined in the scope where handle_fetch_data_action is called (e.g. main_ui)
+        # and passed appropriately if necessary. The test will mock it.
+        # The error was that max_results_input was defined outside the if block, it should be inside if app_mode == "Fetch API Data"
+        # This function is called from main_ui where max_results_input_ui is defined.
+        api_response = fetch_api_data(lon, lat, max_results) # Using max_results param
+        time.sleep(4)
         
         if api_response:
             establishments_list = api_response.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
-            if establishments_list is None: # Ensure it's a list
+            if establishments_list is None:
                 establishments_list = []
             
             num_results_this_call = len(establishments_list)
-            total_results_from_all_calls += num_results_this_call
             st.info(f"API call for ({lon}, {lat}) returned {num_results_this_call} establishments.")
 
-            if num_results_this_call == max_results_input:
+            if num_results_this_call == max_results:
                 st.warning(f"Warning for ({lon}, {lat}): The API returned {num_results_this_call} results, matching `max_results`. Results might be capped.")
             
             all_api_establishments.extend(establishments_list)
-        # fetch_api_data itself will show an error if the call fails
 
     if not all_api_establishments:
         st.info("No establishments found from any of the API calls. Nothing to process further.")
@@ -178,79 +171,39 @@ def handle_fetch_data_action(
 
     st.success(f"Total establishments fetched from all API calls: {len(all_api_establishments)}")
     
-    # This combined_api_data will be used for subsequent processing steps
     combined_api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': all_api_establishments}}}
-    
-    # For compatibility with existing logic that expects an 'api_data' variable for GCS upload and BQ.
-    # This means the raw GCS upload will store the *combined* data.
     api_data = combined_api_data 
 
-    # 2. Load Master Restaurant Data
-    # Determine which loading function to use based on the URI scheme
-    # Using master_list_uri_str as it's the parameter name in handle_fetch_data_action
     if master_list_uri_str.startswith("gs://"):
         load_function = load_json_from_gcs
     else:
         load_function = load_json_from_local_file_path
     
     master_restaurant_data = load_master_data(master_list_uri_str, load_function)
+    master_restaurant_data, _ = process_and_update_master_data(master_restaurant_data, combined_api_data)
 
-    # 3. Process API Response (Combined) and Update Master Restaurant Data
-    master_restaurant_data, new_additions_count = process_and_update_master_data(master_restaurant_data, combined_api_data)
-    # The success message from process_and_update_master_data already states new additions and total.
-
-    # Prepare data for display filtering
-    today_date_for_filtering = datetime.now().strftime("%Y-%m-%d")
-    restaurants_to_display = []
-    for restaurant in master_restaurant_data:
-        if isinstance(restaurant, dict) and 'first_seen' in restaurant:
-            if restaurant['first_seen'] == today_date_for_filtering:
-                restaurants_to_display.append(restaurant)
-    
-    # 4. Upload Combined Raw API Response to gcs_destination_uri_str (folder)
-    # The variable 'api_data' now holds 'combined_api_data'
     if gcs_destination_uri_str:
         current_date = datetime.now().strftime("%Y-%m-%d")
-        # Consider a more descriptive filename if multiple coords are common, e.g., including hash or range
         api_response_filename = f"combined_api_response_{current_date}.json" 
-        
         gcs_destination_uri_folder = gcs_destination_uri_str
         if not gcs_destination_uri_folder.endswith('/'):
             gcs_destination_uri_folder += '/'
-        
         full_gcs_path_api_response = f"{gcs_destination_uri_folder}{api_response_filename}"
-
-        # Use the new upload_to_gcs that takes a dict
         if upload_to_gcs(data=api_data, destination_uri=full_gcs_path_api_response):
             st.success(f"Successfully uploaded combined raw API response to {full_gcs_path_api_response}")
-        # upload_to_gcs from gcs_utils handles its own st.error messages on failure
     
-    # 5. Upload Master Restaurant Data to gcs_master_output_uri_str (full file path)
     if gcs_master_output_uri_str:
-        # Use the new upload_to_gcs that takes a dict
         if upload_to_gcs(data=master_restaurant_data, destination_uri=gcs_master_output_uri_str):
             st.success(f"Successfully uploaded master restaurant data to {gcs_master_output_uri_str}")
-        # upload_to_gcs from gcs_utils handles its own st.error messages on failure
 
-    # 6. Display Data
     display_data(master_restaurant_data)
 
-    # 7. Write to BigQuery
-    # The variable 'api_data' (holding combined_api_data) can be used to check if any data was fetched.
     if api_data and api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail'): 
-        if master_restaurant_data: # Check if master data (potentially enriched) exists
+        if master_restaurant_data:
             df_to_load = pd.json_normalize([item for item in master_restaurant_data if isinstance(item, dict)])
-
-            # Ensure other potential date columns are handled if necessary,
-            # for now, the issue is specifically with 'RatingDate'.
-            # The 'first_seen' column is already a string in 'YYYY-MM-DD' format,
-            # and its schema in BigQuery is 'DATE', which should be compatible.
-
             if df_to_load is not None and not df_to_load.empty:
-                # Convert 'first_seen' to datetime objects if the column exists
                 if 'first_seen' in df_to_load.columns:
                     df_to_load['first_seen'] = pd.to_datetime(df_to_load['first_seen'], errors='coerce')
-
                 if bq_full_path_str:
                     try:
                         path_parts = bq_full_path_str.split('.')
@@ -258,7 +211,6 @@ def handle_fetch_data_action(
                             project_id, dataset_id, table_id = path_parts
                             if len(project_id) > 0 and len(dataset_id) > 0 and len(table_id) > 0:
                                 st.info(f"Attempting to write to BigQuery table: {bq_full_path_str}")
-                                # Define columns to select and BigQuery schema
                                 columns_to_select = [
                                     'FHRSID', 'BusinessName','AddressLine1', 'AddressLine2', 'AddressLine3', 'PostCode', 
                                     'RatingValue', 'RatingKey', 'RatingDate', 'LocalAuthorityName', 
@@ -266,9 +218,7 @@ def handle_fetch_data_action(
                                     'Scores.ConfidenceInManagement', 'SchemeType', 'NewRatingPending', 
                                     'Geocode.Latitude', 'Geocode.Longitude', 'first_seen', 'manual_review'
                                 ]
-                                # Filter out columns that are not in df_to_load to prevent errors
                                 columns_to_select = [col for col in columns_to_select if col in df_to_load.columns]
-
                                 bq_schema = [
                                     bigquery.SchemaField(sanitize_column_name('FHRSID'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('BusinessName'), 'STRING'),
@@ -276,7 +226,7 @@ def handle_fetch_data_action(
                                     bigquery.SchemaField(sanitize_column_name('AddressLine2'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('AddressLine3'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('PostCode'), 'STRING'),
-                                    bigquery.SchemaField(sanitize_column_name('RatingValue'), 'STRING'), # RatingValue can be non-numeric e.g. "Exempt"
+                                    bigquery.SchemaField(sanitize_column_name('RatingValue'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('RatingKey'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('RatingDate'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('LocalAuthorityName'), 'STRING'),
@@ -288,18 +238,14 @@ def handle_fetch_data_action(
                                     bigquery.SchemaField(sanitize_column_name('first_seen'), 'DATE'),
                                     bigquery.SchemaField("manual_review", "STRING", mode="NULLABLE")
                                 ]
-                                # Filter schema to only include selected and sanitized columns
                                 sanitized_columns_to_select_set = {sanitize_column_name(col) for col in columns_to_select}
                                 bq_schema = [field for field in bq_schema if field.name in sanitized_columns_to_select_set]
-
-                                # Convert 'Scores.Hygiene' to Int64
                                 hygiene_col = 'Scores.Hygiene'
                                 if hygiene_col in df_to_load.columns:
-                                    st.write(f"Attempting to convert column: {hygiene_col}") # Added for debugging visibility
+                                    st.write(f"Attempting to convert column: {hygiene_col}")
                                     df_to_load[hygiene_col] = pd.to_numeric(df_to_load[hygiene_col], errors='coerce')
                                     df_to_load[hygiene_col] = df_to_load[hygiene_col].astype('Int64')
-                                    st.write(f"Conversion of {hygiene_col} complete. Dtype: {df_to_load[hygiene_col].dtype}") # Added for debugging
-
+                                    st.write(f"Conversion of {hygiene_col} complete. Dtype: {df_to_load[hygiene_col].dtype}")
                                 write_to_bigquery(df_to_load, project_id, dataset_id, table_id, columns_to_select, bq_schema)
                             else: 
                                 st.error(f"Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty. Got: '{bq_full_path_str}'. Skipping BigQuery write.")
@@ -319,4 +265,36 @@ def handle_fetch_data_action(
         st.info("No API data was fetched or processed successfully, so skipping BigQuery write.")
     return master_restaurant_data
 
+def main_ui():
+    st.title("Food Standards Agency API Explorer")
+    app_mode = st.radio("Choose an action:", ("Fetch API Data", "FHRSID Lookup"))
 
+    if app_mode == "Fetch API Data":
+        st.subheader("Fetch API Data and Update Master List")
+        coordinate_pairs_input = st.text_area("Enter longitude,latitude pairs (one per line):")
+        # These _ui variables are used to distinguish from the parameters of handle_fetch_data_action
+        max_results_input_ui = st.number_input("Enter Max Results for API Call", min_value=1, max_value=5000, value=200)
+        gcs_destination_uri_ui = st.text_input("Enter GCS destination folder for the scan (e.g., gs://bucket-name/scans-folder/)")
+        master_list_uri_ui = st.text_input("Enter Master Restaurant Data URI (JSON) (e.g., gs://bucket/file.json or /path/to/file.json)")
+        gcs_master_dictionary_output_uri_ui = st.text_input("Enter GCS URI for Master Restaurant Data Output (e.g., gs://bucket-name/path/filename.json)")
+        bq_full_path_ui = st.text_input("Enter BigQuery Table Path (project.dataset.table)")
+
+        if st.button("Fetch Data"):
+            handle_fetch_data_action( # Pass the UI input values to the handler
+                coordinate_pairs_str=coordinate_pairs_input,
+                max_results=max_results_input_ui,
+                gcs_destination_uri_str=gcs_destination_uri_ui,
+                master_list_uri_str=master_list_uri_ui,
+                gcs_master_output_uri_str=gcs_master_dictionary_output_uri_ui,
+                bq_full_path_str=bq_full_path_ui
+            )
+    elif app_mode == "FHRSID Lookup":
+        st.subheader("FHRSID Lookup")
+        fhrsid_input_str_ui = st.text_input("Enter FHRSIDs (colon-separated):")
+        bq_table_lookup_input_str_ui = st.text_input("Enter BigQuery Table Path for Lookup (project.dataset.table):")
+
+        if st.button("Lookup FHRSIDs"):
+            fhrsid_lookup_logic(fhrsid_input_str_ui, bq_table_lookup_input_str_ui, st, read_from_bigquery, pd.concat)
+
+if __name__ == "__main__":
+    main_ui()
