@@ -220,7 +220,7 @@ def handle_fetch_data_action(
                                     'RatingValue', 'RatingKey', 'RatingDate', 'LocalAuthorityName', 
                                     'Scores.Hygiene', 'Scores.Structural', 
                                     'Scores.ConfidenceInManagement', 'SchemeType', 'NewRatingPending', 
-                                    'Geocode.Latitude', 'Geocode.Longitude', 'first_seen'
+                                    'Geocode.Latitude', 'Geocode.Longitude', 'first_seen', 'manual_review'
                                 ]
                                 # Filter out columns that are not in df_to_load to prevent errors
                                 columns_to_select = [col for col in columns_to_select if col in df_to_load.columns]
@@ -241,7 +241,8 @@ def handle_fetch_data_action(
                                     bigquery.SchemaField(sanitize_column_name('Scores.ConfidenceInManagement'), 'STRING'),
                                     bigquery.SchemaField(sanitize_column_name('Geocode.Longitude'), 'FLOAT'),
                                     bigquery.SchemaField(sanitize_column_name('Geocode.Latitude'), 'FLOAT'),
-                                    bigquery.SchemaField(sanitize_column_name('first_seen'), 'DATE')
+                                    bigquery.SchemaField(sanitize_column_name('first_seen'), 'DATE'),
+                                    bigquery.SchemaField("manual_review", "STRING", mode="NULLABLE")
                                 ]
                                 # Filter schema to only include selected and sanitized columns
                                 sanitized_columns_to_select_set = {sanitize_column_name(col) for col in columns_to_select}
