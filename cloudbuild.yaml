@@ -17,5 +17,19 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/python-app:$COMMIT_SHA']
 
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'services'
+      - 'update'
+      - 'restaurants-fsa'
+      - '--platform=managed'
+      - '--image=gcr.io/$PROJECT_ID/python-app:$COMMIT_SHA'
+      - '--labels=managed-by=gcp-cloud-build-deploy-cloud-run'
+      - '--region=europe-west2'
+      - '--quiet'
+
 images:
   - 'gcr.io/$PROJECT_ID/python-app:$COMMIT_SHA'
