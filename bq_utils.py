@@ -80,7 +80,7 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
     
     try:
         job = client.load_table_from_dataframe(df_subset, table_ref_str, job_config=job_config)
-        job.result()  # Wait for the job to complete
+        job.result()
         st.success(f"Successfully wrote data to BigQuery table {table_ref_str} with schema and sanitized column names. Overwritten if table existed.")
         return True
     except Exception as e:
