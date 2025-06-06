@@ -1,0 +1,21 @@
+steps:
+  # Install dependencies
+  - name: 'python:3.11-slim'
+    entrypoint: 'pip'
+    args: ['install', '-r', 'requirements.txt', '--user']
+
+  # Run tests
+  - name: 'python:3.11-slim'
+    entrypoint: 'python'
+    args: ['-m', 'pytest', 'test_st_app.py']
+
+  # Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/python-app:$COMMIT_SHA', '.']
+
+  # Push Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/python-app:$COMMIT_SHA']
+
+images:
+  - 'gcr.io/$PROJECT_ID/python-app:$COMMIT_SHA'
