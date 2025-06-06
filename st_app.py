@@ -77,9 +77,9 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
         final_df = read_from_bq_func(fhrsid_list_requested, project_id, dataset_id, table_id)
 
         if final_df is not None and not final_df.empty:
-            if 'fhrsid' in final_df.columns: # Ensure the key column exists
+        if 'fhrsid' in final_df.columns:
                 successful_fhrsids_from_df = final_df['fhrsid'].astype(str).unique().tolist()
-            else: # Should ideally not happen if data source is consistent
+        else:
                 successful_fhrsids_from_df = []
                 st_object.error("FHRSID column ('fhrsid') missing in returned data. Cannot determine successful lookups.")
 
@@ -96,11 +96,10 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
                  # This could happen if the 'fhrsid' column was present but empty or all values were different.
                  st_object.warning(f"Data returned but no matching FHRSIDs found for: {fhrsid_input_str} in {bq_table_lookup_input_str}.")
             elif not successful_fhrsids_from_df and not final_df.empty:
-                 # Dataframe not empty, fhrsid column was missing, already handled by st.error above.
                  pass
 
 
-        else: # final_df is None or empty
+        else:
             st_object.warning(f"No data found for the provided FHRSIDs: {fhrsid_input_str} in {bq_table_lookup_input_str}, or an error occurred during lookup for all specified IDs.")
     except ValueError:
         st_object.error("Invalid BigQuery Table Path format. Expected 'project.dataset.table'.")
@@ -144,12 +143,7 @@ def handle_fetch_data_action(
 
     for lon, lat in valid_coords:
         st.write(f"Fetching data for Longitude: {lon}, Latitude: {lat}...")
-        # Assuming max_results_input is accessible here, if not, it should be passed or defined globally.
-        # For now, let's assume it's defined in the scope where handle_fetch_data_action is called (e.g. main_ui)
-        # and passed appropriately if necessary. The test will mock it.
-        # The error was that max_results_input was defined outside the if block, it should be inside if app_mode == "Fetch API Data"
-        # This function is called from main_ui where max_results_input_ui is defined.
-        api_response = fetch_api_data(lon, lat, max_results) # Using max_results param
+        api_response = fetch_api_data(lon, lat, max_results)
         time.sleep(4)
         
         if api_response:
@@ -280,7 +274,7 @@ def main_ui():
         bq_full_path_ui = st.text_input("Enter BigQuery Table Path (project.dataset.table)")
 
         if st.button("Fetch Data"):
-            handle_fetch_data_action( # Pass the UI input values to the handler
+            handle_fetch_data_action(
                 coordinate_pairs_str=coordinate_pairs_input,
                 max_results=max_results_input_ui,
                 gcs_destination_uri_str=gcs_destination_uri_ui,

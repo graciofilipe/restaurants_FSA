@@ -3,7 +3,7 @@ import streamlit as st
 from datetime import datetime
 from typing import List, Dict, Any, Callable, Tuple, Optional
 
-def load_json_from_local_file_path(uri: str) -> Optional[Dict[str, Any]]: # Added Optional and return type hint
+def load_json_from_local_file_path(uri: str) -> Optional[Dict[str, Any]]:
     """
     Loads a JSON file from a local file path.
 

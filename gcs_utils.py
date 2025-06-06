@@ -15,14 +15,13 @@ def _parse_gcs_uri(uri: str) -> Optional[Tuple[str, str]]:
         or None if the URI is invalid.
     """
     if not uri.startswith("gs://"):
-        st.error(f"Invalid GCS URI: {uri}. Must start with 'gs://'.") # Added error message as per initial plan
+        st.error(f"Invalid GCS URI: {uri}. Must start with 'gs://'.")
         return None
     
-    parts = uri[5:].split("/", 1) # Remove "gs://" and split by the first "/"
+    parts = uri[5:].split("/", 1)
     
     if len(parts) < 2 or not parts[0] or not parts[1]:
-        # Must have a bucket and a blob name
-        st.error(f"Invalid GCS URI: {uri}. Must contain bucket and blob name.") # Added error message
+        st.error(f"Invalid GCS URI: {uri}. Must contain bucket and blob name.")
         return None
         
     bucket_name = parts[0]
@@ -52,11 +51,10 @@ def upload_to_gcs(data: Dict[str, Any], destination_uri: str) -> Optional[str]:
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
         
-        data_string = json.dumps(data, indent=4) # Convert dict to JSON string
+        data_string = json.dumps(data, indent=4)
         
         blob.upload_from_string(data_string, content_type='application/json')
-        # st.success(f"Successfully uploaded data to {destination_uri}") # Optional: for direct use feedback
-        return destination_uri # Return the URI on success
+        return destination_uri
     except Exception as e: # Catches google.cloud.exceptions.GoogleCloudError and other potential errors
         st.error(f"Error uploading data to GCS ({destination_uri}): {e}")
         return None
