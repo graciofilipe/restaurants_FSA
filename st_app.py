@@ -77,11 +77,11 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
         final_df = read_from_bq_func(fhrsid_list_requested, project_id, dataset_id, table_id)
 
         if final_df is not None and not final_df.empty:
-        if 'fhrsid' in final_df.columns:
-                successful_fhrsids_from_df = final_df['fhrsid'].astype(str).unique().tolist()
-        else:
-                successful_fhrsids_from_df = []
-                st_object.error("FHRSID column ('fhrsid') missing in returned data. Cannot determine successful lookups.")
+            if 'fhrsid' in final_df.columns:
+                    successful_fhrsids_from_df = final_df['fhrsid'].astype(str).unique().tolist()
+            else:
+                    successful_fhrsids_from_df = []
+                    st_object.error("FHRSID column ('fhrsid') missing in returned data. Cannot determine successful lookups.")
 
             if successful_fhrsids_from_df:
                 st_object.success(f"Data found for FHRSIDs: {', '.join(successful_fhrsids_from_df)}")
@@ -97,8 +97,6 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
                  st_object.warning(f"Data returned but no matching FHRSIDs found for: {fhrsid_input_str} in {bq_table_lookup_input_str}.")
             elif not successful_fhrsids_from_df and not final_df.empty:
                  pass
-
-
         else:
             st_object.warning(f"No data found for the provided FHRSIDs: {fhrsid_input_str} in {bq_table_lookup_input_str}, or an error occurred during lookup for all specified IDs.")
     except ValueError:
