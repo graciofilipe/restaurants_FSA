@@ -123,3 +123,39 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
         # Also print to console for backend logging
         print(f"Error querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)}: {e}")
         return None
+
+def update_manual_review(fhrsid: str, manual_review_value: str, project_id: str, dataset_id: str, table_id: str) -> bool:
+    """
+    Updates the manual_review field for a given fhrsid in a BigQuery table.
+
+    Args:
+        fhrsid: The FHRSID to update.
+        manual_review_value: The new value for the manual_review field.
+        project_id: The Google Cloud project ID.
+        dataset_id: The BigQuery dataset ID.
+        table_id: The BigQuery table ID.
+
+    Returns:
+        True if the update was successful, False otherwise.
+    """
+    client = bigquery.Client(project=project_id)
+    query = f"""
+        UPDATE `{project_id}.{dataset_id}.{table_id}`
+        SET manual_review = @manual_review_value
+        WHERE fhrsid = @fhrsid
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("manual_review_value", "STRING", manual_review_value),
+            bigquery.ScalarQueryParameter("fhrsid", "STRING", fhrsid),
+        ]
+    )
+
+    try:
+        query_job = client.query(query, job_config=job_config)
+        query_job.result()  # Wait for the query to complete
+        st.success(f"Successfully updated manual_review for FHRSID {fhrsid} to '{manual_review_value}'.")
+        return True
+    except Exception as e:
+        st.error(f"Error updating manual_review for FHRSID {fhrsid}: {e}")
+        return False
