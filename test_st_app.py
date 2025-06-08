@@ -171,6 +171,7 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
                 if "Enter BigQuery Table Path" in label: return self.current_mock_session_state_dict['bq_table_lookup_input_str_ui']
                 return value if value is not None else ""
             mock_st.text_input.side_effect = text_input_side_effect
+            mock_st.multiselect.return_value = self.current_mock_session_state_dict['successful_fhrsids']
             # If only one FHRSID, selectbox is not called for FHRSID selection.
             # mock_st.selectbox implicitly won't be called or its call won't matter.
 
@@ -191,7 +192,7 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
             )
             # fhrsid_lookup_logic (which calls read_from_bigquery) is called for refresh
             mock_read_from_bq.assert_called_with([fhrsid], "proj", "dset", "tbl")
-            mock_st.success.assert_any_call(f"Manual review updated for {fhrsid}. Refreshing data...")
+            mock_st.success.assert_any_call(f"Manual review updated for FHRSIDs: {fhrsid}. Refreshing data...")
             mock_st.rerun.assert_called_once()
             self.assertEqual(self.current_mock_session_state_dict['fhrsid_df']['manual_review'].iloc[0], new_review_value)
 
@@ -221,6 +222,7 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
                 if "Enter BigQuery Table Path" in label: return self.current_mock_session_state_dict['bq_table_lookup_input_str_ui']
                 return value if value is not None else ""
             mock_st.text_input.side_effect = text_input_side_effect
+            mock_st.multiselect.return_value = self.current_mock_session_state_dict['successful_fhrsids']
 
         def logic(mock_st, mock_read_from_bq, mock_update_review, mock_pd_concat):
             mock_update_review.return_value = False
