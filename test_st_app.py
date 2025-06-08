@@ -146,12 +146,12 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
         bq_path = "proj.dset.tbl"
         new_review_value = "Looks good"
         
-        self.current_mock_session_state_dict = {
+        self.current_mock_session_state.update({
             'fhrsid_df': pd.DataFrame({'fhrsid': [fhrsid], 'manual_review': ['old_value']}),
             'successful_fhrsids': [fhrsid],
             'fhrsid_input_str_ui': fhrsid,
             'bq_table_lookup_input_str_ui': bq_path
-        }
+        })
 
         def mock_st_config(mock_st):
             mock_st.radio.return_value = "FHRSID Lookup"
@@ -164,11 +164,11 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
             # and the new_review_value for the manual review input.
             def text_input_side_effect(label, value=None, key=None):
                 if "New Manual Review Value" in label: return new_review_value
-                if "Enter FHRSIDs" in label: return self.current_mock_session_state_dict['fhrsid_input_str_ui']
-                if "Enter BigQuery Table Path" in label: return self.current_mock_session_state_dict['bq_table_lookup_input_str_ui']
+                if "Enter FHRSIDs" in label: return self.current_mock_session_state['fhrsid_input_str_ui']
+                if "Enter BigQuery Table Path" in label: return self.current_mock_session_state['bq_table_lookup_input_str_ui']
                 return value if value is not None else ""
             mock_st.text_input.side_effect = text_input_side_effect
-            mock_st.multiselect.return_value = self.current_mock_session_state_dict['successful_fhrsids']
+            mock_st.multiselect.return_value = self.current_mock_session_state['successful_fhrsids']
             # If only one FHRSID, selectbox is not called for FHRSID selection.
             # mock_st.selectbox implicitly won't be called or its call won't matter.
 
@@ -191,7 +191,7 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
             mock_read_from_bq.assert_called_with([fhrsid], "proj", "dset", "tbl")
             mock_st.success.assert_any_call(f"Manual review updated for FHRSIDs: {fhrsid}. Refreshing data...")
             mock_st.rerun.assert_called_once()
-            self.assertEqual(self.current_mock_session_state_dict['fhrsid_df']['manual_review'].iloc[0], new_review_value)
+            self.assertEqual(self.current_mock_session_state['fhrsid_df']['manual_review'].iloc[0], new_review_value)
 
         self._run_test_with_patches(logic, mock_st_config)
 
@@ -200,12 +200,12 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
         bq_path = "proj.dset.tbl"
         new_review_value = "This will fail"
 
-        self.current_mock_session_state_dict = {
+        self.current_mock_session_state.update({
             'fhrsid_df': pd.DataFrame({'fhrsid': [fhrsid], 'manual_review': ['initial_state']}),
             'successful_fhrsids': [fhrsid],
             'fhrsid_input_str_ui': fhrsid,
             'bq_table_lookup_input_str_ui': bq_path
-        }
+        })
 
         def mock_st_config(mock_st):
             mock_st.radio.return_value = "FHRSID Lookup"
@@ -215,11 +215,11 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
 
             def text_input_side_effect(label, value=None, key=None):
                 if "New Manual Review Value" in label: return new_review_value
-                if "Enter FHRSIDs" in label: return self.current_mock_session_state_dict['fhrsid_input_str_ui']
-                if "Enter BigQuery Table Path" in label: return self.current_mock_session_state_dict['bq_table_lookup_input_str_ui']
+                if "Enter FHRSIDs" in label: return self.current_mock_session_state['fhrsid_input_str_ui']
+                if "Enter BigQuery Table Path" in label: return self.current_mock_session_state['bq_table_lookup_input_str_ui']
                 return value if value is not None else ""
             mock_st.text_input.side_effect = text_input_side_effect
-            mock_st.multiselect.return_value = self.current_mock_session_state_dict['successful_fhrsids']
+            mock_st.multiselect.return_value = self.current_mock_session_state['successful_fhrsids']
 
         def logic(mock_st, mock_read_from_bq, mock_update_review): # mock_pd_concat removed
             mock_update_review.return_value = False
