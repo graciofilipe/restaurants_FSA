@@ -80,24 +80,33 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
             return
 
         fhrsid_list_requested = [fhrsid.strip() for fhrsid in fhrsid_input_str.split(':') if fhrsid.strip()]
-        fhrsid_list_requested = [f_id for f_id in fhrsid_list_requested if f_id]
+        fhrsid_list_requested = [f_id for f_id in fhrsid_list_requested if f_id] # Ensure no empty strings if input was like "123::456"
         if not fhrsid_list_requested:
             st_object.error("Please enter valid FHRSIDs.")
             return
 
-        st_object.info(f"FHRSID Lookup: Attempting to retrieve data for {len(fhrsid_list_requested)} FHRSID(s): {', '.join(fhrsid_list_requested)} in a single batch.")
+        # Convert FHRSIDs to integers and handle errors
+        fhrsid_list_integers = []
+        for f_id_str in fhrsid_list_requested:
+            try:
+                fhrsid_list_integers.append(int(f_id_str))
+            except ValueError:
+                st_object.error(f"Invalid FHRSID: '{f_id_str}' is not a valid number. Please enter numeric FHRSIDs only.")
+                return # Stop processing
+
+        st_object.info(f"FHRSID Lookup: Attempting to retrieve data for {len(fhrsid_list_integers)} FHRSID(s): {', '.join(fhrsid_list_requested)} in a single batch.")
 
         final_df = None # Explicitly initialize final_df to None
         try:
-            # Call read_from_bq_func once with the entire list
+            # Call read_from_bq_func once with the entire list of integers
             # read_from_bigquery now returns an empty DataFrame if no records are found, or raises an error.
-            final_df = read_from_bq_func(fhrsid_list_requested, project_id, dataset_id, table_id)
+            final_df = read_from_bq_func(fhrsid_list_integers, project_id, dataset_id, table_id)
         except BigQueryExecutionError as e: # Catching specific BQ execution errors
-            st_object.error(f"BigQuery error during lookup for FHRSIDs {', '.join(fhrsid_list_requested)}: {e}")
+            st_object.error(f"BigQuery error during lookup for FHRSIDs {', '.join(fhrsid_list_requested)}: {e}") # Log original string list
             # DataFrameConversionError is less likely here as pandas-gbq handles conversion,
             # but if read_from_bq_func could still raise it, it would be caught by the generic Exception.
         except Exception as e: # Catch any other unexpected errors during the BQ call
-            st_object.error(f"An unexpected error occurred during BigQuery lookup for FHRSIDs {', '.join(fhrsid_list_requested)}: {e}")
+            st_object.error(f"An unexpected error occurred during BigQuery lookup for FHRSIDs {', '.join(fhrsid_list_requested)}: {e}") # Log original string list
 
         if final_df is not None and not final_df.empty:
             if 'fhrsid' in final_df.columns:

@@ -97,12 +97,12 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
         st.error(f"Error writing data to BigQuery table {table_ref_str}: {e}")
         return False
 
-def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str, table_id: str) -> pd.DataFrame: # Changed return type
+def read_from_bigquery(fhrsid_list: List[int], project_id: str, dataset_id: str, table_id: str) -> pd.DataFrame: # Changed return type
     """
     Reads data from a BigQuery table for a list of FHRSIDs using pandas-gbq.
 
     Args:
-        fhrsid_list: A list of FHRSIDs to filter by.
+        fhrsid_list: A list of FHRSIDs (integers) to filter by.
         project_id: The Google Cloud project ID.
         dataset_id: The BigQuery dataset ID.
         table_id: The BigQuery table ID.
@@ -121,7 +121,7 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
             'queryParameters': [
                 {
                     'name': 'fhrsid_list',
-                    'parameterType': {'arrayType': {'type': 'STRING'}},
+                    'parameterType': {'arrayType': {'type': 'INT64'}},
                     'parameterValue': {'arrayValues': [{'value': f_id} for f_id in fhrsid_list]}
                 }
             ]
