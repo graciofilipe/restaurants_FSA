@@ -107,9 +107,21 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
         query_parameters=[bigquery.ArrayQueryParameter("fhrsid_list", "STRING", fhrsid_list)]
     )
 
+    # Detailed logging before making the BigQuery call
+    print(f"Executing BigQuery query: {query}")
+    print(f"With FHRSID list: {fhrsid_list}")
+    print(f"Table target: {table_ref_str}")
+
     try:
         query_job = client.query(query, job_config=job_config)
-        df = query_job.to_dataframe()
+
+        try:
+            df = query_job.to_dataframe()
+        except Exception as df_conversion_error:
+            # Log error during DataFrame conversion
+            print(f"Error converting query result to DataFrame for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {df_conversion_error}")
+            st.error(f"Failed to process data from BigQuery for FHRSIDs: {', '.join(fhrsid_list)}. Error during data conversion.")
+            return None
 
         if df.empty:
             # Using st.info for user-facing messages in Streamlit context, print for backend/CLI
@@ -121,41 +133,51 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
         # Using st.error for user-facing messages, print for backend/CLI
         st.error(f"Error querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {e}")
         # Also print to console for backend logging
-        print(f"Error querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)}: {e}")
+        print(f"Error querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {e}")
         return None
 
-def update_manual_review(fhrsid: str, manual_review_value: str, project_id: str, dataset_id: str, table_id: str) -> bool:
+def update_manual_review(fhrsid_list: List[str], manual_review_value: str, project_id: str, dataset_id: str, table_id: str) -> bool:
     """
-    Updates the manual_review field for a given fhrsid in a BigQuery table.
+    Updates the manual_review field for a list of FHRSIDs in a BigQuery table.
 
     Args:
-        fhrsid: The FHRSID to update.
+        fhrsid_list: A list of FHRSIDs to update.
         manual_review_value: The new value for the manual_review field.
         project_id: The Google Cloud project ID.
         dataset_id: The BigQuery dataset ID.
         table_id: The BigQuery table ID.
 
     Returns:
-        True if the update was successful, False otherwise.
+        True if the update was successful for all FHRSIDs, False otherwise.
     """
+    if not fhrsid_list:
+        st.warning("No FHRSIDs provided for update.")
+        return False
+
     client = bigquery.Client(project=project_id)
     query = f"""
         UPDATE `{project_id}.{dataset_id}.{table_id}`
         SET manual_review = @manual_review_value
-        WHERE fhrsid = @fhrsid
+        WHERE fhrsid IN UNNEST(@fhrsid_list)
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter("manual_review_value", "STRING", manual_review_value),
-            bigquery.ScalarQueryParameter("fhrsid", "STRING", fhrsid),
+            bigquery.ArrayQueryParameter("fhrsid_list", "STRING", fhrsid_list),
         ]
     )
 
     try:
         query_job = client.query(query, job_config=job_config)
         query_job.result()  # Wait for the query to complete
-        st.success(f"Successfully updated manual_review for FHRSID {fhrsid} to '{manual_review_value}'.")
+        # Check if any rows were actually updated if possible, though result() doesn't directly give row count for UPDATE
+        # For simplicity, we assume success if query execution doesn't throw an error.
+        # A more robust check might involve verifying num_dml_affected_rows if the API provides it easily,
+        # or performing a SELECT COUNT(*) before and after, but that's more complex.
+        st.success(f"Successfully updated manual_review for FHRSIDs: {', '.join(fhrsid_list)} to '{manual_review_value}'.")
         return True
     except Exception as e:
-        st.error(f"Error updating manual_review for FHRSID {fhrsid}: {e}")
+        st.error(f"Error updating manual_review for FHRSIDs: {', '.join(fhrsid_list)}: {e}")
+        # Also print to console for backend logging
+        print(f"Error updating manual_review for FHRSIDs: {', '.join(fhrsid_list)}: {e}")
         return False

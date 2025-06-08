@@ -337,60 +337,78 @@ def main_ui():
 
             st.subheader("Update Manual Review")
 
-            selected_fhrsid_for_update = None
+            selected_fhrsids_for_update = []
             if st.session_state.successful_fhrsids:
-                if len(st.session_state.successful_fhrsids) > 1:
-                    selected_fhrsid_for_update = st.selectbox(
-                        "Select FHRSID to update:",
-                        st.session_state.successful_fhrsids,
-                        key="fhrsid_select_update"
-                    )
-                elif len(st.session_state.successful_fhrsids) == 1:
-                    selected_fhrsid_for_update = st.session_state.successful_fhrsids[0]
-                    st.write(f"FHRSID to update: {selected_fhrsid_for_update}")
+                # Use multiselect for selecting FHRSIDs
+                selected_fhrsids_for_update = st.multiselect(
+                    "Select FHRSID(s) to update:",
+                    options=st.session_state.successful_fhrsids,
+                    default=st.session_state.successful_fhrsids if len(st.session_state.successful_fhrsids) == 1 else [],
+                    key="fhrsid_multiselect_update"
+                )
 
-
-            if selected_fhrsid_for_update:
+            if selected_fhrsids_for_update: # Check if list is not empty
+                # Create a unique key for the text input based on the selected FHRSIDs to avoid state issues
+                # Using a hash of the sorted list of FHRSIDs for a stable key
+                selected_ids_key_suffix = "_".join(sorted(selected_fhrsids_for_update))
                 manual_review_input_ui = st.text_input(
                     "New Manual Review Value:",
-                    key=f"manual_review_input_{selected_fhrsid_for_update}" # Dynamic key
+                    key=f"manual_review_input_{selected_ids_key_suffix}"
                 )
 
                 if st.button("Update Manual Review"):
                     if not st.session_state.bq_table_lookup_input_str_ui:
                         st.error("BigQuery Table Path is required for update.")
+                    elif not manual_review_input_ui.strip():
+                        st.warning("Manual Review Value cannot be empty.")
                     else:
                         try:
                             project_id, dataset_id, table_id = st.session_state.bq_table_lookup_input_str_ui.split('.')
                             if not project_id or not dataset_id or not table_id:
                                 st.error("Invalid BigQuery Table Path format for update. Each part must be non-empty.")
                             else:
+                                # Call the updated update_manual_review function
                                 update_successful = update_manual_review(
-                                    fhrsid=selected_fhrsid_for_update,
+                                    fhrsid_list=selected_fhrsids_for_update, # Pass the list of selected FHRSIDs
                                     manual_review_value=manual_review_input_ui,
                                     project_id=project_id,
                                     dataset_id=dataset_id,
                                     table_id=table_id
                                 )
                                 if update_successful:
-                                    st.success(f"Manual review updated for {selected_fhrsid_for_update}. Refreshing data...")
-                                    # Refresh data for the updated FHRSID
+                                    st.success(f"Manual review updated for FHRSIDs: {', '.join(selected_fhrsids_for_update)}. Refreshing data...")
+                                    # Refresh data for all updated FHRSIDs
                                     # Clear old df from session state so UI elements dependent on it will refresh
                                     st.session_state.fhrsid_df = None
-                                    st.session_state.successful_fhrsids = []
+                                    # successful_fhrsids will be repopulated by fhrsid_lookup_logic
+
+                                    # We need to re-lookup the data for the FHRSIDs that were attempted to be updated.
+                                    # The original list of ALL FHRSIDs initially entered by the user is in st.session_state.fhrsid_input_str_ui
+                                    # However, to show just the updated ones and any others previously successfully found,
+                                    # it's better to re-query based on st.session_state.successful_fhrsids OR selected_fhrsids_for_update.
+                                    # For simplicity and to ensure the view is consistent with what was just updated + other prior successes:
+                                    # We will re-run the lookup for all *currently known successful* FHRSIDs if we want to keep them in view,
+                                    # or just the selected_fhrsids_for_update if we only want to see the ones we just changed.
+                                    # Let's re-lookup all previously successful FHRSIDs to maintain context.
+
+                                    # Convert list of FHRSIDs to colon-separated string for fhrsid_lookup_logic
+                                    fhrsids_to_refresh_str = ":".join(st.session_state.successful_fhrsids)
 
                                     fhrsid_lookup_logic(
-                                        selected_fhrsid_for_update, # Only lookup the one that was updated
+                                        fhrsids_to_refresh_str,
                                         st.session_state.bq_table_lookup_input_str_ui,
                                         st,
                                         read_from_bigquery,
                                         pd.concat
                                     )
-                                    st.rerun() # Force rerun to ensure UI updates correctly after re-lookup
+                                    st.rerun()
                         except ValueError:
                             st.error("Invalid BigQuery Table Path format for update. Expected 'project.dataset.table'.")
                         except Exception as e:
-                            st.error(f"An unexpected error occurred during update: {e}")
+                            st.error(f"An unexpected error occurred during update for FHRSIDs {', '.join(selected_fhrsids_for_update)}: {e}")
+            elif st.session_state.successful_fhrsids: # successful_fhrsids exist, but none are selected for update
+                st.info("Select one or more FHRSIDs from the list above to update their manual review status.")
+
         elif st.session_state.fhrsid_input_str_ui and st.button("Retry Lookup?", key="retry_lookup"): # Example of how to handle no data after attempt
              # This button is just an example, the main "Lookup FHRSIDs" serves this purpose
              st.write("Click 'Lookup FHRSIDs' again to retry.")

@@ -154,3 +154,218 @@ def test_update_manual_review_bq_error_on_query(mock_bq_client_constructor, mock
 # if __name__ == '__main__':
 #    unittest.main()
 # But pytest style is fine as shown above.
+
+
+# --- Tests for update_manual_review (Batch Operations) ---
+
+@patch('bq_utils.st') # Mock Streamlit
+@patch('bq_utils.bigquery.Client') # Mock BigQuery Client
+def test_update_manual_review_batch_success(mock_bq_client_constructor, mock_st):
+    mock_bq_client_instance = mock_bq_client_constructor.return_value
+    mock_query_job = MagicMock()
+    mock_bq_client_instance.query.return_value = mock_query_job
+    mock_query_job.result.return_value = None # Simulate successful job completion
+
+    fhrsid_list = ["101", "102", "103"]
+    manual_review_value = "BatchApproved"
+    project_id = "batch-proj"
+    dataset_id = "batch-dset"
+    table_id = "batch-tbl"
+
+    result = update_manual_review(fhrsid_list, manual_review_value, project_id, dataset_id, table_id)
+
+    mock_bq_client_constructor.assert_called_once_with(project=project_id)
+
+    expected_query = f"""
+        UPDATE `{project_id}.{dataset_id}.{table_id}`
+        SET manual_review = @manual_review_value
+        WHERE fhrsid IN UNNEST(@fhrsid_list)
+    """
+    args, kwargs = mock_bq_client_instance.query.call_args
+    actual_query = args[0]
+    job_config = kwargs.get('job_config')
+
+    assert "".join(actual_query.split()) == "".join(expected_query.split())
+    assert job_config is not None
+
+    expected_params = [
+        bigquery.ScalarQueryParameter("manual_review_value", "STRING", manual_review_value),
+        bigquery.ArrayQueryParameter("fhrsid_list", "STRING", fhrsid_list),
+    ]
+
+    assert len(job_config.query_parameters) == len(expected_params)
+    # Check for scalar parameter
+    scalar_param_actual = next(p for p in job_config.query_parameters if p.name == "manual_review_value")
+    scalar_param_expected = next(p for p in expected_params if p.name == "manual_review_value")
+    assert scalar_param_actual.name == scalar_param_expected.name
+    assert scalar_param_actual.parameter_type.type_ == scalar_param_expected.parameter_type.type_
+    assert scalar_param_actual.parameter_value.value == scalar_param_expected.parameter_value.value
+
+    # Check for array parameter
+    array_param_actual = next(p for p in job_config.query_parameters if p.name == "fhrsid_list")
+    array_param_expected = next(p for p in expected_params if p.name == "fhrsid_list")
+    assert array_param_actual.name == array_param_expected.name
+    assert array_param_actual.parameter_type.array_type.type_ == array_param_expected.parameter_type.array_type.type_ # Check array element type
+    assert array_param_actual.parameter_value.array_values[0].value == array_param_expected.parameter_value.array_values[0].value # Check first element as sample
+
+    mock_query_job.result.assert_called_once()
+    mock_st.success.assert_called_once_with(f"Successfully updated manual_review for FHRSIDs: {', '.join(fhrsid_list)} to '{manual_review_value}'.")
+    assert result is True
+
+@patch('bq_utils.st')
+@patch('bq_utils.bigquery.Client')
+def test_update_manual_review_batch_bq_error(mock_bq_client_constructor, mock_st):
+    mock_bq_client_instance = mock_bq_client_constructor.return_value
+    mock_query_job = MagicMock()
+    mock_bq_client_instance.query.return_value = mock_query_job
+    mock_query_job.result.side_effect = exceptions.GoogleCloudError("Test BQ API Error on batch update")
+
+    fhrsid_list = ["201", "202"]
+    manual_review_value = "BatchRejected"
+    project_id = "batch-proj"
+    dataset_id = "batch-dset"
+    table_id = "batch-tbl"
+
+    result = update_manual_review(fhrsid_list, manual_review_value, project_id, dataset_id, table_id)
+
+    mock_bq_client_constructor.assert_called_once_with(project=project_id)
+    mock_bq_client_instance.query.assert_called_once()
+    mock_query_job.result.assert_called_once()
+    # Check that the print statement for backend logging was also called
+    mock_st.error.assert_called_once_with(f"Error updating manual_review for FHRSIDs: {', '.join(fhrsid_list)}: Test BQ API Error on batch update")
+    assert result is False
+
+@patch('bq_utils.st')
+@patch('bq_utils.bigquery.Client')
+def test_update_manual_review_batch_empty_list(mock_bq_client_constructor, mock_st):
+    fhrsid_list = []
+    manual_review_value = "BatchEmpty"
+    project_id = "batch-proj"
+    dataset_id = "batch-dset"
+    table_id = "batch-tbl"
+
+    result = update_manual_review(fhrsid_list, manual_review_value, project_id, dataset_id, table_id)
+
+    mock_bq_client_constructor.return_value.query.assert_not_called() # Ensure query is not made
+    mock_st.warning.assert_called_once_with("No FHRSIDs provided for update.")
+    assert result is False
+
+# --- Tests for read_from_bigquery (Batch Operations) ---
+
+@patch('bq_utils.st') # Mock Streamlit for st.info/st.error
+@patch('bq_utils.print') # Mock print for backend logging
+@patch('bq_utils.bigquery.Client') # Mock BigQuery Client
+def test_read_from_bigquery_batch_success_partial_data(mock_bq_client_constructor, mock_print, mock_st):
+    mock_bq_client_instance = mock_bq_client_constructor.return_value
+    mock_query_job = MagicMock()
+    mock_bq_client_instance.query.return_value = mock_query_job
+
+    # Simulate data for 2 out of 3 requested FHRSIDs
+    expected_df_data = {
+        'fhrsid': ['1', '2'],
+        'BusinessName': ['Restaurant A', 'Restaurant B'],
+        'manual_review': [None, 'Approved']
+    }
+    mock_df = pd.DataFrame(expected_df_data)
+    mock_query_job.to_dataframe.return_value = mock_df
+
+    fhrsid_list = ["1", "2", "3"] # Requesting 3 FHRSIDs
+    project_id = "read-proj"
+    dataset_id = "read-dset"
+    table_id = "read-tbl"
+
+    df_result = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
+
+    pd.testing.assert_frame_equal(df_result, mock_df)
+
+    expected_query = f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}` WHERE fhrsid IN UNNEST(@fhrsid_list)"
+    args, kwargs = mock_bq_client_instance.query.call_args
+    actual_query = args[0]
+    job_config = kwargs.get('job_config')
+
+    assert "".join(actual_query.split()) == "".join(expected_query.split())
+    assert job_config is not None
+    assert len(job_config.query_parameters) == 1
+    array_param_actual = job_config.query_parameters[0]
+    assert array_param_actual.name == "fhrsid_list"
+    assert array_param_actual.parameter_type.array_type.type_ == "STRING"
+    assert array_param_actual.parameter_value.array_values[0].value == fhrsid_list[0] # Check first element
+
+    # Check logging
+    mock_print.assert_any_call(f"Executing BigQuery query: {expected_query}")
+    mock_print.assert_any_call(f"With FHRSID list: {fhrsid_list}")
+
+
+@patch('bq_utils.st')
+@patch('bq_utils.print')
+@patch('bq_utils.bigquery.Client')
+def test_read_from_bigquery_batch_no_data_found(mock_bq_client_constructor, mock_print, mock_st):
+    mock_bq_client_instance = mock_bq_client_constructor.return_value
+    mock_query_job = MagicMock()
+    mock_bq_client_instance.query.return_value = mock_query_job
+    mock_query_job.to_dataframe.return_value = pd.DataFrame() # Empty DataFrame
+
+    fhrsid_list = ["nonexistent1", "nonexistent2"]
+    project_id = "read-proj"
+    dataset_id = "read-dset"
+    table_id = "read-tbl"
+
+    df_result = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
+
+    assert df_result is None
+    mock_st.info.assert_called_once_with(
+        f"No data found for FHRSIDs: {', '.join(fhrsid_list)} in table {project_id}.{dataset_id}.{table_id}"
+    )
+    mock_print.assert_any_call(f"Executing BigQuery query: SELECT * FROM `{project_id}.{dataset_id}.{table_id}` WHERE fhrsid IN UNNEST(@fhrsid_list)")
+
+
+@patch('bq_utils.st')
+@patch('bq_utils.print')
+@patch('bq_utils.bigquery.Client')
+def test_read_from_bigquery_batch_query_execution_error(mock_bq_client_constructor, mock_print, mock_st):
+    mock_bq_client_instance = mock_bq_client_constructor.return_value
+    error_message = "Simulated BQ Query Error"
+    mock_bq_client_instance.query.side_effect = exceptions.GoogleCloudError(error_message)
+
+    fhrsid_list = ["1", "2"]
+    project_id = "read-proj"
+    dataset_id = "read-dset"
+    table_id = "read-tbl"
+
+    df_result = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
+
+    assert df_result is None
+    full_error_message_st = f"Error querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)} from table {project_id}.{dataset_id}.{table_id}: {error_message}"
+    full_error_message_print = f"Error querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)} from table {project_id}.{dataset_id}.{table_id}: {error_message}"
+    mock_st.error.assert_called_once_with(full_error_message_st)
+    mock_print.assert_any_call(full_error_message_print) # Check if print was called with this
+    mock_print.assert_any_call(f"Executing BigQuery query: SELECT * FROM `{project_id}.{dataset_id}.{table_id}` WHERE fhrsid IN UNNEST(@fhrsid_list)")
+
+
+@patch('bq_utils.st')
+@patch('bq_utils.print')
+@patch('bq_utils.bigquery.Client')
+def test_read_from_bigquery_batch_to_dataframe_conversion_error(mock_bq_client_constructor, mock_print, mock_st):
+    mock_bq_client_instance = mock_bq_client_constructor.return_value
+    mock_query_job = MagicMock()
+    mock_bq_client_instance.query.return_value = mock_query_job
+    conversion_error_message = "Simulated DataFrame Conversion Error"
+    mock_query_job.to_dataframe.side_effect = ValueError(conversion_error_message)
+
+    fhrsid_list = ["10", "20"]
+    project_id = "read-proj"
+    dataset_id = "read-dset"
+    table_id = "read-tbl"
+
+    df_result = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
+
+    assert df_result is None
+
+    # Check st.error call
+    st_error_expected_msg = f"Failed to process data from BigQuery for FHRSIDs: {', '.join(fhrsid_list)}. Error during data conversion."
+    mock_st.error.assert_called_once_with(st_error_expected_msg)
+
+    # Check print calls for backend logging
+    print_conversion_error_expected_msg = f"Error converting query result to DataFrame for FHRSIDs: {', '.join(fhrsid_list)} from table {project_id}.{dataset_id}.{table_id}: {conversion_error_message}"
+    mock_print.assert_any_call(print_conversion_error_expected_msg)
+    mock_print.assert_any_call(f"Executing BigQuery query: SELECT * FROM `{project_id}.{dataset_id}.{table_id}` WHERE fhrsid IN UNNEST(@fhrsid_list)")
