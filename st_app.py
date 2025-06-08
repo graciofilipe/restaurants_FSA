@@ -74,6 +74,7 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
             return
 
         fhrsid_list_requested = [fhrsid.strip() for fhrsid in fhrsid_input_str.split(':') if fhrsid.strip()]
+        fhrsid_list_requested = [f_id for f_id in fhrsid_list_requested if f_id]
         if not fhrsid_list_requested:
             st_object.error("Please enter valid FHRSIDs.")
             return
