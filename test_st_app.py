@@ -92,9 +92,9 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
         self._run_test_with_patches(logic)
 
     def test_fhrsid_lookup_multiple_valid_fhrsids(self):
-        """Test with multiple valid FHRSIDs, colon-separated."""
+        """Test with multiple valid FHRSIDs, comma-separated."""
         def logic(mock_st, mock_read_from_bq, _):
-            fhrsid_input = "123:456:789"
+            fhrsid_input = "123,456,789"
             expected_fhrsid_list = ["123", "456", "789"]
             mock_read_from_bq.return_value = pd.DataFrame({'fhrsid': expected_fhrsid_list}) # Simulate finding all
 
@@ -109,7 +109,7 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
     def test_fhrsid_lookup_fhrsids_with_spaces(self):
         """Test FHRSIDs with leading/trailing spaces."""
         def logic(mock_st, mock_read_from_bq, _):
-            fhrsid_input = " 123 : 456 "
+            fhrsid_input = " 123 , 456 "
             expected_fhrsid_list = ["123", "456"]
             mock_read_from_bq.return_value = pd.DataFrame({'fhrsid': expected_fhrsid_list})
 
@@ -121,9 +121,9 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
         self._run_test_with_patches(logic)
 
     def test_fhrsid_lookup_empty_fhrsid_parts(self):
-        """Test with empty parts in FHRSID string due to extra colons."""
+        """Test with empty parts in FHRSID string due to extra commas."""
         def logic(mock_st, mock_read_from_bq, _):
-            fhrsid_input = "123::456:" # Trailing colon and empty part
+            fhrsid_input = "123,,456," # Trailing comma and empty part
             expected_fhrsid_list = ["123", "456"]
             mock_read_from_bq.return_value = pd.DataFrame({'fhrsid': expected_fhrsid_list})
 
@@ -137,7 +137,7 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
     def test_fhrsid_lookup_non_numeric_fhrsid(self):
         """Test with a non-numeric FHRSID in the list."""
         def logic(mock_st, mock_read_from_bq, _):
-            fhrsid_input = "123:abc:456"
+            fhrsid_input = "123,abc,456"
 
             fhrsid_lookup_logic(fhrsid_input, "proj.dset.tbl", mock_st, mock_read_from_bq)
 

@@ -79,8 +79,8 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
             st_object.error("Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty.")
             return
 
-        fhrsid_list_requested = [fhrsid.strip() for fhrsid in fhrsid_input_str.split(':') if fhrsid.strip()]
-        fhrsid_list_requested = [f_id for f_id in fhrsid_list_requested if f_id] # Ensure no empty strings if input was like "123::456"
+        fhrsid_list_requested = [fhrsid.strip() for fhrsid in fhrsid_input_str.split(',') if fhrsid.strip()]
+        fhrsid_list_requested = [f_id for f_id in fhrsid_list_requested if f_id] # Ensure no empty strings if input was like "123,,456"
         if not fhrsid_list_requested:
             st_object.error("Please enter valid FHRSIDs.")
             return
@@ -337,7 +337,7 @@ def main_ui():
         st.subheader("FHRSID Lookup")
         # Use session state to retain input values across reruns
         st.session_state.fhrsid_input_str_ui = st.text_input(
-            "Enter FHRSIDs (colon-separated):",
+            "Enter FHRSIDs (comma-separated):",
             value=st.session_state.fhrsid_input_str_ui
         )
         st.session_state.bq_table_lookup_input_str_ui = st.text_input(
