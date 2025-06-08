@@ -17,7 +17,7 @@ def test_read_from_bigquery_success(mock_read_gbq):
     expected_df = pd.DataFrame({'fhrsid': [123], 'data': ['test data']}) # Assuming fhrsid in DataFrame could also be int
     mock_read_gbq.return_value = expected_df
 
-    fhrsid_list = ['123', '456'] # Changed to list of integers
+    fhrsid_list = ['123', '456'] # Ensure this is a list of strings
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
@@ -28,8 +28,8 @@ def test_read_from_bigquery_success(mock_read_gbq):
             'queryParameters': [
                 {
                     'name': 'fhrsid_list',
-                    'parameterType': {'arrayType': {'type': 'STRING'}}, # Changed to INT64
-                    'parameterValue': {'arrayValues': [{'value': f_id} for f_id in fhrsid_list]}
+                    'parameterType': {'arrayType': {'type': 'STRING'}}, # Correctly STRING
+                    'parameterValue': {'arrayValues': [{'value': '123'}, {'value': '456'}]} # Explicitly string values
                 }
             ]
         }
@@ -46,25 +46,74 @@ def test_read_from_bigquery_success(mock_read_gbq):
 
 @patch('bq_utils.pandas_gbq.read_gbq')
 def test_read_from_bigquery_empty_result(mock_read_gbq):
-    """Test retrieval of an empty DataFrame when no data is found."""
+    """Test retrieval of an empty DataFrame when no data is found for non-empty input list."""
     mock_read_gbq.return_value = pd.DataFrame() # Empty DataFrame
 
-    fhrsid_list = [789] # Changed to list of integers
+    fhrsid_list = ['789'] # Ensure list of strings
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
 
+    expected_query = f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}` WHERE fhrsid IN UNNEST(@fhrsid_list)"
+    expected_configuration = {
+        'query': {
+            'queryParameters': [
+                {
+                    'name': 'fhrsid_list',
+                    'parameterType': {'arrayType': {'type': 'STRING'}},
+                    'parameterValue': {'arrayValues': [{'value': '789'}]}
+                }
+            ]
+        }
+    }
+
     df_result = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
 
+    mock_read_gbq.assert_called_once_with(
+        expected_query,
+        project_id=project_id,
+        configuration=expected_configuration
+    )
     assert df_result.empty
-    mock_read_gbq.assert_called_once()
+
+@patch('bq_utils.pandas_gbq.read_gbq')
+def test_read_from_bigquery_empty_input_list(mock_read_gbq):
+    """Test behavior when the input fhrsid_list is empty."""
+    mock_read_gbq.return_value = pd.DataFrame() # read_gbq would return empty for an empty IN clause essentially
+
+    fhrsid_list = [] # Empty list
+    project_id = "test-project"
+    dataset_id = "test-dataset"
+    table_id = "test-table"
+
+    expected_query = f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}` WHERE fhrsid IN UNNEST(@fhrsid_list)"
+    expected_configuration = {
+        'query': {
+            'queryParameters': [
+                {
+                    'name': 'fhrsid_list',
+                    'parameterType': {'arrayType': {'type': 'STRING'}},
+                    'parameterValue': {'arrayValues': []} # Expect empty arrayValues
+                }
+            ]
+        }
+    }
+
+    df_result = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
+
+    mock_read_gbq.assert_called_once_with(
+        expected_query,
+        project_id=project_id,
+        configuration=expected_configuration
+    )
+    assert df_result.empty
 
 @patch('bq_utils.pandas_gbq.read_gbq')
 def test_read_from_bigquery_raises_bigqueryexecutionerror_on_generic_exception(mock_read_gbq):
     """Test that BigQueryExecutionError is raised for generic exceptions from read_gbq."""
     mock_read_gbq.side_effect = Exception("Simulated generic error from read_gbq")
 
-    fhrsid_list = [101] # Changed to list of integers
+    fhrsid_list = ['101'] # Ensure list of strings
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
@@ -80,7 +129,7 @@ if GenericGBQException: # Only run this test if GenericGBQException was successf
         """Test that BigQueryExecutionError is raised for pandas_gbq.gbq.GenericGBQException."""
         mock_read_gbq.side_effect = GenericGBQException("Simulated GenericGBQException")
 
-        fhrsid_list = [102] # Changed to list of integers
+        fhrsid_list = ['102'] # Ensure list of strings
         project_id = "test-project"
         dataset_id = "test-dataset"
         table_id = "test-table"
@@ -95,7 +144,7 @@ def test_read_from_bigquery_raises_bigqueryexecutionerror_on_googleclouderror(mo
     """Test that BigQueryExecutionError is raised for google.cloud.exceptions.GoogleCloudError."""
     mock_read_gbq.side_effect = exceptions.GoogleCloudError("Simulated GoogleCloudError")
 
-    fhrsid_list = [103] # Changed to list of integers
+    fhrsid_list = ['103'] # Ensure list of strings
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"

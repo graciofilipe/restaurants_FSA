@@ -81,10 +81,70 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
             # Call fhrsid_lookup_logic without pd_concat
             fhrsid_lookup_logic(sample_fhrsid, "proj.dset.tbl", mock_st, mock_read_from_bq)
 
+            # Verify read_from_bigquery was called correctly (with a list of strings)
+            mock_read_from_bq.assert_called_once_with([sample_fhrsid], "proj", "dset", "tbl")
+
             self.assertTrue(not self.current_mock_session_state['fhrsid_df'].empty)
             self.assertEqual(self.current_mock_session_state['fhrsid_df']['fhrsid'].iloc[0], sample_fhrsid)
             self.assertEqual(self.current_mock_session_state['successful_fhrsids'], [sample_fhrsid])
             mock_st.success.assert_called_with(f"Data found for FHRSIDs: {sample_fhrsid}")
+
+        self._run_test_with_patches(logic)
+
+    def test_fhrsid_lookup_multiple_valid_fhrsids(self):
+        """Test with multiple valid FHRSIDs, colon-separated."""
+        def logic(mock_st, mock_read_from_bq, _):
+            fhrsid_input = "123:456:789"
+            expected_fhrsid_list = ["123", "456", "789"]
+            mock_read_from_bq.return_value = pd.DataFrame({'fhrsid': expected_fhrsid_list}) # Simulate finding all
+
+            fhrsid_lookup_logic(fhrsid_input, "proj.dset.tbl", mock_st, mock_read_from_bq)
+
+            mock_read_from_bq.assert_called_once_with(expected_fhrsid_list, "proj", "dset", "tbl")
+            mock_st.success.assert_called_with(f"Data found for FHRSIDs: {', '.join(expected_fhrsid_list)}")
+            self.assertEqual(self.current_mock_session_state['successful_fhrsids'], expected_fhrsid_list)
+
+        self._run_test_with_patches(logic)
+
+    def test_fhrsid_lookup_fhrsids_with_spaces(self):
+        """Test FHRSIDs with leading/trailing spaces."""
+        def logic(mock_st, mock_read_from_bq, _):
+            fhrsid_input = " 123 : 456 "
+            expected_fhrsid_list = ["123", "456"]
+            mock_read_from_bq.return_value = pd.DataFrame({'fhrsid': expected_fhrsid_list})
+
+            fhrsid_lookup_logic(fhrsid_input, "proj.dset.tbl", mock_st, mock_read_from_bq)
+
+            mock_read_from_bq.assert_called_once_with(expected_fhrsid_list, "proj", "dset", "tbl")
+            self.assertEqual(self.current_mock_session_state['successful_fhrsids'], expected_fhrsid_list)
+
+        self._run_test_with_patches(logic)
+
+    def test_fhrsid_lookup_empty_fhrsid_parts(self):
+        """Test with empty parts in FHRSID string due to extra colons."""
+        def logic(mock_st, mock_read_from_bq, _):
+            fhrsid_input = "123::456:" # Trailing colon and empty part
+            expected_fhrsid_list = ["123", "456"]
+            mock_read_from_bq.return_value = pd.DataFrame({'fhrsid': expected_fhrsid_list})
+
+            fhrsid_lookup_logic(fhrsid_input, "proj.dset.tbl", mock_st, mock_read_from_bq)
+
+            mock_read_from_bq.assert_called_once_with(expected_fhrsid_list, "proj", "dset", "tbl")
+            self.assertEqual(self.current_mock_session_state['successful_fhrsids'], expected_fhrsid_list)
+
+        self._run_test_with_patches(logic)
+
+    def test_fhrsid_lookup_non_numeric_fhrsid(self):
+        """Test with a non-numeric FHRSID in the list."""
+        def logic(mock_st, mock_read_from_bq, _):
+            fhrsid_input = "123:abc:456"
+
+            fhrsid_lookup_logic(fhrsid_input, "proj.dset.tbl", mock_st, mock_read_from_bq)
+
+            mock_st.error.assert_called_with("Invalid FHRSID: 'abc' is not a valid number. Please enter numeric FHRSIDs only.")
+            mock_read_from_bq.assert_not_called()
+            self.assertTrue(self.current_mock_session_state['fhrsid_df'].empty)
+            self.assertEqual(self.current_mock_session_state['successful_fhrsids'], [])
 
         self._run_test_with_patches(logic)
 
@@ -96,11 +156,10 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
             numeric_fhrsid_for_test = "00000" # Or any other valid numeric string
             fhrsid_lookup_logic(numeric_fhrsid_for_test, "proj.dset.tbl", mock_st, mock_read_from_bq)
 
+            mock_read_from_bq.assert_called_once_with([numeric_fhrsid_for_test], "proj", "dset", "tbl")
             self.assertTrue(self.current_mock_session_state['fhrsid_df'].empty)
             self.assertEqual(self.current_mock_session_state['successful_fhrsids'], [])
             mock_st.warning.assert_called_with(f"No data found for any of the provided FHRSIDs: {numeric_fhrsid_for_test}.")
-            # Or, if multiple FHRSIDs were passed and none found, the message might be different.
-            # Adjust based on the exact message in fhrsid_lookup_logic.
 
         self._run_test_with_patches(logic)
 
@@ -110,13 +169,15 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
         def logic(mock_st, mock_read_from_bq, _):
             error_message = "BigQuery exploded during read"
             mock_read_from_bq.side_effect = BigQueryExecutionError(error_message)
+            fhrsid_input = "123" # Keep it simple for error case
 
-            fhrsid_lookup_logic("123", "proj.dset.tbl", mock_st, mock_read_from_bq)
+            fhrsid_lookup_logic(fhrsid_input, "proj.dset.tbl", mock_st, mock_read_from_bq)
 
+            mock_read_from_bq.assert_called_once_with([fhrsid_input], "proj", "dset", "tbl")
             self.assertTrue(self.current_mock_session_state['fhrsid_df'].empty)
             self.assertEqual(self.current_mock_session_state['successful_fhrsids'], [])
             # Check that st.error was called with the specific error message from BigQueryExecutionError
-            mock_st.error.assert_called_with(f"BigQuery error during lookup for FHRSIDs 123: {error_message}")
+            mock_st.error.assert_called_with(f"BigQuery error during lookup for FHRSIDs {fhrsid_input}: {error_message}")
         
         self._run_test_with_patches(logic)
 
@@ -189,7 +250,8 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
                 table_id="tbl"
             )
             # fhrsid_lookup_logic (which calls read_from_bigquery) is called for refresh
-            mock_read_from_bq.assert_called_with([int(fhrsid)], "proj", "dset", "tbl")
+            # The call to read_from_bigquery during refresh should use STRING fhsrids
+            mock_read_from_bq.assert_called_with([fhrsid], "proj", "dset", "tbl") # Changed int(fhrsid) to fhrsid
             mock_st.success.assert_any_call(f"Manual review updated for FHRSIDs: {fhrsid}. Refreshing data...")
             mock_st.rerun.assert_called_once()
             self.assertEqual(self.current_mock_session_state['fhrsid_df']['manual_review'].iloc[0], new_review_value)
