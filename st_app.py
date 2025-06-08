@@ -11,7 +11,14 @@ from google.cloud import bigquery # For bigquery.SchemaField, kept `google.cloud
 
 # Local Modules
 from api_client import fetch_api_data
-from bq_utils import sanitize_column_name, write_to_bigquery, read_from_bigquery, update_manual_review
+from bq_utils import (
+    sanitize_column_name,
+    write_to_bigquery,
+    read_from_bigquery,
+    update_manual_review,
+    BigQueryExecutionError,  # Added import
+    DataFrameConversionError # Added import
+)
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
 from gcs_utils import load_json_from_gcs, upload_to_gcs
 
@@ -79,6 +86,7 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
             st_object.error("Please enter valid FHRSIDs.")
             return
 
+        print(f"FHRSID Lookup: Processing list - {fhrsid_list_requested}")
         final_df = read_from_bq_func(fhrsid_list_requested, project_id, dataset_id, table_id)
 
         if final_df is not None and not final_df.empty:
