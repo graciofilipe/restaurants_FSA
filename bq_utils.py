@@ -115,6 +115,12 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
     try:
         query_job = client.query(query, job_config=job_config)
 
+        if query_job.errors:
+            error_messages = [error['message'] for error in query_job.errors]
+            print(f"BigQuery job errors for FHRSIDs {', '.join(fhrsid_list)} from table {table_ref_str}: {'; '.join(error_messages)}")
+            # Optionally, you might decide to return None here if errors are severe
+            # For now, let's log and continue to see if to_dataframe() still works or fails
+
         try:
             df = query_job.to_dataframe()
         except Exception as df_conversion_error:
@@ -123,7 +129,7 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
             return None
 
         if df.empty:
-            # Using st.info for user-facing messages in Streamlit context, print for backend/CLI
+            print(f"Query executed successfully but returned no data for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}")
             return None
 
         return df
