@@ -86,8 +86,31 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
             st_object.error("Please enter valid FHRSIDs.")
             return
 
-        print(f"FHRSID Lookup: Processing list - {fhrsid_list_requested}")
-        final_df = read_from_bq_func(fhrsid_list_requested, project_id, dataset_id, table_id)
+        st_object.info(f"FHRSID Lookup: Processing {len(fhrsid_list_requested)} FHRSID(s): {', '.join(fhrsid_list_requested)}")
+
+        all_dfs_collected = []
+        # Keep track of FHRSIDs that caused an error during their individual lookup
+        errored_fhrsids_during_lookup = []
+
+        for fhrsid_item in fhrsid_list_requested:
+            st_object.write(f"Looking up FHRSID: {fhrsid_item}...")
+            try:
+                current_df = read_from_bq_func([fhrsid_item], project_id, dataset_id, table_id)
+                if current_df is not None and not current_df.empty:
+                    all_dfs_collected.append(current_df)
+            except (BigQueryExecutionError, DataFrameConversionError) as e:
+                st_object.warning(f"Error looking up FHRSID {fhrsid_item}: {e}")
+                errored_fhrsids_during_lookup.append(fhrsid_item)
+            except Exception as e:
+                st_object.warning(f"An unexpected error occurred for FHRSID {fhrsid_item}: {e}")
+                errored_fhrsids_during_lookup.append(fhrsid_item)
+
+        final_df = None
+        if all_dfs_collected:
+            if len(all_dfs_collected) == 1:
+                final_df = all_dfs_collected[0]
+            else:
+                final_df = pd_concat_func(all_dfs_collected, ignore_index=True)
 
         if final_df is not None and not final_df.empty:
             if 'fhrsid' in final_df.columns:
