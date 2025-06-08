@@ -53,7 +53,7 @@ def display_data(data_to_display: List[Dict[str, Any]]):
         except Exception as json_e:
             st.error(f"Could not even display master restaurant data as JSON: {json_e}")
 
-def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, st_object, read_from_bq_func, pd_concat_func):
+def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, st_object, read_from_bq_func): # Removed pd_concat_func
     """
     Handles the logic for the FHRSID lookup.
     Args:
@@ -61,10 +61,9 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
         bq_table_lookup_input_str: The string input for the BigQuery table.
         st_object: The streamlit object (or mock) for UI calls.
         read_from_bq_func: Function to call for reading from BigQuery.
-        pd_concat_func: Function to call for concatenating pandas DataFrames (not strictly needed if read_from_bq_func returns combined df).
     """
     # Initialize or clear session state variables at the beginning of the logic
-    st_object.session_state.fhrsid_df = None
+    st_object.session_state.fhrsid_df = pd.DataFrame() # Initialize with empty DataFrame
     st_object.session_state.successful_fhrsids = []
 
     if not bq_table_lookup_input_str:
@@ -86,61 +85,44 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
             st_object.error("Please enter valid FHRSIDs.")
             return
 
-        st_object.info(f"FHRSID Lookup: Processing {len(fhrsid_list_requested)} FHRSID(s): {', '.join(fhrsid_list_requested)}")
+        st_object.info(f"FHRSID Lookup: Attempting to retrieve data for {len(fhrsid_list_requested)} FHRSID(s): {', '.join(fhrsid_list_requested)} in a single batch.")
 
-        all_dfs_collected = []
-        # Keep track of FHRSIDs that caused an error during their individual lookup
-        errored_fhrsids_during_lookup = []
-
-        for fhrsid_item in fhrsid_list_requested:
-            st_object.write(f"Looking up FHRSID: {fhrsid_item}...")
-            try:
-                current_df = read_from_bq_func([fhrsid_item], project_id, dataset_id, table_id)
-                if current_df is not None and not current_df.empty:
-                    all_dfs_collected.append(current_df)
-            except (BigQueryExecutionError, DataFrameConversionError) as e:
-                st_object.warning(f"Error looking up FHRSID {fhrsid_item}: {e}")
-                errored_fhrsids_during_lookup.append(fhrsid_item)
-            except Exception as e:
-                st_object.warning(f"An unexpected error occurred for FHRSID {fhrsid_item}: {e}")
-                errored_fhrsids_during_lookup.append(fhrsid_item)
-
-        final_df = None
-        if all_dfs_collected:
-            if len(all_dfs_collected) == 1:
-                final_df = all_dfs_collected[0]
-            else:
-                final_df = pd_concat_func(all_dfs_collected, ignore_index=True)
+        final_df = None # Explicitly initialize final_df to None
+        try:
+            # Call read_from_bq_func once with the entire list
+            # read_from_bigquery now returns an empty DataFrame if no records are found, or raises an error.
+            final_df = read_from_bq_func(fhrsid_list_requested, project_id, dataset_id, table_id)
+        except BigQueryExecutionError as e: # Catching specific BQ execution errors
+            st_object.error(f"BigQuery error during lookup for FHRSIDs {', '.join(fhrsid_list_requested)}: {e}")
+            # DataFrameConversionError is less likely here as pandas-gbq handles conversion,
+            # but if read_from_bq_func could still raise it, it would be caught by the generic Exception.
+        except Exception as e: # Catch any other unexpected errors during the BQ call
+            st_object.error(f"An unexpected error occurred during BigQuery lookup for FHRSIDs {', '.join(fhrsid_list_requested)}: {e}")
 
         if final_df is not None and not final_df.empty:
             if 'fhrsid' in final_df.columns:
+                # Ensure fhrsid is string type for comparison, handle potential float if some are numbers
                 successful_fhrsids_from_df = final_df['fhrsid'].astype(str).unique().tolist()
                 st_object.session_state.successful_fhrsids = successful_fhrsids_from_df
                 st_object.session_state.fhrsid_df = final_df # Store the dataframe
             else:
-                # successful_fhrsids_from_df remains empty / session state not updated with fhrsids
                 st_object.error("FHRSID column ('fhrsid') missing in returned data. Cannot determine successful lookups.")
-                # st.session_state.fhrsid_df remains None
 
-            if st_object.session_state.successful_fhrsids: # Check session state instead of local var
+            if st_object.session_state.successful_fhrsids:
                 st_object.success(f"Data found for FHRSIDs: {', '.join(st_object.session_state.successful_fhrsids)}")
-                # The dataframe will be displayed in main_ui based on session_state
 
+            # Determine FHRSIDs for which no data was returned in the batch
             failed_fhrsids = [f_id for f_id in fhrsid_list_requested if f_id not in st_object.session_state.successful_fhrsids]
             if failed_fhrsids:
-                st_object.warning(f"No data found or error for FHRSIDs: {', '.join(failed_fhrsids)}")
+                st_object.warning(f"No data found for FHRSIDs: {', '.join(failed_fhrsids)} within the batch.")
 
-            # This condition might need adjustment based on whether final_df could be non-empty but no *matching* FHRSIDs were found
-            if not st_object.session_state.successful_fhrsids and not failed_fhrsids and not final_df.empty:
-                 st_object.warning(f"Data returned but no matching FHRSIDs found for: {fhrsid_input_str} in {bq_table_lookup_input_str}.")
+        elif final_df is not None and final_df.empty: # Explicitly handle empty DataFrame case
+             st_object.warning(f"No data found for any of the provided FHRSIDs: {', '.join(fhrsid_list_requested)}.")
+        # If final_df is None, it means an error occurred and was handled above.
+        # The session state for fhrsid_df is already an empty DataFrame.
+        # successful_fhrsids is already an empty list.
 
-        else: # final_df is None or empty
-            st_object.warning(f"No data found for the provided FHRSIDs: {fhrsid_input_str} in {bq_table_lookup_input_str}, or an error occurred during lookup for all specified IDs.")
-            # Ensure session state is cleared if no data
-            st_object.session_state.fhrsid_df = None
-            st_object.session_state.successful_fhrsids = []
-
-    except ValueError:
+    except ValueError: # This is for the bq_table_lookup_input_str.split('.')
         st_object.error("Invalid BigQuery Table Path format. Expected 'project.dataset.table'.")
         st_object.session_state.fhrsid_df = None
         st_object.session_state.successful_fhrsids = []
@@ -308,7 +290,7 @@ def main_ui():
 
     # Initialize session state variables if they don't exist
     if 'fhrsid_df' not in st.session_state:
-        st.session_state.fhrsid_df = None
+        st.session_state.fhrsid_df = pd.DataFrame() # Initialize with empty DataFrame
     if 'successful_fhrsids' not in st.session_state:
         st.session_state.successful_fhrsids = []
     if 'fhrsid_input_str_ui' not in st.session_state: # Persist input values
@@ -359,8 +341,7 @@ def main_ui():
                 st.session_state.fhrsid_input_str_ui,
                 st.session_state.bq_table_lookup_input_str_ui,
                 st,
-                read_from_bigquery,
-                pd.concat
+                read_from_bigquery # Removed pd.concat
             )
 
         # Display data and update UI based on session_state populated by fhrsid_lookup_logic
@@ -430,8 +411,7 @@ def main_ui():
                                         fhrsids_to_refresh_str,
                                         st.session_state.bq_table_lookup_input_str_ui,
                                         st,
-                                        read_from_bigquery,
-                                        pd.concat
+                                        read_from_bigquery # Removed pd.concat
                                     )
                                     st.rerun()
                         except ValueError:
