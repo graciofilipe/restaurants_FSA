@@ -8,6 +8,41 @@ import streamlit as st # We will mock this heavily
 from st_app import fhrsid_lookup_logic, main_ui
 # We also need to patch functions imported by st_app, like read_from_bigquery and update_manual_review
 
+# Helper class to simulate streamlit.SessionState more directly
+class MockSessionState:
+    def __init__(self, state_dict):
+        self._state = state_dict
+
+    def __getitem__(self, key):
+        if key not in self._state:
+            if key == 'fhrsid_df': return None
+            if key == 'successful_fhrsids': return []
+            raise KeyError(key)
+        return self._state[key]
+
+    def __setitem__(self, key, value):
+        self._state[key] = value
+
+    def __contains__(self, key):
+        return key in self._state
+
+    def __getattr__(self, key):
+        if key == '_state':
+            return super().__getattribute__(key)
+
+        if key not in self._state:
+            if key == 'fhrsid_df': return None
+            if key == 'successful_fhrsids': return []
+            return None
+
+        return self._state.get(key)
+
+    def __setattr__(self, key, value):
+        if key == '_state':
+            object.__setattr__(self, key, value)
+            return
+        self._state[key] = value
+
 class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
 
     def setUp(self):
@@ -22,57 +57,38 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
             'fhrsid_input_str_ui': "",
             'bq_table_lookup_input_str_ui': ""
         }
-        # This will hold the active session state for a given test run
-        self.current_mock_session_state_dict = {}
+        # Each test starts with self.current_mock_session_state_dict as a fresh copy of base.
+        self.current_mock_session_state_dict = self.base_session_state_dict.copy()
 
 
     # Helper to apply common patches and manage session_state
     def _run_test_with_patches(self, test_logic_func, mock_st_extras=None):
-        # Reset current_mock_session_state_dict for each call to _run_test_with_patches
-        self.current_mock_session_state_dict = self.base_session_state_dict.copy()
+        # self.current_mock_session_state_dict is now prepared by setUp and can be
+        # further modified by the test method before calling this helper.
 
         with patch('st_app.st', autospec=True) as mock_st_global, \
              patch('st_app.read_from_bigquery') as mock_read_from_bq, \
              patch('st_app.update_manual_review') as mock_update_review, \
              patch('st_app.pd.concat') as mock_pd_concat:
 
-            mock_st_global.session_state = MagicMock()
+            # Instantiate our custom MockSessionState
+            # It directly uses and modifies self.current_mock_session_state_dict
+            mock_st_global.session_state = MockSessionState(self.current_mock_session_state_dict)
 
-            def session_state_getitem_side_effect(key):
-                # Use a default for keys that might be checked with 'in' but not explicitly set for all tests
-                if key not in self.current_mock_session_state_dict:
-                     # As per st_app logic: if 'fhrsid_df' not in st.session_state: st.session_state.fhrsid_df = None
-                    if key == 'fhrsid_df': return None
-                    if key == 'successful_fhrsids': return []
-                    # Fallback for other keys if necessary, or raise KeyError for strictness
-                return self.current_mock_session_state_dict[key]
+            # The MockSessionState class now handles the getitem, setitem, getattr, setattr logic.
+            # No need to set side_effects for these on mock_st_global.session_state anymore.
 
-            def session_state_setitem_side_effect(key, value):
-                self.current_mock_session_state_dict[key] = value
-
-            def session_state_contains_item_side_effect(key):
-                return key in self.current_mock_session_state_dict
-
-            # For attribute access like st.session_state.fhrsid_df = None
-            def session_state_setattr_side_effect(key, value):
-                self.current_mock_session_state_dict[key] = value
-
-            def session_state_getattr_side_effect(key):
-                if key not in self.current_mock_session_state_dict:
-                    if key == 'fhrsid_df': return None
-                    if key == 'successful_fhrsids': return []
-                return self.current_mock_session_state_dict.get(key)
-
-
-            mock_st_global.session_state.__getitem__.side_effect = session_state_getitem_side_effect
-            mock_st_global.session_state.__setitem__.side_effect = session_state_setitem_side_effect
-            mock_st_global.session_state.__contains__.side_effect = session_state_contains_item_side_effect
-            mock_st_global.session_state.__getattr__.side_effect = session_state_getattr_side_effect
-            mock_st_global.session_state.__setattr__.side_effect = session_state_setattr_side_effect
-
-            # Initialize with our dictionary for attribute access too
+            # Initialize attributes on MockSessionState instance for any values already in current_mock_session_state_dict.
+            # This ensures that if tests set initial values in self.current_mock_session_state_dict
+            # before _run_test_with_patches, they are reflected in the MockSessionState object.
+            # Note: The MockSessionState constructor already links it to self.current_mock_session_state_dict,
+            # so direct manipulation of self.current_mock_session_state_dict (like in some test setups)
+            # will be reflected. This loop might be redundant if all setup is done on current_mock_session_state_dict
+            # and not by trying to setattr on the session_state object before it's fully mocked.
+            # However, it's safer to ensure consistency.
             for k, v in self.current_mock_session_state_dict.items():
-                 setattr(mock_st_global.session_state, k, v)
+                setattr(mock_st_global.session_state, k, v)
+
 
             if mock_st_extras:
                 mock_st_extras(mock_st_global)
@@ -143,6 +159,8 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
         def mock_st_config(mock_st):
             mock_st.radio.return_value = "FHRSID Lookup"
             button_return_values = {"Update Manual Review": True, "Lookup FHRSIDs": False}
+            # Revert to simpler lambda, or keep the def but remove prints.
+            # For simplicity, using the original lambda:
             mock_st.button.side_effect = lambda text, key=None: button_return_values.get(text, False)
 
             # text_input needs to return the bq_path and fhrsid_input when asked for those by main_ui,
@@ -194,7 +212,9 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
         def mock_st_config(mock_st):
             mock_st.radio.return_value = "FHRSID Lookup"
             button_return_values = {"Update Manual Review": True, "Lookup FHRSIDs": False}
+            # Revert to simpler lambda
             mock_st.button.side_effect = lambda text, key=None: button_return_values.get(text, False)
+
             def text_input_side_effect(label, value=None, key=None):
                 if "New Manual Review Value" in label: return new_review_value
                 if "Enter FHRSIDs" in label: return self.current_mock_session_state_dict['fhrsid_input_str_ui']
