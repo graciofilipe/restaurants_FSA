@@ -85,22 +85,23 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
             st_object.error("Please enter valid FHRSIDs.")
             return
 
-        # Convert FHRSIDs to integers and handle errors
-        fhrsid_list_integers = []
+        # Validate FHRSIDs as numbers but store them as strings
+        fhrsid_list_validated_strings = []
         for f_id_str in fhrsid_list_requested:
             try:
-                fhrsid_list_integers.append(int(f_id_str))
+                int(f_id_str) # Validate that f_id_str is a number
+                fhrsid_list_validated_strings.append(f_id_str) # Store the original string
             except ValueError:
                 st_object.error(f"Invalid FHRSID: '{f_id_str}' is not a valid number. Please enter numeric FHRSIDs only.")
                 return # Stop processing
 
-        st_object.info(f"FHRSID Lookup: Attempting to retrieve data for {len(fhrsid_list_integers)} FHRSID(s): {', '.join(fhrsid_list_requested)} in a single batch.")
+        st_object.info(f"FHRSID Lookup: Attempting to retrieve data for {len(fhrsid_list_validated_strings)} FHRSID(s): {', '.join(fhrsid_list_requested)} in a single batch.")
 
         final_df = None # Explicitly initialize final_df to None
         try:
-            # Call read_from_bq_func once with the entire list of integers
+            # Call read_from_bq_func once with the entire list of validated strings
             # read_from_bigquery now returns an empty DataFrame if no records are found, or raises an error.
-            final_df = read_from_bq_func(fhrsid_list_integers, project_id, dataset_id, table_id)
+            final_df = read_from_bq_func(fhrsid_list_validated_strings, project_id, dataset_id, table_id)
         except BigQueryExecutionError as e: # Catching specific BQ execution errors
             st_object.error(f"BigQuery error during lookup for FHRSIDs {', '.join(fhrsid_list_requested)}: {e}") # Log original string list
             # DataFrameConversionError is less likely here as pandas-gbq handles conversion,
