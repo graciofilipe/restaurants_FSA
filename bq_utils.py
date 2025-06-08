@@ -4,6 +4,15 @@ from google.cloud import bigquery
 from typing import List, Optional
 import re
 
+# Custom Exceptions
+class BigQueryExecutionError(Exception):
+    """Custom exception for errors during BigQuery query execution."""
+    pass
+
+class DataFrameConversionError(Exception):
+    """Custom exception for errors during DataFrame conversion from BigQuery results."""
+    pass
+
 def sanitize_column_name(column_name: str) -> str:
     """
     Sanitizes a column name for BigQuery compatibility.
@@ -116,28 +125,37 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
         query_job = client.query(query, job_config=job_config)
 
         if query_job.errors:
-            error_messages = [error['message'] for error in query_job.errors]
-            print(f"BigQuery job errors for FHRSIDs {', '.join(fhrsid_list)} from table {table_ref_str}: {'; '.join(error_messages)}")
-            # Optionally, you might decide to return None here if errors are severe
-            # For now, let's log and continue to see if to_dataframe() still works or fails
+            error_messages = [f"{error.get('reason', 'Unknown reason')}: {error.get('message', 'No message')}" for error in query_job.errors]
+            formatted_errors = "; ".join(error_messages)
+            error_msg = f"BigQuery job errors for FHRSIDs {', '.join(fhrsid_list)} from table {table_ref_str}: {formatted_errors}"
+            print(error_msg) # Keep existing print for logging
+            raise BigQueryExecutionError(error_msg)
 
         try:
             df = query_job.to_dataframe()
         except Exception as df_conversion_error:
             # Log error during DataFrame conversion
-            print(f"Error converting query result to DataFrame for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {df_conversion_error}")
-            return None
+            error_msg = f"Error converting query result to DataFrame for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {df_conversion_error}"
+            print(error_msg) # Keep existing print for logging
+            raise DataFrameConversionError(error_msg) from df_conversion_error
 
         if df.empty:
             print(f"Query executed successfully but returned no data for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}")
+            # Returning None for empty DataFrame is an explicit design choice here, not an error.
             return None
 
         return df
+    except BigQueryExecutionError: # Re-raise if it's already one of our custom types
+        raise
+    except DataFrameConversionError: # Re-raise if it's already one of our custom types
+        raise
     except Exception as e:
         # Using st.error for user-facing messages, print for backend/CLI
         # Also print to console for backend logging
-        print(f"Error querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {e}")
-        return None
+        error_msg = f"An unexpected error occurred while querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {e}"
+        print(error_msg)
+        # Wrap unexpected errors in BigQueryExecutionError for consistency
+        raise BigQueryExecutionError(error_msg) from e
 
 def update_manual_review(fhrsid_list: List[str], manual_review_value: str, project_id: str, dataset_id: str, table_id: str) -> bool:
     """
