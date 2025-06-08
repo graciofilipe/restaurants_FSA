@@ -14,10 +14,10 @@ except ImportError:
 @patch('bq_utils.pandas_gbq.read_gbq')
 def test_read_from_bigquery_success(mock_read_gbq):
     """Test successful data retrieval with pandas_gbq.read_gbq."""
-    expected_df = pd.DataFrame({'fhrsid': ['123'], 'data': ['test data']})
+    expected_df = pd.DataFrame({'fhrsid': [123], 'data': ['test data']}) # Assuming fhrsid in DataFrame could also be int
     mock_read_gbq.return_value = expected_df
 
-    fhrsid_list = ["123", "456"]
+    fhrsid_list = [123, 456] # Changed to list of integers
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
@@ -28,7 +28,7 @@ def test_read_from_bigquery_success(mock_read_gbq):
             'queryParameters': [
                 {
                     'name': 'fhrsid_list',
-                    'parameterType': {'arrayType': {'type': 'STRING'}},
+                    'parameterType': {'arrayType': {'type': 'INT64'}}, # Changed to INT64
                     'parameterValue': {'arrayValues': [{'value': f_id} for f_id in fhrsid_list]}
                 }
             ]
@@ -49,7 +49,7 @@ def test_read_from_bigquery_empty_result(mock_read_gbq):
     """Test retrieval of an empty DataFrame when no data is found."""
     mock_read_gbq.return_value = pd.DataFrame() # Empty DataFrame
 
-    fhrsid_list = ["789"]
+    fhrsid_list = [789] # Changed to list of integers
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
@@ -64,7 +64,7 @@ def test_read_from_bigquery_raises_bigqueryexecutionerror_on_generic_exception(m
     """Test that BigQueryExecutionError is raised for generic exceptions from read_gbq."""
     mock_read_gbq.side_effect = Exception("Simulated generic error from read_gbq")
 
-    fhrsid_list = ["101"]
+    fhrsid_list = [101] # Changed to list of integers
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
@@ -80,7 +80,7 @@ if GenericGBQException: # Only run this test if GenericGBQException was successf
         """Test that BigQueryExecutionError is raised for pandas_gbq.gbq.GenericGBQException."""
         mock_read_gbq.side_effect = GenericGBQException("Simulated GenericGBQException")
 
-        fhrsid_list = ["102"]
+        fhrsid_list = [102] # Changed to list of integers
         project_id = "test-project"
         dataset_id = "test-dataset"
         table_id = "test-table"
@@ -95,7 +95,7 @@ def test_read_from_bigquery_raises_bigqueryexecutionerror_on_googleclouderror(mo
     """Test that BigQueryExecutionError is raised for google.cloud.exceptions.GoogleCloudError."""
     mock_read_gbq.side_effect = exceptions.GoogleCloudError("Simulated GoogleCloudError")
 
-    fhrsid_list = ["103"]
+    fhrsid_list = [103] # Changed to list of integers
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
