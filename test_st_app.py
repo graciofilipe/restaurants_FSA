@@ -183,7 +183,7 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
             main_ui()
 
             mock_update_review.assert_called_once_with(
-                fhrsid=fhrsid,
+                fhrsid_list=[fhrsid],
                 manual_review_value=new_review_value,
                 project_id="proj",
                 dataset_id="dset",
@@ -229,7 +229,7 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
             main_ui()
 
             mock_update_review.assert_called_once_with(
-                fhrsid=fhrsid,
+                fhrsid_list=[fhrsid],
                 manual_review_value=new_review_value,
                 project_id="proj",
                 dataset_id="dset",
