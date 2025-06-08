@@ -17,7 +17,7 @@ def test_read_from_bigquery_success(mock_read_gbq):
     expected_df = pd.DataFrame({'fhrsid': [123], 'data': ['test data']}) # Assuming fhrsid in DataFrame could also be int
     mock_read_gbq.return_value = expected_df
 
-    fhrsid_list = [123, 456] # Changed to list of integers
+    fhrsid_list = ['123', '456'] # Changed to list of integers
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
@@ -28,7 +28,7 @@ def test_read_from_bigquery_success(mock_read_gbq):
             'queryParameters': [
                 {
                     'name': 'fhrsid_list',
-                    'parameterType': {'arrayType': {'type': 'INT64'}}, # Changed to INT64
+                    'parameterType': {'arrayType': {'type': 'STRING'}}, # Changed to INT64
                     'parameterValue': {'arrayValues': [{'value': f_id} for f_id in fhrsid_list]}
                 }
             ]
