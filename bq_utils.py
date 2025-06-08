@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 from google.cloud import bigquery
-from typing import List, Optional
+from typing import List # Removed Optional
 import re
+import pandas_gbq # Added import
 
 # Custom Exceptions
 class BigQueryExecutionError(Exception):
@@ -96,9 +97,9 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
         st.error(f"Error writing data to BigQuery table {table_ref_str}: {e}")
         return False
 
-def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str, table_id: str) -> Optional[pd.DataFrame]:
+def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str, table_id: str) -> pd.DataFrame: # Changed return type
     """
-    Reads data from a BigQuery table for a list of FHRSIDs.
+    Reads data from a BigQuery table for a list of FHRSIDs using pandas-gbq.
 
     Args:
         fhrsid_list: A list of FHRSIDs to filter by.
@@ -107,54 +108,53 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
         table_id: The BigQuery table ID.
 
     Returns:
-        A Pandas DataFrame containing the data for the FHRSID, or None if no data is found or an error occurs.
+        A Pandas DataFrame containing the data for the FHRSIDs. Returns an empty DataFrame if no data is found.
     """
     table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
-    client = bigquery.Client(project=project_id)
     query = f"SELECT * FROM `{table_ref_str}` WHERE fhrsid IN UNNEST(@fhrsid_list)"
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ArrayQueryParameter("fhrsid_list", "STRING", fhrsid_list)]
-    )
+
+    # Configuration for query parameters
+    # Note: pandas-gbq uses 'configuration' dict for job settings.
+    # Query parameters are passed within this configuration.
+    configuration = {
+        'query': {
+            'queryParameters': [
+                {
+                    'name': 'fhrsid_list',
+                    'parameterType': {'arrayType': {'type': 'STRING'}},
+                    'parameterValue': {'arrayValues': [{'value': f_id} for f_id in fhrsid_list]}
+                }
+            ]
+        }
+    }
 
     # Detailed logging before making the BigQuery call
-    print(f"Executing BigQuery query: {query}")
+    print(f"Executing BigQuery query with pandas-gbq: {query}")
     print(f"With FHRSID list: {fhrsid_list}")
     print(f"Table target: {table_ref_str}")
 
     try:
-        query_job = client.query(query, job_config=job_config)
-
-        if query_job.errors:
-            error_messages = [f"{error.get('reason', 'Unknown reason')}: {error.get('message', 'No message')}" for error in query_job.errors]
-            formatted_errors = "; ".join(error_messages)
-            error_msg = f"BigQuery job errors for FHRSIDs {', '.join(fhrsid_list)} from table {table_ref_str}: {formatted_errors}"
-            print(error_msg) # Keep existing print for logging
-            raise BigQueryExecutionError(error_msg)
-
-        try:
-            df = query_job.to_dataframe()
-        except Exception as df_conversion_error:
-            # Log error during DataFrame conversion
-            error_msg = f"Error converting query result to DataFrame for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {df_conversion_error}"
-            print(error_msg) # Keep existing print for logging
-            raise DataFrameConversionError(error_msg) from df_conversion_error
-
+        # Use pandas_gbq.read_gbq
+        df = pandas_gbq.read_gbq(
+            query,
+            project_id=project_id,
+            configuration=configuration
+        )
+        # pandas_gbq.read_gbq returns an empty DataFrame if the query result is empty.
+        # No need to check for df.empty and return None.
         if df.empty:
-            print(f"Query executed successfully but returned no data for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}")
-            # Returning None for empty DataFrame is an explicit design choice here, not an error.
-            return None
-
+            print(f"Query executed successfully with pandas-gbq but returned no data for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}")
         return df
-    except BigQueryExecutionError: # Re-raise if it's already one of our custom types
-        raise
-    except DataFrameConversionError: # Re-raise if it's already one of our custom types
-        raise
     except Exception as e:
-        # Using st.error for user-facing messages, print for backend/CLI
-        # Also print to console for backend logging
-        error_msg = f"An unexpected error occurred while querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {e}"
-        print(error_msg)
+        # Catching a broad exception category from pandas-gbq.
+        # Specific exceptions from pandas-gbq (e.g., related to auth, query syntax, or API errors)
+        # should be caught here and wrapped into BigQueryExecutionError.
+        # For example, pandas_gbq.gbq.GenericGBQException is a common one,
+        # but others from google-cloud-bigquery or google-auth might also occur.
+        error_msg = f"An error occurred while querying BigQuery with pandas-gbq for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {e}"
+        print(error_msg) # Keep existing print for logging
         # Wrap unexpected errors in BigQueryExecutionError for consistency
+        # No need for DataFrameConversionError as read_gbq handles DataFrame creation.
         raise BigQueryExecutionError(error_msg) from e
 
 def update_manual_review(fhrsid_list: List[str], manual_review_value: str, project_id: str, dataset_id: str, table_id: str) -> bool:

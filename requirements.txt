@@ -3,5 +3,6 @@ requests
 pandas
 google-cloud-storage
 google-cloud-bigquery
+pandas-gbq
 pytest
 db-dtypes

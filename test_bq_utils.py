@@ -1,48 +1,114 @@
 import pytest
 import pandas as pd
 from unittest.mock import patch, MagicMock, call
-from bq_utils import read_from_bigquery, update_manual_review # Ensure this import matches your file structure
+from bq_utils import read_from_bigquery, update_manual_review, BigQueryExecutionError # Ensure this import matches your file structure
 from google.cloud import bigquery, exceptions # Import exceptions for error testing
+# Attempt to import GenericGBQException for more specific error testing if available
+try:
+    from pandas_gbq.gbq import GenericGBQException
+except ImportError:
+    GenericGBQException = None # Fallback if pandas_gbq is not installed or structure differs
 
-# Fixture for mock BigQuery client (from existing tests)
-@pytest.fixture
-def mock_bigquery_client_general():
-    with patch('google.cloud.bigquery.Client') as mock_client_constructor:
-        mock_client_instance = MagicMock()
-        mock_client_constructor.return_value = mock_client_instance
-        yield mock_client_instance
+# --- Tests for read_from_bigquery (New implementation with pandas-gbq) ---
 
-# Test for read_from_bigquery (from existing tests)
-def test_read_from_bigquery_calls_to_dataframe(mock_bigquery_client_general):
-    '''
-    Test that read_from_bigquery successfully calls to_dataframe()
-    which would have failed if db-dtypes was not present.
-    '''
-    # Use the general fixture
-    mock_client_instance = mock_bigquery_client_general
-    mock_query_job = MagicMock()
-    mock_client_instance.query.return_value = mock_query_job
-    mock_query_job.to_dataframe.return_value = pd.DataFrame({'some_column': [1, 2]})
+@patch('bq_utils.pandas_gbq.read_gbq')
+def test_read_from_bigquery_success(mock_read_gbq):
+    """Test successful data retrieval with pandas_gbq.read_gbq."""
+    expected_df = pd.DataFrame({'fhrsid': ['123'], 'data': ['test data']})
+    mock_read_gbq.return_value = expected_df
 
+    fhrsid_list = ["123", "456"]
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
-    fhrsid_list = ["12345"]
 
-    try:
-        df = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
-        assert df is not None
-        assert isinstance(df, pd.DataFrame)
-        mock_client_instance.query.return_value.to_dataframe.assert_called_once()
-    except ImportError:
-        pytest.fail("ImportError was raised, db-dtypes might still be missing or not importable.")
-    except Exception as e:
-        pytest.fail(f"read_from_bigquery raised an unexpected exception: {e}")
+    expected_query = f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}` WHERE fhrsid IN UNNEST(@fhrsid_list)"
+    expected_configuration = {
+        'query': {
+            'queryParameters': [
+                {
+                    'name': 'fhrsid_list',
+                    'parameterType': {'arrayType': {'type': 'STRING'}},
+                    'parameterValue': {'arrayValues': [{'value': f_id} for f_id in fhrsid_list]}
+                }
+            ]
+        }
+    }
+
+    df_result = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
+
+    mock_read_gbq.assert_called_once_with(
+        expected_query,
+        project_id=project_id,
+        configuration=expected_configuration
+    )
+    pd.testing.assert_frame_equal(df_result, expected_df)
+
+@patch('bq_utils.pandas_gbq.read_gbq')
+def test_read_from_bigquery_empty_result(mock_read_gbq):
+    """Test retrieval of an empty DataFrame when no data is found."""
+    mock_read_gbq.return_value = pd.DataFrame() # Empty DataFrame
+
+    fhrsid_list = ["789"]
+    project_id = "test-project"
+    dataset_id = "test-dataset"
+    table_id = "test-table"
+
+    df_result = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
+
+    assert df_result.empty
+    mock_read_gbq.assert_called_once()
+
+@patch('bq_utils.pandas_gbq.read_gbq')
+def test_read_from_bigquery_raises_bigqueryexecutionerror_on_generic_exception(mock_read_gbq):
+    """Test that BigQueryExecutionError is raised for generic exceptions from read_gbq."""
+    mock_read_gbq.side_effect = Exception("Simulated generic error from read_gbq")
+
+    fhrsid_list = ["101"]
+    project_id = "test-project"
+    dataset_id = "test-dataset"
+    table_id = "test-table"
+
+    with pytest.raises(BigQueryExecutionError) as excinfo:
+        read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
+
+    assert "Simulated generic error from read_gbq" in str(excinfo.value)
+
+if GenericGBQException: # Only run this test if GenericGBQException was successfully imported
+    @patch('bq_utils.pandas_gbq.read_gbq')
+    def test_read_from_bigquery_raises_bigqueryexecutionerror_on_genericgbqexception(mock_read_gbq):
+        """Test that BigQueryExecutionError is raised for pandas_gbq.gbq.GenericGBQException."""
+        mock_read_gbq.side_effect = GenericGBQException("Simulated GenericGBQException")
+
+        fhrsid_list = ["102"]
+        project_id = "test-project"
+        dataset_id = "test-dataset"
+        table_id = "test-table"
+
+        with pytest.raises(BigQueryExecutionError) as excinfo:
+            read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
+
+        assert "Simulated GenericGBQException" in str(excinfo.value)
+
+@patch('bq_utils.pandas_gbq.read_gbq')
+def test_read_from_bigquery_raises_bigqueryexecutionerror_on_googleclouderror(mock_read_gbq):
+    """Test that BigQueryExecutionError is raised for google.cloud.exceptions.GoogleCloudError."""
+    mock_read_gbq.side_effect = exceptions.GoogleCloudError("Simulated GoogleCloudError")
+
+    fhrsid_list = ["103"]
+    project_id = "test-project"
+    dataset_id = "test-dataset"
+    table_id = "test-table"
+
+    with pytest.raises(BigQueryExecutionError) as excinfo:
+        read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
+
+    assert "Simulated GoogleCloudError" in str(excinfo.value)
 
 # --- Tests for update_manual_review ---
 
-@patch('bq_utils.st') # Mock Streamlit
-@patch('bq_utils.bigquery.Client') # Mock BigQuery Client
+@patch('bq_utils.st')
+@patch('bq_utils.bigquery.Client')
 def test_update_manual_review_success(mock_bq_client_constructor, mock_st):
     mock_bq_client_instance = mock_bq_client_constructor.return_value
     mock_query_job = MagicMock()
@@ -250,119 +316,4 @@ def test_update_manual_review_batch_empty_list(mock_bq_client_constructor, mock_
     mock_st.warning.assert_called_once_with("No FHRSIDs provided for update.")
     assert result is False
 
-# --- Tests for read_from_bigquery (Batch Operations) ---
-
-@patch('bq_utils.st') # Mock Streamlit for st.info/st.error
-@patch('bq_utils.print') # Mock print for backend logging
-@patch('bq_utils.bigquery.Client') # Mock BigQuery Client
-def test_read_from_bigquery_batch_success_partial_data(mock_bq_client_constructor, mock_print, mock_st):
-    mock_bq_client_instance = mock_bq_client_constructor.return_value
-    mock_query_job = MagicMock()
-    mock_bq_client_instance.query.return_value = mock_query_job
-
-    # Simulate data for 2 out of 3 requested FHRSIDs
-    expected_df_data = {
-        'fhrsid': ['1', '2'],
-        'BusinessName': ['Restaurant A', 'Restaurant B'],
-        'manual_review': [None, 'Approved']
-    }
-    mock_df = pd.DataFrame(expected_df_data)
-    mock_query_job.to_dataframe.return_value = mock_df
-
-    fhrsid_list = ["1", "2", "3"] # Requesting 3 FHRSIDs
-    project_id = "read-proj"
-    dataset_id = "read-dset"
-    table_id = "read-tbl"
-
-    df_result = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
-
-    pd.testing.assert_frame_equal(df_result, mock_df)
-
-    expected_query = f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}` WHERE fhrsid IN UNNEST(@fhrsid_list)"
-    args, kwargs = mock_bq_client_instance.query.call_args
-    actual_query = args[0]
-    job_config = kwargs.get('job_config')
-
-    assert "".join(actual_query.split()) == "".join(expected_query.split())
-    assert job_config is not None
-    assert len(job_config.query_parameters) == 1
-    array_param_actual = job_config.query_parameters[0]
-    assert array_param_actual.name == "fhrsid_list"
-    assert array_param_actual.parameter_type.array_type.type_ == "STRING"
-    assert array_param_actual.parameter_value.array_values[0].value == fhrsid_list[0] # Check first element
-
-    # Check logging
-    mock_print.assert_any_call(f"Executing BigQuery query: {expected_query}")
-    mock_print.assert_any_call(f"With FHRSID list: {fhrsid_list}")
-
-
-@patch('bq_utils.st')
-@patch('bq_utils.print')
-@patch('bq_utils.bigquery.Client')
-def test_read_from_bigquery_batch_no_data_found(mock_bq_client_constructor, mock_print, mock_st):
-    mock_bq_client_instance = mock_bq_client_constructor.return_value
-    mock_query_job = MagicMock()
-    mock_bq_client_instance.query.return_value = mock_query_job
-    mock_query_job.to_dataframe.return_value = pd.DataFrame() # Empty DataFrame
-
-    fhrsid_list = ["nonexistent1", "nonexistent2"]
-    project_id = "read-proj"
-    dataset_id = "read-dset"
-    table_id = "read-tbl"
-
-    df_result = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
-
-    assert df_result is None
-    mock_st.info.assert_not_called()
-    mock_print.assert_any_call(f"Executing BigQuery query: SELECT * FROM `{project_id}.{dataset_id}.{table_id}` WHERE fhrsid IN UNNEST(@fhrsid_list)")
-
-
-@patch('bq_utils.st')
-@patch('bq_utils.print')
-@patch('bq_utils.bigquery.Client')
-def test_read_from_bigquery_batch_query_execution_error(mock_bq_client_constructor, mock_print, mock_st):
-    mock_bq_client_instance = mock_bq_client_constructor.return_value
-    error_message = "Simulated BQ Query Error"
-    mock_bq_client_instance.query.side_effect = exceptions.GoogleCloudError(error_message)
-
-    fhrsid_list = ["1", "2"]
-    project_id = "read-proj"
-    dataset_id = "read-dset"
-    table_id = "read-tbl"
-
-    df_result = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
-
-    assert df_result is None
-    # Adjusted to match observed output where "None" appears before the error message
-    full_error_message_print = f"Error querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)} from table {project_id}.{dataset_id}.{table_id}: None {error_message}"
-    mock_st.error.assert_not_called()
-    mock_print.assert_any_call(full_error_message_print) # Check if print was called with this
-    mock_print.assert_any_call(f"Executing BigQuery query: SELECT * FROM `{project_id}.{dataset_id}.{table_id}` WHERE fhrsid IN UNNEST(@fhrsid_list)")
-
-
-@patch('bq_utils.st')
-@patch('bq_utils.print')
-@patch('bq_utils.bigquery.Client')
-def test_read_from_bigquery_batch_to_dataframe_conversion_error(mock_bq_client_constructor, mock_print, mock_st):
-    mock_bq_client_instance = mock_bq_client_constructor.return_value
-    mock_query_job = MagicMock()
-    mock_bq_client_instance.query.return_value = mock_query_job
-    conversion_error_message = "Simulated DataFrame Conversion Error"
-    mock_query_job.to_dataframe.side_effect = ValueError(conversion_error_message)
-
-    fhrsid_list = ["10", "20"]
-    project_id = "read-proj"
-    dataset_id = "read-dset"
-    table_id = "read-tbl"
-
-    df_result = read_from_bigquery(fhrsid_list, project_id, dataset_id, table_id)
-
-    assert df_result is None
-
-    # Check st.error call
-    mock_st.error.assert_not_called()
-
-    # Check print calls for backend logging
-    print_conversion_error_expected_msg = f"Error converting query result to DataFrame for FHRSIDs: {', '.join(fhrsid_list)} from table {project_id}.{dataset_id}.{table_id}: {conversion_error_message}"
-    mock_print.assert_any_call(print_conversion_error_expected_msg)
-    mock_print.assert_any_call(f"Executing BigQuery query: SELECT * FROM `{project_id}.{dataset_id}.{table_id}` WHERE fhrsid IN UNNEST(@fhrsid_list)")
+# (The old tests for read_from_bigquery that used bigquery.Client directly are removed by the SEARCH/REPLACE above)
