@@ -93,11 +93,12 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
         def logic(mock_st, mock_read_from_bq, _):
             mock_read_from_bq.return_value = pd.DataFrame() # Empty DataFrame
 
-            fhrsid_lookup_logic("unknown_fhrsid", "proj.dset.tbl", mock_st, mock_read_from_bq)
+            numeric_fhrsid_for_test = "00000" # Or any other valid numeric string
+            fhrsid_lookup_logic(numeric_fhrsid_for_test, "proj.dset.tbl", mock_st, mock_read_from_bq)
 
             self.assertTrue(self.current_mock_session_state['fhrsid_df'].empty)
             self.assertEqual(self.current_mock_session_state['successful_fhrsids'], [])
-            mock_st.warning.assert_called_with("No data found for any of the provided FHRSIDs: unknown_fhrsid.")
+            mock_st.warning.assert_called_with(f"No data found for any of the provided FHRSIDs: {numeric_fhrsid_for_test}.")
             # Or, if multiple FHRSIDs were passed and none found, the message might be different.
             # Adjust based on the exact message in fhrsid_lookup_logic.
 
@@ -188,7 +189,7 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
                 table_id="tbl"
             )
             # fhrsid_lookup_logic (which calls read_from_bigquery) is called for refresh
-            mock_read_from_bq.assert_called_with([fhrsid], "proj", "dset", "tbl")
+            mock_read_from_bq.assert_called_with([int(fhrsid)], "proj", "dset", "tbl")
             mock_st.success.assert_any_call(f"Manual review updated for FHRSIDs: {fhrsid}. Refreshing data...")
             mock_st.rerun.assert_called_once()
             self.assertEqual(self.current_mock_session_state['fhrsid_df']['manual_review'].iloc[0], new_review_value)
