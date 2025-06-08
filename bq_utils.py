@@ -120,18 +120,15 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
         except Exception as df_conversion_error:
             # Log error during DataFrame conversion
             print(f"Error converting query result to DataFrame for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {df_conversion_error}")
-            st.error(f"Failed to process data from BigQuery for FHRSIDs: {', '.join(fhrsid_list)}. Error during data conversion.")
             return None
 
         if df.empty:
             # Using st.info for user-facing messages in Streamlit context, print for backend/CLI
-            st.info(f"No data found for FHRSIDs: {', '.join(fhrsid_list)} in table {table_ref_str}")
             return None
 
         return df
     except Exception as e:
         # Using st.error for user-facing messages, print for backend/CLI
-        st.error(f"Error querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {e}")
         # Also print to console for backend logging
         print(f"Error querying BigQuery for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {e}")
         return None
