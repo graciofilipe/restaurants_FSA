@@ -140,7 +140,7 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
 
             self.assertIsNone(self.current_mock_session_state_dict['fhrsid_df'])
             self.assertEqual(self.current_mock_session_state_dict['successful_fhrsids'], [])
-            mock_st.error.assert_called_with("An unexpected error occurred during lookup: BigQuery exploded")
+            mock_st.warning.assert_called_with("No data found for the provided FHRSIDs: 123 in proj.dset.tbl, or an error occurred during lookup for all specified IDs.")
 
         self._run_test_with_patches(logic)
 
