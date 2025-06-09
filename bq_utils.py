@@ -121,7 +121,7 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
             'queryParameters': [
                 {
                     'name': 'fhrsid_list',
-                    'parameterType': {'arrayType': {'type': 'STRING'}},
+                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'STRING'}},
                     'parameterValue': {'arrayValues': [{'value': f_id} for f_id in fhrsid_list]}
                 }
             ]
