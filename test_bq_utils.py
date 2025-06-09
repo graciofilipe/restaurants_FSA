@@ -28,7 +28,7 @@ def test_read_from_bigquery_success(mock_read_gbq):
             'queryParameters': [
                 {
                     'name': 'fhrsid_list',
-                    'parameterType': {'arrayType': {'type': 'STRING'}}, # Correctly STRING
+                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'STRING'}}, # Correctly STRING
                     'parameterValue': {'arrayValues': [{'value': '123'}, {'value': '456'}]} # Explicitly string values
                 }
             ]
@@ -60,7 +60,7 @@ def test_read_from_bigquery_empty_result(mock_read_gbq):
             'queryParameters': [
                 {
                     'name': 'fhrsid_list',
-                    'parameterType': {'arrayType': {'type': 'STRING'}},
+                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'STRING'}},
                     'parameterValue': {'arrayValues': [{'value': '789'}]}
                 }
             ]
@@ -92,7 +92,7 @@ def test_read_from_bigquery_empty_input_list(mock_read_gbq):
             'queryParameters': [
                 {
                     'name': 'fhrsid_list',
-                    'parameterType': {'arrayType': {'type': 'STRING'}},
+                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'STRING'}},
                     'parameterValue': {'arrayValues': []} # Expect empty arrayValues
                 }
             ]
