@@ -100,20 +100,18 @@ def _fetch_and_process_fhrsid_data(fhrsid_list_validated_strings: List[str], pro
     try:
         final_df = read_from_bq_func(fhrsid_list_validated_strings, project_id, dataset_id, table_id)
 
-        if final_df is not None: # final_df can be an empty DataFrame
-            if 'fhrsid' not in final_df.columns:
-                # This is a more critical issue than just empty, as downstream logic depends on this column.
-                # Return the df as is, but with a strong warning/error.
-                warning_message = "FHRSID column ('fhrsid') missing in returned data. Cannot determine successful lookups or proceed with updates."
-                # Keep final_df as is, let the main function decide how to handle it (e.g., display error, not show df).
-            elif not final_df.empty:
-                # Ensure fhrsid is string type for comparison, handle potential float if some are numbers
-                successful_fhrsids_from_df = final_df['fhrsid'].astype(str).unique().tolist()
+        if final_df is not None:
+            if not final_df.empty: # Only check for columns if the DataFrame is not empty
+                if 'fhrsid' not in final_df.columns:
+                    warning_message = "FHRSID column ('fhrsid') missing in returned data. Cannot determine successful lookups or proceed with updates."
+                else:
+                    successful_fhrsids_from_df = final_df['fhrsid'].astype(str).unique().tolist()
+            # If final_df is empty, successful_fhrsids_from_df remains [], and warning_message remains None from this block
         # If final_df is None (should not happen if read_from_bq_func adheres to its contract of returning empty df or raising error)
         # or if it's an empty DataFrame, successful_fhrsids_from_df remains empty, which is correct.
 
     except BigQueryExecutionError as e:
-        error_message = f"BigQuery error during lookup: {e}"
+        error_message = f"BigQuery error during lookup for FHRSIDs {', '.join(fhrsid_list_validated_strings)}: {e}"
         return None, [], error_message # Return None for df, empty list for successful_ids
     except Exception as e:
         error_message = f"An unexpected error occurred during BigQuery lookup: {e}"
@@ -178,13 +176,12 @@ def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, s
     # Use the original_requested_fhrsids which passed initial validation
     failed_fhrsids = [f_id for f_id in original_requested_fhrsids if f_id not in successful_fhrsids_from_df]
 
-    if failed_fhrsids:
-        st_object.warning(f"No data found for FHRSIDs: {', '.join(failed_fhrsids)}.")
-
-    # Handle case where the query was successful, df is not None, but it's empty (no records found for any requested FHRSID)
-    # And no specific error/warning about missing columns etc. was raised by _fetch_and_process_fhrsid_data
     if final_df is not None and final_df.empty and not successful_fhrsids_from_df and not message:
+        # This is the most specific case: query ran, returned no data for any requested ID.
         st_object.warning(f"No data found for any of the provided FHRSIDs: {', '.join(original_requested_fhrsids)}.")
+    elif failed_fhrsids:
+        # This case handles when some FHRSIDs failed, but not all, or if 'fhrsid' column was missing (making successful_fhrsids_from_df empty).
+        st_object.warning(f"No data found for some of the provided FHRSIDs: {', '.join(failed_fhrsids)}.")
 
     # If final_df is None and an error occurred, it was handled at the beginning of Step 3.
     # If final_df is not None, it's stored in session_state. If it's empty, it's an empty DF.

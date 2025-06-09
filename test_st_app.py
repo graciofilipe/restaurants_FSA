@@ -251,9 +251,10 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
             )
             # fhrsid_lookup_logic (which calls read_from_bigquery) is called for refresh
             # The call to read_from_bigquery during refresh should use STRING fhsrids
-            mock_read_from_bq.assert_called_with([fhrsid], "proj", "dset", "tbl") # Changed int(fhrsid) to fhrsid
-            mock_st.success.assert_any_call(f"Manual review updated for FHRSIDs: {fhrsid}. Refreshing data...")
-            mock_st.rerun.assert_called_once()
+            # mock_read_from_bq.assert_called_with([fhrsid], "proj", "dset", "tbl") # Removed this assertion
+            mock_st.success.assert_any_call(f"Manual review updated for FHRSIDs: {fhrsid} in BigQuery.") # Changed message
+            mock_st.info.assert_any_call("Local data view updated. Use 'Lookup FHRSIDs' again if you need to refresh from BigQuery.") # Added this assertion
+            # mock_st.rerun.assert_called_once() # Removed this assertion
             self.assertEqual(self.current_mock_session_state['fhrsid_df']['manual_review'].iloc[0], new_review_value)
 
         self._run_test_with_patches(logic, mock_st_config)
