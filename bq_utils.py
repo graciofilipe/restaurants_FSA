@@ -79,6 +79,31 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
     
     df_subset.columns = sanitized_columns
     
+    # --- BEGIN MODIFICATIONS ---
+
+    # Determine the sanitized column name for 'NewRatingPending'
+    # Assuming 'NewRatingPending' is the original name and sanitize_column_name handles it correctly.
+    original_new_rating_pending_col = 'NewRatingPending' # Original name before sanitization
+    sanitized_new_rating_pending_col = sanitize_column_name(original_new_rating_pending_col)
+
+    # Log unique values before conversion if the column exists
+    if sanitized_new_rating_pending_col in df_subset.columns:
+        print(f"Unique values in {sanitized_new_rating_pending_col} before conversion: {df_subset[sanitized_new_rating_pending_col].unique()}")
+
+        # Convert 'NewRatingPending' (sanitized version) to Boolean
+        # Define the mapping for string to boolean
+        mapping = {
+            'true': True,
+            'false': False
+        }
+
+        # Apply the mapping
+        # Ensure that the column is treated as string type before applying .str.lower()
+        df_subset[sanitized_new_rating_pending_col] = df_subset[sanitized_new_rating_pending_col].astype(str).str.lower().map(mapping).fillna(pd.NA)
+    else:
+        print(f"Column {sanitized_new_rating_pending_col} (sanitized from {original_new_rating_pending_col}) not found in df_subset.columns: {df_subset.columns}")
+
+
     client = bigquery.Client(project=project_id)
     table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
     
@@ -87,7 +112,17 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
         column_name_character_map="V2",
     )
+
+    # Detailed Logging before BQ load
+    print(f"BigQuery job_config.schema: {job_config.schema}")
+    print(f"DataFrame dtypes before BQ load: \n{df_subset.dtypes}")
+    print(f"Sample data for BQ load (first 5 rows): \n{df_subset.head().to_string()}")
+    if sanitized_new_rating_pending_col in df_subset.columns:
+        print(f"Unique values in {sanitized_new_rating_pending_col} after conversion: {df_subset[sanitized_new_rating_pending_col].unique()}")
+        print(f"Data type of {sanitized_new_rating_pending_col} after conversion: {df_subset[sanitized_new_rating_pending_col].dtype}")
     
+    # --- END MODIFICATIONS ---
+
     try:
         job = client.load_table_from_dataframe(df_subset, table_ref_str, job_config=job_config)
         job.result()
