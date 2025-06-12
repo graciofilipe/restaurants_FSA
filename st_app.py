@@ -289,7 +289,7 @@ def _write_data_to_bigquery(master_restaurant_data: List[Dict[str, Any]], bq_ful
             'RatingValue', 'RatingKey', 'RatingDate', 'LocalAuthorityName',
             'Scores.Hygiene', 'Scores.Structural',
             'Scores.ConfidenceInManagement', 'SchemeType', 'NewRatingPending',
-            'Geocode.Latitude', 'Geocode.Longitude', 'first_seen', 'manual_review'
+            'Geocode.Latitude', 'Geocode.Longitude', 'first_seen', 'manual_review', 'gemini_insights'
         ]
         # Filter columns_to_select to only those present in df_to_load
         columns_to_select = [col for col in columns_to_select if col in df_to_load.columns]
@@ -317,7 +317,8 @@ def _write_data_to_bigquery(master_restaurant_data: List[Dict[str, Any]], bq_ful
             bigquery.SchemaField(sanitize_column_name('Geocode.Longitude'), 'FLOAT'),
             bigquery.SchemaField(sanitize_column_name('Geocode.Latitude'), 'FLOAT'),
             bigquery.SchemaField(sanitize_column_name('first_seen'), 'DATE'),
-            bigquery.SchemaField("manual_review", "STRING", mode="NULLABLE")
+            bigquery.SchemaField("manual_review", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField(sanitize_column_name('gemini_insights'), 'STRING', mode='NULLABLE')
         ]
 
         sanitized_columns_present_in_df = {sanitize_column_name(col) for col in columns_to_select}
