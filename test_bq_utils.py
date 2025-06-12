@@ -3,6 +3,7 @@ import pandas as pd
 from unittest.mock import patch, MagicMock, call
 from bq_utils import read_from_bigquery, update_manual_review, BigQueryExecutionError, write_to_bigquery, sanitize_column_name # Ensure this import matches your file structure
 from google.cloud import bigquery, exceptions # Import exceptions for error testing
+from google.cloud import bigquery # Ensure full import as per instruction
 # Attempt to import GenericGBQException for more specific error testing if available
 try:
     from pandas_gbq.gbq import GenericGBQException
@@ -462,3 +463,77 @@ def test_write_to_bigquery_newratingpending_conversion(mock_bq_client_constructo
     job_config_passed = loaded_df_call[1]['job_config'] # Second argument (kwargs) of the first call
     assert job_config_passed.schema == bq_schema
     assert job_config_passed.write_disposition == bigquery.WriteDisposition.WRITE_TRUNCATE
+
+
+@patch('bq_utils.st') # Mock streamlit
+@patch('bq_utils.bigquery.Client')
+def test_write_to_bigquery_includes_gemini_insights_in_schema(mock_bq_client_constructor, mock_st):
+    """
+    Tests that write_to_bigquery correctly processes a DataFrame and
+    passes a schema to BigQuery that includes 'gemini_insights'.
+    """
+    mock_bq_client_instance = mock_bq_client_constructor.return_value
+    mock_load_job = MagicMock()
+    mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
+    mock_load_job.result.return_value = None # Simulate successful job
+
+    # Prepare test DataFrame
+    data = {
+        'FHRSID': [1],
+        'BusinessName': ['Test Cafe'],
+        'gemini_insights': [None], # New field
+        'manual_review': ['reviewed'],
+        'NewRatingPending': ['false'] # Existing field needed for full logic
+    }
+    df = pd.DataFrame(data)
+
+    # Define the columns to select, including the new one
+    columns_to_select = ['FHRSID', 'BusinessName', 'gemini_insights', 'manual_review', 'NewRatingPending']
+
+    # Define the expected BQ schema that should be constructed by the calling code (e.g. st_app.py)
+    # and passed to write_to_bigquery. This test ensures write_to_bigquery uses it.
+    # Note: Names here are *after* sanitization.
+    expected_bq_schema_passed_to_function = [
+        bigquery.SchemaField(sanitize_column_name('FHRSID'), 'INTEGER'), # Assuming sanitize_column_name makes it lowercase
+        bigquery.SchemaField(sanitize_column_name('BusinessName'), 'STRING'),
+        bigquery.SchemaField(sanitize_column_name('gemini_insights'), 'STRING', mode='NULLABLE'),
+        bigquery.SchemaField(sanitize_column_name('manual_review'), 'STRING', mode='NULLABLE'),
+        bigquery.SchemaField(sanitize_column_name('NewRatingPending'), 'BOOLEAN')
+    ]
+
+    project_id = "test-project"
+    dataset_id = "test-dataset"
+    table_id = "test-table"
+
+    write_to_bigquery(
+        df,
+        project_id,
+        dataset_id,
+        table_id,
+        columns_to_select,
+        expected_bq_schema_passed_to_function # This is the schema being tested
+    )
+
+    # Assert that load_table_from_dataframe was called
+    mock_bq_client_instance.load_table_from_dataframe.assert_called_once()
+
+    # Get the arguments passed to load_table_from_dataframe
+    call_args = mock_bq_client_instance.load_table_from_dataframe.call_args
+    loaded_df = call_args[0][0]
+    job_config_passed_to_bq = call_args[1]['job_config']
+
+    # 1. Check that the DataFrame passed to BQ has the sanitized 'gemini_insights' column
+    assert 'gemini_insights' in loaded_df.columns # After sanitization by write_to_bigquery
+    assert loaded_df['gemini_insights'].iloc[0] is None # Or pd.NA depending on how it's handled
+
+    # 2. Check that the schema in job_config matches what we passed.
+    # This confirms that write_to_bigquery is using the schema it received.
+    assert job_config_passed_to_bq.schema == expected_bq_schema_passed_to_function
+
+    # 3. Optionally, verify that 'gemini_insights' is in the job_config schema
+    gemini_field_in_schema = next((field for field in job_config_passed_to_bq.schema if field.name == 'gemini_insights'), None)
+    assert gemini_field_in_schema is not None, "'gemini_insights' field not found in BigQuery job_config schema"
+    assert gemini_field_in_schema.field_type == 'STRING'
+    assert gemini_field_in_schema.mode == 'NULLABLE'
+
+    mock_st.success.assert_called_once()

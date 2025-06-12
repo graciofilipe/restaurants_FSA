@@ -56,6 +56,8 @@ def load_master_data(uri: str, load_json_func: Callable[[str], Any]) -> List[Dic
         for restaurant in loaded_data:
             if isinstance(restaurant, dict) and restaurant.get("manual_review") is None:
                 restaurant["manual_review"] = "not reviewed"
+            if isinstance(restaurant, dict) and restaurant.get("gemini_insights") is None:
+                restaurant["gemini_insights"] = None
         return loaded_data
     else:
         st.warning(f"Data loaded from {uri} is not in the expected list format. Type found: {type(loaded_data)}. Proceeding with empty master restaurant data.")
@@ -89,6 +91,7 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
             if api_establishment['FHRSID'] not in existing_fhrsid_set:
                 api_establishment['first_seen'] = today_date
                 api_establishment['manual_review'] = "not reviewed"
+                api_establishment['gemini_insights'] = None
                 master_data.append(api_establishment)
                 existing_fhrsid_set.add(api_establishment['FHRSID'])
                 new_restaurants_added_count += 1
