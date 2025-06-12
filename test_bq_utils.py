@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 from unittest.mock import patch, MagicMock, call
-from bq_utils import read_from_bigquery, update_manual_review, BigQueryExecutionError # Ensure this import matches your file structure
+from bq_utils import read_from_bigquery, update_manual_review, BigQueryExecutionError, write_to_bigquery, sanitize_column_name # Ensure this import matches your file structure
 from google.cloud import bigquery, exceptions # Import exceptions for error testing
 # Attempt to import GenericGBQException for more specific error testing if available
 try:
@@ -366,3 +366,99 @@ def test_update_manual_review_batch_empty_list(mock_bq_client_constructor, mock_
     assert result is False
 
 # (The old tests for read_from_bigquery that used bigquery.Client directly are removed by the SEARCH/REPLACE above)
+
+
+# --- Tests for write_to_bigquery ---
+
+@patch('bq_utils.st') # Mock streamlit for st.success/st.error
+@patch('bq_utils.bigquery.Client')
+def test_write_to_bigquery_newratingpending_conversion(mock_bq_client_constructor, mock_st):
+    """
+    Tests the write_to_bigquery function, focusing on the conversion
+    of the 'NewRatingPending' column to boolean (or pd.NA).
+    """
+    # Mock BigQuery client and its methods
+    mock_bq_client_instance = mock_bq_client_constructor.return_value
+    mock_load_job = MagicMock()
+    mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
+    mock_load_job.result.return_value = None # Simulate successful job completion
+
+    # Prepare test data
+    original_col_name = 'NewRatingPending'
+    sanitized_col_name = sanitize_column_name(original_col_name) # Should be 'newratingpending'
+
+    data = {
+        'FHRSID': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        'BusinessName': ['Cafe A', 'Cafe B', 'Cafe C', 'Cafe D', 'Cafe E', 'Cafe F', 'Cafe G', 'Cafe H', 'Cafe I', 'Cafe J', 'Cafe K', 'Cafe L'],
+        original_col_name: ["true", "False", "TRUE", "false", "TrUe", "FaLsE", "other", "", None, pd.NA, " existing_true ", " existing_false "]
+    }
+    df = pd.DataFrame(data)
+
+    columns_to_select = ['FHRSID', 'BusinessName', original_col_name]
+
+    # Define bq_schema, ensuring NewRatingPending is BOOLEAN
+    # The names in bq_schema should be the final sanitized names expected by BigQuery.
+    bq_schema = [
+        bigquery.SchemaField(sanitize_column_name('FHRSID'), 'INTEGER'),
+        bigquery.SchemaField(sanitize_column_name('BusinessName'), 'STRING'),
+        bigquery.SchemaField(sanitized_col_name, 'BOOLEAN')
+    ]
+
+    project_id = "test-project"
+    dataset_id = "test-dataset"
+    table_id = "test-table"
+
+    # Call the function
+    # Ensure all mock objects and parameters are correctly passed
+    result = write_to_bigquery(
+        df=df,
+        project_id=project_id,
+        dataset_id=dataset_id,
+        table_id=table_id,
+        columns_to_select=columns_to_select,
+        bq_schema=bq_schema
+    )
+
+    # Assertions
+    assert result is True, "write_to_bigquery should return True on success"
+    mock_st.success.assert_called_once() # Check if Streamlit success message was called
+
+    # Check that load_table_from_dataframe was called
+    mock_bq_client_instance.load_table_from_dataframe.assert_called_once()
+
+    # Capture the DataFrame passed to load_table_from_dataframe
+    loaded_df_call = mock_bq_client_instance.load_table_from_dataframe.call_args
+    assert loaded_df_call is not None, "load_table_from_dataframe was not called with any arguments"
+    loaded_df = loaded_df_call[0][0] # First argument of the first call
+
+    # Assert the 'newratingpending' column content and type
+    expected_values = [
+        True, False, True, False, True, False,
+        pd.NA, pd.NA, pd.NA, pd.NA, pd.NA, pd.NA # "other", "", None, pd.NA, " existing_true ", " existing_false " all become pd.NA
+    ]
+
+    assert sanitized_col_name in loaded_df.columns, f"Column '{sanitized_col_name}' not found in loaded DataFrame. Columns are: {loaded_df.columns}"
+
+    loaded_series = loaded_df[sanitized_col_name]
+    assert len(loaded_series) == len(expected_values), \
+        f"Length mismatch for column '{sanitized_col_name}': Expected {len(expected_values)}, got {len(loaded_series)}"
+
+    for i in range(len(expected_values)):
+        expected_val = expected_values[i]
+        actual_val = loaded_series.iloc[i]
+        # Use pd.isna() for reliable NA comparison
+        if pd.isna(expected_val):
+            assert pd.isna(actual_val), f"Value at index {i} for column '{sanitized_col_name}' should be pd.NA but was '{actual_val}' (type: {type(actual_val)})"
+        else:
+            assert actual_val == expected_val, f"Value at index {i} for column '{sanitized_col_name}' was '{actual_val}' (type: {type(actual_val)}), expected '{expected_val}'"
+
+    # Check the dtype of the column
+    # After the specified conversion, a column with True, False, and pd.NA will have dtype 'object'.
+    # If pandas evolves to use BooleanDtype more aggressively by default, this could be pd.BooleanDtype().
+    assert loaded_series.dtype == object or isinstance(loaded_series.dtype, pd.BooleanDtype), \
+        f"Expected dtype for '{sanitized_col_name}' to be 'object' or pandas BooleanDtype, but got {loaded_series.dtype}"
+
+    # Verify job_config
+    job_config_passed = loaded_df_call[1]['job_config'] # Second argument (kwargs) of the first call
+    assert job_config_passed.schema == bq_schema
+    assert job_config_passed.write_disposition == bigquery.WriteDisposition.WRITE_TRUNCATE
