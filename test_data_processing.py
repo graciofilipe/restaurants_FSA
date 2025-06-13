@@ -3,29 +3,29 @@ from data_processing import load_master_data, process_and_update_master_data
 from unittest.mock import MagicMock, patch
 
 # Test cases for load_master_data
-def test_load_master_data_initializes_gemini_insights_to_none():
+def test_load_master_data_initializes_manual_review():
     """
-    Tests that load_master_data initializes 'gemini_insights' to None
-    if it's missing from a record. Also checks 'manual_review' initialization.
+    Tests that load_master_data initializes 'manual_review' to 'not reviewed'
+    if it's missing from a record.
     """
     mock_load_json_func = MagicMock()
     input_data = [
-        {"FHRSID": "1", "BusinessName": "Restaurant A"}, # Missing both
-        {"FHRSID": "2", "BusinessName": "Restaurant B", "manual_review": "reviewed"}, # Missing gemini_insights
-        {"FHRSID": "3", "BusinessName": "Restaurant C", "gemini_insights": "has_insight"}, # Missing manual_review
-        {"FHRSID": "4", "BusinessName": "Restaurant D", "manual_review": "reviewed", "gemini_insights": "has_insight"} # Has both
+        {"FHRSID": "1", "BusinessName": "Restaurant A"}, # Missing manual_review
+        {"FHRSID": "2", "BusinessName": "Restaurant B", "manual_review": "reviewed"}, # Has manual_review
+        {"FHRSID": "3", "BusinessName": "Restaurant C", "gemini_insights": "has_insight"}, # Missing manual_review, gemini_insights should be preserved
+        {"FHRSID": "4", "BusinessName": "Restaurant D", "manual_review": "reviewed", "gemini_insights": "has_insight"} # Has both, gemini_insights should be preserved
     ]
     mock_load_json_func.return_value = input_data
 
     expected_data = [
-        {"FHRSID": "1", "BusinessName": "Restaurant A", "manual_review": "not reviewed", "gemini_insights": None},
-        {"FHRSID": "2", "BusinessName": "Restaurant B", "manual_review": "reviewed", "gemini_insights": None},
+        {"FHRSID": "1", "BusinessName": "Restaurant A", "manual_review": "not reviewed"},
+        {"FHRSID": "2", "BusinessName": "Restaurant B", "manual_review": "reviewed"},
         {"FHRSID": "3", "BusinessName": "Restaurant C", "manual_review": "not reviewed", "gemini_insights": "has_insight"},
         {"FHRSID": "4", "BusinessName": "Restaurant D", "manual_review": "reviewed", "gemini_insights": "has_insight"}
     ]
 
     result = load_master_data("dummy_uri", mock_load_json_func)
-    assert result == expected_data, "gemini_insights or manual_review not initialized correctly"
+    assert result == expected_data, "manual_review not initialized correctly"
 
 def test_load_master_data_empty_input():
     mock_load_json_func = MagicMock(return_value=[])
@@ -38,13 +38,13 @@ def test_load_master_data_none_input():
     assert result == []
 
 # Test cases for process_and_update_master_data
-def test_process_and_update_master_data_initializes_gemini_insights_for_new_records():
+def test_process_and_update_master_data_initializes_fields_for_new_records():
     """
-    Tests that process_and_update_master_data initializes 'gemini_insights'
-    to None for new records. Also checks 'manual_review' initialization.
+    Tests that process_and_update_master_data initializes 'manual_review'
+    and 'first_seen' for new records.
     """
     master_data = [
-        {"FHRSID": "1", "BusinessName": "Existing Restaurant", "manual_review": "reviewed", "gemini_insights": "existing_insight"}
+        {"FHRSID": "1", "BusinessName": "Existing Restaurant", "manual_review": "reviewed"}
     ]
 
     # Ensure 'first_seen' is also handled as the function expects it
@@ -73,18 +73,17 @@ def test_process_and_update_master_data_initializes_gemini_insights_for_new_reco
 
         # Check existing restaurant (should be unchanged by this aspect of the function)
         assert updated_master_data[0]["FHRSID"] == "1"
-        assert updated_master_data[0]["gemini_insights"] == "existing_insight" # Should not be overwritten
+        # gemini_insights was removed from existing_restaurant data, so no check needed here for it
         assert updated_master_data[0]["manual_review"] == "reviewed"
 
         # Check new restaurant
         new_restaurant = next(r for r in updated_master_data if r["FHRSID"] == "2")
         assert new_restaurant["BusinessName"] == "New Restaurant 1"
         assert new_restaurant["manual_review"] == "not reviewed"
-        assert new_restaurant["gemini_insights"] is None
         assert new_restaurant["first_seen"] == "2024-01-01"
 
 def test_process_and_update_master_data_no_new_records():
-    master_data = [{"FHRSID": "1", "BusinessName": "Restaurant A", "manual_review": "reviewed", "gemini_insights": "insight"}]
+    master_data = [{"FHRSID": "1", "BusinessName": "Restaurant A", "manual_review": "reviewed"}] # Removed gemini_insights
     api_data = {
         "FHRSEstablishment": {
             "EstablishmentCollection": {
@@ -97,7 +96,7 @@ def test_process_and_update_master_data_no_new_records():
     updated_data, new_count = process_and_update_master_data(list(master_data), api_data) # Pass a copy
     assert new_count == 0
     assert len(updated_data) == 1
-    assert updated_data[0]["gemini_insights"] == "insight" # Make sure it's not changed
+    # No assertion for gemini_insights needed here as it's removed from master_data
 
 def test_process_and_update_master_data_empty_api_details():
     master_data = [{"FHRSID": "1", "BusinessName": "Restaurant A"}]
