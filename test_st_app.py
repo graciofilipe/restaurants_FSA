@@ -351,7 +351,6 @@ class TestHandleFetchDataAction(unittest.TestCase):
             result = handle_fetch_data_action(
                 coordinate_pairs_str="1.0,1.0", # Valid coordinates for _parse_coordinates
                 max_results=100,
-                master_list_uri_str="proj.dset.master_table",
                 bq_full_path_str="proj.dset.master_table" # Using same table for append
             )
 
@@ -403,11 +402,10 @@ class TestHandleFetchDataAction(unittest.TestCase):
             result = handle_fetch_data_action(
                 coordinate_pairs_str="1.0,1.0",
                 max_results=100,
-                master_list_uri_str="proj.dset.empty_table",
-                bq_full_path_str="out_proj.out_dset.out_table"
+                bq_full_path_str="out_proj.out_dset.out_table" # This is the path for master and append
             )
 
-            self.mock_load_all_data_from_bq.assert_called_once_with("proj", "dset", "empty_table")
+            self.mock_load_all_data_from_bq.assert_called_once_with("out_proj", "out_dset", "out_table")
             # Assertion for data_processing.st.warning is removed as debug output showed it's not called.
             # If this warning is critical and expected from data_processing.load_master_data,
             # then data_processing.py would need to be fixed.
@@ -431,39 +429,41 @@ class TestHandleFetchDataAction(unittest.TestCase):
             self.assertEqual(len(result), 0) # handle_fetch_data_action returns master_restaurant_data, which is []
             self.assertEqual(self.mock_display_data.call_count, 2) # Called for empty master and new restaurants
 
-    def test_invalid_master_bq_identifier_format(self, mock_st_global):
-        """Test error handling for invalid master_list_uri_str format."""
+    def test_invalid_bq_full_path_format(self, mock_st_global):
+        """Test error handling for invalid bq_full_path_str format."""
         st_app_specific_mocks = self.common_mocks(mock_st_global)
         mock_data_processing_st = MagicMock()
         with patch.multiple('st_app', **st_app_specific_mocks), \
-             patch('data_processing.st', mock_data_processing_st): # Patched here as well
-            invalid_uris = ["proj.dset", "invalid", "", "proj..table", ".dset.table"]
-            for invalid_uri in invalid_uris:
+             patch('data_processing.st', mock_data_processing_st):
+            invalid_paths = ["proj.dset", "invalid", "", "proj..table", ".dset.table"]
+            for invalid_path in invalid_paths:
                 # Reset mocks for st.stop() and st.error() for each iteration
-                mock_st_global.reset_mock() # Resets all sub-mocks of mock_st_global like .error, .stop
+                mock_st_global.reset_mock()
 
                 handle_fetch_data_action(
-                    coordinate_pairs_str="0,0", max_results=100,
-                    master_list_uri_str=invalid_uri,
-                    bq_full_path_str="out.proj.table"
+                    coordinate_pairs_str="0,0",
+                    max_results=100,
+                    bq_full_path_str=invalid_path # This is the path being validated
                 )
 
-                if not invalid_uri:
-                    mock_st_global.error.assert_any_call("Master Restaurant BigQuery Table identifier is missing.")
-                elif len(invalid_uri.split('.')) != 3 or not all(p for p in invalid_uri.split('.')):
-                    expected_pattern = re.compile(r"Invalid Master Restaurant BigQuery Table format")
+                if not invalid_path:
+                    mock_st_global.error.assert_any_call("BigQuery Table Path (for master data and writing) is missing.")
+                elif len(invalid_path.split('.')) != 3 or not all(p for p in invalid_path.split('.')):
+                    # Check if any error message matches the expected pattern for invalid format
+                    expected_pattern = re.compile(r"Invalid BigQuery Table Path format")
                     found_error_message = False
                     for call_args in mock_st_global.error.call_args_list:
                         args, _ = call_args
-                        if args and isinstance(args[0], str) and expected_pattern.search(args[0]): # Using search to find the substring
+                        # Ensure args is not empty and the first argument is a string before calling search
+                        if args and isinstance(args[0], str) and expected_pattern.search(args[0]):
                             found_error_message = True
                             break
-                    self.assertTrue(found_error_message, "Expected st.error call with invalid BQ table format message was not found.")
+                    self.assertTrue(found_error_message, f"Expected st.error call with invalid BQ path format message was not found for path: '{invalid_path}'")
 
                 mock_st_global.stop.assert_called()
-                self.mock_fetch_api_data.assert_not_called() # Should stop before API call
-                self.mock_load_all_data_from_bq.assert_not_called() # Should stop before BQ load call
-                # Reset mocks for next iteration if they were part of self.common_mocks setup
+                self.mock_fetch_api_data.assert_not_called()
+                self.mock_load_all_data_from_bq.assert_not_called()
+                # Reset mocks that are instance attributes for the next iteration
                 self.mock_fetch_api_data.reset_mock()
                 self.mock_load_all_data_from_bq.reset_mock()
 
@@ -480,11 +480,10 @@ class TestHandleFetchDataAction(unittest.TestCase):
 
             result = handle_fetch_data_action(
                 coordinate_pairs_str="0,0", max_results=100,
-                master_list_uri_str="proj.dset.master_table",
-                bq_full_path_str="out_proj.out_dset.out_table"
+                bq_full_path_str="out_proj.out_dset.out_table" # Master and output path
             )
 
-            self.mock_load_all_data_from_bq.assert_called_once()
+            self.mock_load_all_data_from_bq.assert_called_once_with("out_proj", "out_dset", "out_table")
             self.mock_fetch_api_data.assert_called_once()
             mock_st_global.info.assert_any_call("No establishments found from any of the API calls. Nothing to process further.")
             mock_st_global.stop.assert_called() # Expect st.stop if no API data
