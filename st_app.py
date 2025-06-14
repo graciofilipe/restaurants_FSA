@@ -432,6 +432,14 @@ def _append_new_data_to_bigquery(new_restaurants: List[Dict[str, Any]], project_
     if s_business_type_id in df_new_restaurants.columns:
         df_new_restaurants[s_business_type_id] = pd.to_numeric(df_new_restaurants[s_business_type_id], errors='coerce').astype('Int64')
 
+    s_lon = sanitize_column_name('Geocode.Longitude')
+    if s_lon in df_new_restaurants.columns:
+        df_new_restaurants[s_lon] = pd.to_numeric(df_new_restaurants[s_lon], errors='coerce')
+
+    s_lat = sanitize_column_name('Geocode.Latitude')
+    if s_lat in df_new_restaurants.columns:
+        df_new_restaurants[s_lat] = pd.to_numeric(df_new_restaurants[s_lat], errors='coerce')
+
     # Reorder df_new_restaurants columns to match schema order and select only schema columns
     # This is important because append_to_bigquery itself will select based on schema, but good practice.
     # df_new_restaurants should now have sanitized column names
