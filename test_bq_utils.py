@@ -603,6 +603,65 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
         self.assertIn(sanitize_column_name('name'), called_df.columns)
         self.assertEqual(len(called_df.columns), 2)
 
+    @patch('bq_utils.st') # Mock streamlit for status messages
+    @patch('bq_utils.bigquery.Client')
+    def test_append_to_bigquery_fhrsid_is_string(self, mock_bq_client_constructor, mock_st):
+        """Test that fhrsid column is cast to string before BQ load."""
+        mock_bq_client_instance = mock_bq_client_constructor.return_value
+        mock_load_job = MagicMock()
+        mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
+        mock_load_job.result.return_value = None # Simulate successful job completion
+
+        # Sample DataFrame with fhrsid as integers
+        # Column names in sample_df should match what's expected AFTER sanitization
+        # if they were different initially. Here 'fhrsid' and 'another_col'
+        # are already sanitized forms.
+        sample_data = {
+            'fhrsid': [123, 456, 789],
+            'another_col': ['value1', 'value2', 'value3']
+        }
+        sample_df = pd.DataFrame(sample_data)
+
+        # Schema defines fhrsid as STRING
+        bq_schema = [
+            bigquery.SchemaField('fhrsid', 'STRING'),
+            bigquery.SchemaField('another_col', 'STRING')
+        ]
+
+        project_id = "test-project"
+        dataset_id = "test-dataset"
+        table_id = "test-table"
+
+        # Call the function under test
+        # append_to_bigquery expects df columns to match schema names
+        # and performs specific conversions internally.
+        result = append_to_bigquery(
+            df=sample_df.copy(), # Pass a copy
+            project_id=project_id,
+            dataset_id=dataset_id,
+            table_id=table_id,
+            bq_schema=bq_schema
+        )
+
+        self.assertTrue(result, "append_to_bigquery should return True on success")
+        mock_st.success.assert_called_once() # Ensure success message is called
+
+        # Verify that load_table_from_dataframe was called
+        mock_bq_client_instance.load_table_from_dataframe.assert_called_once()
+
+        # Get the DataFrame passed to load_table_from_dataframe
+        # It's the first positional argument of the first call
+        args, kwargs = mock_bq_client_instance.load_table_from_dataframe.call_args
+        loaded_df = args[0]
+
+        # Assert that 'fhrsid' column in the loaded_df is of string type
+        # Pandas often uses 'object' dtype for strings, or pd.StringDtype()
+        self.assertTrue(pd.api.types.is_string_dtype(loaded_df['fhrsid']),
+                        f"fhrsid column should be string type, but was {loaded_df['fhrsid'].dtype}")
+
+        # Also check the values to be sure (optional, but good for sanity)
+        self.assertEqual(loaded_df['fhrsid'].tolist(), ['123', '456', '789'])
+
 
 # If __name__ == '__main__':
 #     unittest.main() # This allows running file directly if not using pytest

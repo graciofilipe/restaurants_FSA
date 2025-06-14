@@ -161,6 +161,14 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
     
     # --- END MODIFICATIONS ---
 
+    # Explicitly cast fhrsid to string
+    sanitized_fhrsid_col = 'fhrsid' # Based on sanitize_column_name('fhrsid')
+    if sanitized_fhrsid_col in df_subset.columns:
+        df_subset[sanitized_fhrsid_col] = df_subset[sanitized_fhrsid_col].astype(str)
+    else:
+        # This case should ideally not happen if fhrsid is expected
+        print(f"Warning: Column '{sanitized_fhrsid_col}' not found in DataFrame for fhrsid string casting during write operation.")
+
     try:
         job = client.load_table_from_dataframe(df_subset, table_ref_str, job_config=job_config)
         job.result()
@@ -317,6 +325,13 @@ def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table
         # Convert to pandas Boolean type to handle NA properly if needed, though BQ might handle True/False/None directly
         df_subset[new_rating_pending_col] = df_subset[new_rating_pending_col].astype('boolean')
 
+    # Explicitly cast fhrsid to string
+    # Assuming 'fhrsid' is the sanitized column name, which it is based on sanitize_column_name logic
+    sanitized_fhrsid_col = 'fhrsid'
+    if sanitized_fhrsid_col in df_subset.columns:
+        df_subset[sanitized_fhrsid_col] = df_subset[sanitized_fhrsid_col].astype(str)
+    else:
+        print(f"Warning: Column '{sanitized_fhrsid_col}' not found in DataFrame for fhrsid string casting.")
 
     job_config = bigquery.LoadJobConfig(
         schema=bq_schema,
