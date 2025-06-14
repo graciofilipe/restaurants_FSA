@@ -1,5 +1,13 @@
 import streamlit as st
 import pandas as pd
+
+# Definition of columns to keep for processing new establishments
+ORIGINAL_COLUMNS_TO_KEEP = [
+    'FHRSID', 'BusinessName', 'AddressLine1', 'AddressLine2', 'AddressLine3',
+    'PostCode', 'LocalAuthorityName', 'RatingValue', 'NewRatingPending',
+    'first_seen', 'manual_review', 'gemini_insights'
+]
+
 from google.cloud import bigquery
 from typing import List, Dict, Any # Removed Optional, Added Dict, Any
 import re

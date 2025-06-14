@@ -2,6 +2,7 @@ import json
 import streamlit as st
 from datetime import datetime
 from typing import List, Dict, Any, Callable, Tuple, Optional
+from bq_utils import ORIGINAL_COLUMNS_TO_KEEP
 
 def load_json_from_local_file_path(uri: str) -> Optional[Dict[str, Any]]:
     """
@@ -107,7 +108,17 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
             if fhrsid_str not in existing_fhrsid_set:
                 api_establishment['first_seen'] = today_date
                 api_establishment['manual_review'] = "not reviewed"
-                newly_added_restaurants.append(api_establishment)
+
+                # ---- NEW FILTERING LOGIC ----
+                processed_establishment = {}
+                for key in ORIGINAL_COLUMNS_TO_KEEP:
+                    if key in api_establishment:
+                        processed_establishment[key] = api_establishment[key]
+                    else:
+                        processed_establishment[key] = None # Set to None if key is missing
+
+                newly_added_restaurants.append(processed_establishment)
+                # ---- END NEW FILTERING LOGIC ----
                 # Note: We do not add to existing_fhrsid_set here as master_data is not modified by this function.
                 # If multiple identical new FHRSIDs are in api_data, they will all be added. This is consistent with previous behavior of adding all to master.
     
