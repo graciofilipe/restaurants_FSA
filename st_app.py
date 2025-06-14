@@ -469,7 +469,6 @@ def _append_new_data_to_bigquery(new_restaurants: List[Dict[str, Any]], project_
 def handle_fetch_data_action(
     coordinate_pairs_str: str,
     max_results: int,
-    master_list_uri_str: str,
     bq_full_path_str: str
 ) -> List[Dict[str, Any]]:
     """
@@ -483,21 +482,19 @@ def handle_fetch_data_action(
         st.stop()
         return []
 
-    # Validate master_list_uri_str EARLY
-    if not master_list_uri_str:
-        st.error("Master Restaurant BigQuery Table identifier is missing.")
+    # Validate bq_full_path_str EARLY for master data loading
+    if not bq_full_path_str:
+        st.error("BigQuery Table Path (for master data and writing) is missing.")
         st.stop()
         return []
     try:
-        # These variables will be used by the later loading step.
-        # Using different names to avoid collision if original names are used in between.
-        project_id_master_val, dataset_id_master_val, table_id_master_val = master_list_uri_str.split('.')
+        project_id_master_val, dataset_id_master_val, table_id_master_val = bq_full_path_str.split('.')
         if not project_id_master_val or not dataset_id_master_val or not table_id_master_val:
-            st.error("Invalid Master Restaurant BigQuery Table format. Each part of 'project.dataset.table' must be non-empty.")
+            st.error("Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty.")
             st.stop()
             return []
     except ValueError:
-        st.error(f"Invalid Master Restaurant BigQuery Table format: '{master_list_uri_str}'. Expected 'project.dataset.table'.")
+        st.error(f"Invalid BigQuery Table Path format: '{bq_full_path_str}'. Expected 'project.dataset.table'.")
         st.stop()
         return []
 
@@ -514,8 +511,8 @@ def handle_fetch_data_action(
 
     # 3. Load master data
     master_restaurant_data = [] # Initialize as empty list
-    # Validation for master_list_uri_str and parsing of project_id_master_val, dataset_id_master_val, table_id_master_val
-    # has already been done before API calls. We use those validated variables here.
+    # Validation and parsing of project_id_master_val, dataset_id_master_val, table_id_master_val
+    # from bq_full_path_str has already been done before API calls.
 
     # 3a. Load master data using load_master_data and passing load_all_data_from_bq
     master_restaurant_data = load_master_data(
@@ -597,14 +594,12 @@ def main_ui():
         coordinate_pairs_input = st.text_area("Enter longitude,latitude pairs (one per line):")
         # These _ui variables are used to distinguish from the parameters of handle_fetch_data_action
         max_results_input_ui = st.number_input("Enter Max Results for API Call", min_value=1, max_value=5000, value=200)
-        master_list_uri_ui = st.text_input("Master Restaurant BigQuery Table (project.dataset.table)")
-        bq_full_path_ui = st.text_input("Enter BigQuery Table Path to write updated data (project.dataset.table)")
+        bq_full_path_ui = st.text_input("Enter BigQuery Table Path for master data and to write updated data (project.dataset.table)")
 
         if st.button("Fetch Data"):
             handle_fetch_data_action(
                 coordinate_pairs_str=coordinate_pairs_input,
                 max_results=max_results_input_ui,
-                master_list_uri_str=master_list_uri_ui,
                 bq_full_path_str=bq_full_path_ui
             )
     elif app_mode == "FHRSID Lookup":
