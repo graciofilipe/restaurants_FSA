@@ -106,7 +106,7 @@ def test_read_from_bigquery_success(mock_read_gbq):
     expected_df = pd.DataFrame({'fhrsid': [123], 'data': ['test data']})
     mock_read_gbq.return_value = expected_df
 
-    fhrsid_list = ['123', '456']
+    fhrsid_list = [123, 456] # Changed to list of integers
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
@@ -117,8 +117,8 @@ def test_read_from_bigquery_success(mock_read_gbq):
             'queryParameters': [
                 {
                     'name': 'fhrsid_list',
-                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'STRING'}},
-                    'parameterValue': {'arrayValues': [{'value': '123'}, {'value': '456'}]}
+                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'INT64'}}, # Changed to INT64
+                    'parameterValue': {'arrayValues': [{'value': 123}, {'value': 456}]} # Changed to integers
                 }
             ]
         }
@@ -138,7 +138,7 @@ def test_read_from_bigquery_empty_result(mock_read_gbq):
     """Test retrieval of an empty DataFrame when no data is found for non-empty input list."""
     mock_read_gbq.return_value = pd.DataFrame()
 
-    fhrsid_list = ['789']
+    fhrsid_list = [789] # Changed to list of integers
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
@@ -149,8 +149,8 @@ def test_read_from_bigquery_empty_result(mock_read_gbq):
             'queryParameters': [
                 {
                     'name': 'fhrsid_list',
-                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'STRING'}},
-                    'parameterValue': {'arrayValues': [{'value': '789'}]}
+                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'INT64'}}, # Changed to INT64
+                    'parameterValue': {'arrayValues': [{'value': 789}]} # Changed to integer
                 }
             ]
         }
@@ -181,8 +181,8 @@ def test_read_from_bigquery_empty_input_list(mock_read_gbq):
             'queryParameters': [
                 {
                     'name': 'fhrsid_list',
-                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'STRING'}},
-                    'parameterValue': {'arrayValues': []}
+                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'INT64'}}, # Changed to INT64
+                    'parameterValue': {'arrayValues': []} # Remains empty, type change is key
                 }
             ]
         }
@@ -202,7 +202,7 @@ def test_read_from_bigquery_raises_bigqueryexecutionerror_on_generic_exception(m
     """Test that BigQueryExecutionError is raised for generic exceptions from read_gbq."""
     mock_read_gbq.side_effect = Exception("Simulated generic error from read_gbq")
 
-    fhrsid_list = ['101']
+    fhrsid_list = [101] # Changed to list of integers
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
@@ -218,7 +218,7 @@ if GenericGBQException:
         """Test that BigQueryExecutionError is raised for pandas_gbq.gbq.GenericGBQException."""
         mock_read_gbq.side_effect = GenericGBQException("Simulated GenericGBQException")
 
-        fhrsid_list = ['102']
+        fhrsid_list = [102] # Changed to list of integers
         project_id = "test-project"
         dataset_id = "test-dataset"
         table_id = "test-table"
@@ -233,7 +233,7 @@ def test_read_from_bigquery_raises_bigqueryexecutionerror_on_googleclouderror(mo
     """Test that BigQueryExecutionError is raised for google.cloud.exceptions.GoogleCloudError."""
     mock_read_gbq.side_effect = exceptions.GoogleCloudError("Simulated GoogleCloudError")
 
-    fhrsid_list = ['103']
+    fhrsid_list = [103] # Changed to list of integers
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
@@ -254,7 +254,7 @@ def test_update_manual_review_batch_success(mock_bq_client_constructor, mock_st)
     mock_bq_client_instance.query.return_value = mock_query_job
     mock_query_job.result.return_value = None
 
-    fhrsid_list = ["101", "102", "103"]
+    fhrsid_list = [101, 102, 103] # Changed to list of integers
     manual_review_value = "BatchApproved"
     project_id = "batch-proj"
     dataset_id = "batch-dset"
@@ -278,9 +278,11 @@ def test_update_manual_review_batch_success(mock_bq_client_constructor, mock_st)
 
     expected_params = [
         bigquery.ScalarQueryParameter("manual_review_value", "STRING", manual_review_value),
-        bigquery.ArrayQueryParameter("fhrsid_list", "STRING", fhrsid_list),
+        bigquery.ArrayQueryParameter("fhrsid_list", "INT64", fhrsid_list), # Changed to INT64
     ]
 
+    # Ensure job_config.query_parameters is not None before checking its length
+    assert job_config.query_parameters is not None, "job_config.query_parameters should not be None"
     assert len(job_config.query_parameters) == len(expected_params)
 
     scalar_param_actual = next(p for p in job_config.query_parameters if p.name == "manual_review_value")
@@ -303,7 +305,8 @@ def test_update_manual_review_batch_success(mock_bq_client_constructor, mock_st)
 
 
     mock_query_job.result.assert_called_once()
-    mock_st.success.assert_called_once_with(f"Successfully updated manual_review for FHRSIDs: {', '.join(fhrsid_list)} to '{manual_review_value}'.")
+    fhrsid_list_str = [str(f_id) for f_id in fhrsid_list] # Convert to strings for join
+    mock_st.success.assert_called_once_with(f"Successfully updated manual_review for FHRSIDs: {', '.join(fhrsid_list_str)} to '{manual_review_value}'.")
     assert result is True
 
 @patch('bq_utils.st')
@@ -314,7 +317,7 @@ def test_update_manual_review_batch_bq_error(mock_bq_client_constructor, mock_st
     mock_bq_client_instance.query.return_value = mock_query_job
     mock_query_job.result.side_effect = exceptions.GoogleCloudError("Test BQ API Error on batch update")
 
-    fhrsid_list = ["201", "202"]
+    fhrsid_list = [201, 202] # Changed to list of integers
     manual_review_value = "BatchRejected"
     project_id = "batch-proj"
     dataset_id = "batch-dset"
@@ -330,8 +333,10 @@ def test_update_manual_review_batch_bq_error(mock_bq_client_constructor, mock_st
     mock_st.error.assert_called_once_with(ANY)
     actual_error_call_args = mock_st.error.call_args[0][0]
     # Check that the core parts of the message are present
-    assert f"Error updating manual_review for FHRSIDs: {', '.join(fhrsid_list)}:" in actual_error_call_args # Fixed: use standard assert
-    assert "Test BQ API Error on batch update" in actual_error_call_args # Fixed: use standard assert
+    # Convert integer list to string list for join in assertion
+    fhrsid_list_str = [str(f_id) for f_id in fhrsid_list]
+    assert f"Error updating manual_review for FHRSIDs: {', '.join(fhrsid_list_str)}:" in actual_error_call_args
+    assert "Test BQ API Error on batch update" in actual_error_call_args
     assert result is False
 
 @patch('bq_utils.st')
@@ -354,7 +359,7 @@ def test_update_manual_review_batch_empty_list(mock_bq_client_constructor, mock_
 
 @patch('bq_utils.st')
 @patch('bq_utils.bigquery.Client')
-def test_write_to_bigquery_newratingpending_conversion(mock_bq_client_constructor, mock_st):
+def test_write_to_bigquery_newratingpending_conversion_and_fhrsid_type(mock_bq_client_constructor, mock_st): # Renamed for clarity
     mock_bq_client_instance = mock_bq_client_constructor.return_value
     mock_load_job = MagicMock()
     mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
@@ -362,16 +367,20 @@ def test_write_to_bigquery_newratingpending_conversion(mock_bq_client_constructo
 
     original_col_name = 'NewRatingPending'
     sanitized_col_name = sanitize_column_name(original_col_name)
+    sanitized_fhrsid_col = sanitize_column_name('FHRSID')
 
     data = {
-        'FHRSID': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        'FHRSID': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], # FHRSID is int
         'BusinessName': ['Cafe A', 'Cafe B', 'Cafe C', 'Cafe D', 'Cafe E', 'Cafe F', 'Cafe G', 'Cafe H', 'Cafe I', 'Cafe J', 'Cafe K', 'Cafe L'],
         original_col_name: ["true", "False", "TRUE", "false", "TrUe", "FaLsE", "other", "", None, pd.NA, " existing_true ", " existing_false "]
     }
     df = pd.DataFrame(data)
+    # Ensure FHRSID column is integer type, if it got mixed up
+    df['FHRSID'] = df['FHRSID'].astype(int)
+
     columns_to_select = ['FHRSID', 'BusinessName', original_col_name]
     bq_schema = [
-        bigquery.SchemaField(sanitize_column_name('FHRSID'), 'INTEGER'),
+        bigquery.SchemaField(sanitized_fhrsid_col, 'INTEGER'), # Schema expects INTEGER for FHRSID
         bigquery.SchemaField(sanitize_column_name('BusinessName'), 'STRING'),
         bigquery.SchemaField(sanitized_col_name, 'BOOLEAN')
     ]
@@ -395,25 +404,30 @@ def test_write_to_bigquery_newratingpending_conversion(mock_bq_client_constructo
     assert loaded_df_call is not None, "load_table_from_dataframe was not called with any arguments"
     loaded_df = loaded_df_call[0][0]
 
-    expected_values = [
+    # Check FHRSID type
+    assert sanitized_fhrsid_col in loaded_df.columns, f"Column '{sanitized_fhrsid_col}' not found."
+    assert pd.api.types.is_integer_dtype(loaded_df[sanitized_fhrsid_col]), \
+        f"FHRSID column in loaded_df should be integer, got {loaded_df[sanitized_fhrsid_col].dtype}"
+
+    expected_newratingpending_values = [
         True, False, True, False, True, False,
         pd.NA, pd.NA, pd.NA, pd.NA, pd.NA, pd.NA
     ]
     assert sanitized_col_name in loaded_df.columns, f"Column '{sanitized_col_name}' not found in loaded DataFrame. Columns are: {loaded_df.columns}"
-    loaded_series = loaded_df[sanitized_col_name]
-    assert len(loaded_series) == len(expected_values), \
-        f"Length mismatch for column '{sanitized_col_name}': Expected {len(expected_values)}, got {len(loaded_series)}"
+    loaded_newratingpending_series = loaded_df[sanitized_col_name]
+    assert len(loaded_newratingpending_series) == len(expected_newratingpending_values), \
+        f"Length mismatch for column '{sanitized_col_name}': Expected {len(expected_newratingpending_values)}, got {len(loaded_newratingpending_series)}"
 
-    for i in range(len(expected_values)):
-        expected_val = expected_values[i]
-        actual_val = loaded_series.iloc[i]
+    for i in range(len(expected_newratingpending_values)):
+        expected_val = expected_newratingpending_values[i]
+        actual_val = loaded_newratingpending_series.iloc[i]
         if pd.isna(expected_val):
             assert pd.isna(actual_val), f"Value at index {i} for column '{sanitized_col_name}' should be pd.NA but was '{actual_val}' (type: {type(actual_val)})"
         else:
             assert actual_val == expected_val, f"Value at index {i} for column '{sanitized_col_name}' was '{actual_val}' (type: {type(actual_val)}), expected '{expected_val}'"
 
-    assert loaded_series.dtype == object or isinstance(loaded_series.dtype, pd.BooleanDtype), \
-        f"Expected dtype for '{sanitized_col_name}' to be 'object' or pandas BooleanDtype, but got {loaded_series.dtype}"
+    assert loaded_newratingpending_series.dtype == object or isinstance(loaded_newratingpending_series.dtype, pd.BooleanDtype), \
+        f"Expected dtype for '{sanitized_col_name}' to be 'object' or pandas BooleanDtype, but got {loaded_newratingpending_series.dtype}"
 
     job_config_passed = loaded_df_call[1]['job_config']
     assert job_config_passed.schema == bq_schema
@@ -605,26 +619,26 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
 
     @patch('bq_utils.st') # Mock streamlit for status messages
     @patch('bq_utils.bigquery.Client')
-    def test_append_to_bigquery_fhrsid_is_string(self, mock_bq_client_constructor, mock_st):
-        """Test that fhrsid column is cast to string before BQ load."""
+    def test_append_to_bigquery_fhrsid_is_integer(self, mock_bq_client_constructor, mock_st): # Renamed test
+        """Test that fhrsid column is handled as integer for BQ load when schema is INTEGER."""
         mock_bq_client_instance = mock_bq_client_constructor.return_value
         mock_load_job = MagicMock()
         mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
-        mock_load_job.result.return_value = None # Simulate successful job completion
+        mock_load_job.result.return_value = None
 
         # Sample DataFrame with fhrsid as integers
-        # Column names in sample_df should match what's expected AFTER sanitization
-        # if they were different initially. Here 'fhrsid' and 'another_col'
-        # are already sanitized forms.
         sample_data = {
-            'fhrsid': [123, 456, 789],
+            'fhrsid': [123, 456, 789], # Already integers
             'another_col': ['value1', 'value2', 'value3']
         }
         sample_df = pd.DataFrame(sample_data)
+        # Ensure fhrsid is int, in case DataFrame init does something unexpected
+        sample_df['fhrsid'] = sample_df['fhrsid'].astype(int)
 
-        # Schema defines fhrsid as STRING
+
+        # Schema now defines fhrsid as INTEGER
         bq_schema = [
-            bigquery.SchemaField('fhrsid', 'STRING'),
+            bigquery.SchemaField('fhrsid', 'INTEGER'), # Changed to INTEGER
             bigquery.SchemaField('another_col', 'STRING')
         ]
 
@@ -632,11 +646,8 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
         dataset_id = "test-dataset"
         table_id = "test-table"
 
-        # Call the function under test
-        # append_to_bigquery expects df columns to match schema names
-        # and performs specific conversions internally.
         result = append_to_bigquery(
-            df=sample_df.copy(), # Pass a copy
+            df=sample_df.copy(),
             project_id=project_id,
             dataset_id=dataset_id,
             table_id=table_id,
@@ -644,23 +655,18 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
         )
 
         self.assertTrue(result, "append_to_bigquery should return True on success")
-        mock_st.success.assert_called_once() # Ensure success message is called
+        mock_st.success.assert_called_once()
 
-        # Verify that load_table_from_dataframe was called
         mock_bq_client_instance.load_table_from_dataframe.assert_called_once()
-
-        # Get the DataFrame passed to load_table_from_dataframe
-        # It's the first positional argument of the first call
         args, kwargs = mock_bq_client_instance.load_table_from_dataframe.call_args
         loaded_df = args[0]
 
-        # Assert that 'fhrsid' column in the loaded_df is of string type
-        # Pandas often uses 'object' dtype for strings, or pd.StringDtype()
-        self.assertTrue(pd.api.types.is_string_dtype(loaded_df['fhrsid']),
-                        f"fhrsid column should be string type, but was {loaded_df['fhrsid'].dtype}")
+        # Assert that 'fhrsid' column in the loaded_df is of integer type
+        self.assertTrue(pd.api.types.is_integer_dtype(loaded_df['fhrsid']),
+                        f"fhrsid column should be integer type, but was {loaded_df['fhrsid'].dtype}")
 
-        # Also check the values to be sure (optional, but good for sanity)
-        self.assertEqual(loaded_df['fhrsid'].tolist(), ['123', '456', '789'])
+        # Also check the values
+        self.assertEqual(loaded_df['fhrsid'].tolist(), [123, 456, 789])
 
 
 # If __name__ == '__main__':

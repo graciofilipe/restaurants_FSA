@@ -93,11 +93,17 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
 
     for api_establishment in api_establishments:
         if isinstance(api_establishment, dict) and 'FHRSID' in api_establishment:
-            # Convert FHRSID to string
-            fhrsid_str = str(api_establishment['FHRSID'])
-            if fhrsid_str not in existing_fhrsid_set:
-                # Use the string version of FHRSID
-                api_establishment['FHRSID'] = fhrsid_str
+            # Ensure FHRSID is an integer for comparison and storage
+            fhrsid_int = api_establishment['FHRSID'] # Assuming FHRSID from API is already an int or convertible
+            if not isinstance(fhrsid_int, int):
+                try:
+                    fhrsid_int = int(fhrsid_int)
+                except (ValueError, TypeError):
+                    st.warning(f"Could not convert FHRSID '{fhrsid_int}' to int for establishment: {api_establishment.get('BusinessName', 'N/A')}. Skipping this record.")
+                    continue # Skip if FHRSID cannot be an integer
+
+            if fhrsid_int not in existing_fhrsid_set:
+                api_establishment['FHRSID'] = fhrsid_int # Ensure the integer version is stored
                 api_establishment['first_seen'] = today_date
                 api_establishment['manual_review'] = "not reviewed"
                 newly_added_restaurants.append(api_establishment)
