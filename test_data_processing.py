@@ -101,7 +101,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [{'FHRSID': "1", 'name': 'A'}]}}} # FHRSID is string
         new_restaurants = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 0)
-        mock_st.info.assert_called_once_with("Processed API response. No new restaurant records identified.")
+        mock_st.info.assert_called_once_with("Processed API response. No new restaurant records identified (or all were duplicates within the batch or already in BigQuery).")
 
     @patch('data_processing.datetime') # Mock datetime for predictable first_seen
     @patch('data_processing.st') # Mock streamlit
@@ -172,7 +172,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
             self.assertNotIn('BusinessType', r_new)
             self.assertNotIn('RatingDate', r_new) # Example of a field not kept
 
-        mock_st.success.assert_called_once_with("Processed API response. Identified 2 new restaurant records to be added.")
+        mock_st.success.assert_called_once_with("Processed API response. Identified 2 unique new restaurant records to be added.")
 
     @patch('data_processing.st')
     def test_empty_master_data_all_api_items_are_new(self, mock_st):
@@ -284,7 +284,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         new_restaurants = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 2)
-        mock_st.success.assert_called_once_with("Processed API response. Identified 2 new restaurant records to be added.")
+        mock_st.success.assert_called_once_with("Processed API response. Identified 2 unique new restaurant records to be added.")
 
         for r_new in new_restaurants:
             self.assertEqual(set(r_new.keys()), set(ORIGINAL_COLUMNS_TO_KEEP))
@@ -317,6 +317,65 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
                 # Optional fields from ORIGINAL_COLUMNS_TO_KEEP not in API mock for this item
                 self.assertIsNone(r_new.get('AddressLine2'))
                 self.assertIsNone(r_new.get('AddressLine3'))
+
+    @patch('data_processing.datetime') # Mock datetime for predictable first_seen
+    @patch('data_processing.st')      # Mock streamlit
+    def test_duplicate_fhrsid_in_api_data_is_added_once(self, mock_st, mock_datetime):
+        # Setup mock for datetime.now().strftime()
+        mock_datetime_str = "2023-10-28"
+        mock_datetime.now.return_value.strftime.return_value = mock_datetime_str
+
+        master_data = [{'FHRSID': "1", 'BusinessName': 'Old Restaurant'}] # One existing unrelated restaurant
+
+        # API data with duplicates and one unique new entry
+        # FHRSID "789" is new but appears twice in the API data batch
+        # FHRSID "101" is new and appears once
+        api_restaurant_duplicate_1 = {
+            'FHRSID': "789", 'BusinessName': 'Duplicate Cafe Batch 1',
+            'RatingValue': '5', 'AddressLine1': 'Addr D1', 'PostCode': 'PC D1',
+            'LocalAuthorityName': 'LA D1', 'NewRatingPending': 'false'
+        }
+        api_restaurant_duplicate_2 = { # Same FHRSID as above
+            'FHRSID': "789", 'BusinessName': 'Duplicate Cafe Batch 2', # Slightly different data for realism
+            'RatingValue': '5', 'AddressLine1': 'Addr D2', 'PostCode': 'PC D2',
+            'LocalAuthorityName': 'LA D2', 'NewRatingPending': 'false'
+        }
+        api_restaurant_unique_new = {
+            'FHRSID': "101", 'BusinessName': 'Unique New Place',
+            'RatingValue': '4', 'AddressLine1': 'Addr U1', 'PostCode': 'PC U1',
+            'LocalAuthorityName': 'LA U1', 'NewRatingPending': 'true'
+        }
+
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [
+            api_restaurant_duplicate_1,
+            api_restaurant_unique_new,
+            api_restaurant_duplicate_2 # Second occurrence of FHRSID "789"
+        ]}}}
+
+        new_restaurants = process_and_update_master_data(master_data, api_data)
+
+        self.assertEqual(len(new_restaurants), 2, "Should identify 2 unique new restaurants.")
+
+        # Extract FHRSIDs from the results for easier checking
+        result_fhrsids = {r['FHRSID'] for r in new_restaurants}
+        self.assertIn("789", result_fhrsids, "FHRSID 789 should be in the results.")
+        self.assertIn("101", result_fhrsids, "FHRSID 101 should be in the results.")
+
+        # Verify that the first occurrence's data for FHRSID "789" was kept
+        restaurant_789_data = next((r for r in new_restaurants if r['FHRSID'] == "789"), None)
+        self.assertIsNotNone(restaurant_789_data)
+        self.assertEqual(restaurant_789_data['BusinessName'], 'Duplicate Cafe Batch 1')
+        self.assertEqual(restaurant_789_data['AddressLine1'], 'Addr D1')
+        self.assertEqual(restaurant_789_data['first_seen'], mock_datetime_str)
+        self.assertEqual(restaurant_789_data['manual_review'], "not reviewed")
+
+        restaurant_101_data = next((r for r in new_restaurants if r['FHRSID'] == "101"), None)
+        self.assertIsNotNone(restaurant_101_data)
+        self.assertEqual(restaurant_101_data['BusinessName'], 'Unique New Place')
+        self.assertEqual(restaurant_101_data['first_seen'], mock_datetime_str)
+        self.assertEqual(restaurant_101_data['manual_review'], "not reviewed")
+
+        mock_st.success.assert_called_once_with("Processed API response. Identified 2 unique new restaurant records to be added.")
 
 
 if __name__ == '__main__':
