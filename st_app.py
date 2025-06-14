@@ -22,7 +22,6 @@ from bq_utils import (
     DataFrameConversionError # Added import
 )
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
-from gcs_utils import load_json_from_gcs, upload_to_gcs
 
 def display_data(data_to_display: List[Dict[str, Any]]):
     """
@@ -236,26 +235,6 @@ def _fetch_data_for_all_coordinates(valid_coords: List[tuple[float, float]], max
             
             all_api_establishments.extend(establishments_list)
     return all_api_establishments
-
-def _handle_gcs_uploads(api_data: Dict[str, Any], master_restaurant_data: List[Dict[str, Any]], gcs_destination_uri_str: str, gcs_master_output_uri_str: str):
-    """
-    Handles uploading API response and master restaurant data to GCS.
-    """
-    if gcs_destination_uri_str:
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        api_response_filename = f"combined_api_response_{current_date}.json"
-        gcs_destination_uri_folder = gcs_destination_uri_str
-        if not gcs_destination_uri_folder.endswith('/'):
-            gcs_destination_uri_folder += '/'
-        full_gcs_path_api_response = f"{gcs_destination_uri_folder}{api_response_filename}"
-        if upload_to_gcs(data=api_data, destination_uri=full_gcs_path_api_response):
-            st.success(f"Successfully uploaded combined raw API response to {full_gcs_path_api_response}")
-        # upload_to_gcs internally handles and logs errors if upload fails
-    
-    if gcs_master_output_uri_str:
-        if upload_to_gcs(data=master_restaurant_data, destination_uri=gcs_master_output_uri_str):
-            st.success(f"Successfully uploaded master restaurant data to {gcs_master_output_uri_str}")
-        # upload_to_gcs internally handles and logs errors if upload fails
 
 def _write_data_to_bigquery(master_restaurant_data: List[Dict[str, Any]], bq_full_path_str: str):
     """
@@ -471,9 +450,7 @@ def _append_new_data_to_bigquery(new_restaurants: List[Dict[str, Any]], project_
 def handle_fetch_data_action(
     coordinate_pairs_str: str,
     max_results: int,
-    gcs_destination_uri_str: str,
     master_list_uri_str: str,
-    gcs_master_output_uri_str: str,
     bq_full_path_str: str
 ) -> List[Dict[str, Any]]:
     """
@@ -558,7 +535,6 @@ def handle_fetch_data_action(
     # The master_restaurant_data here is the initial load from BQ.
     # If gcs_master_output_uri_str is meant to store the *appended* state, this needs adjustment.
     # For now, sticking to the instruction to leave as is.
-    _handle_gcs_uploads(combined_api_data, master_restaurant_data, gcs_destination_uri_str, gcs_master_output_uri_str)
 
     # 7. Display data
     # This displays the initial master_restaurant_data. If the display should reflect the appended data,
@@ -602,18 +578,14 @@ def main_ui():
         coordinate_pairs_input = st.text_area("Enter longitude,latitude pairs (one per line):")
         # These _ui variables are used to distinguish from the parameters of handle_fetch_data_action
         max_results_input_ui = st.number_input("Enter Max Results for API Call", min_value=1, max_value=5000, value=200)
-        gcs_destination_uri_ui = st.text_input("Enter GCS destination folder for the scan (e.g., gs://bucket-name/scans-folder/)")
         master_list_uri_ui = st.text_input("Master Restaurant BigQuery Table (project.dataset.table)")
-        gcs_master_dictionary_output_uri_ui = st.text_input("Enter GCS URI for Master Restaurant Data Output (e.g., gs://bucket-name/path/filename.json)")
         bq_full_path_ui = st.text_input("Enter BigQuery Table Path to write updated data (project.dataset.table)")
 
         if st.button("Fetch Data"):
             handle_fetch_data_action(
                 coordinate_pairs_str=coordinate_pairs_input,
                 max_results=max_results_input_ui,
-                gcs_destination_uri_str=gcs_destination_uri_ui,
                 master_list_uri_str=master_list_uri_ui,
-                gcs_master_output_uri_str=gcs_master_dictionary_output_uri_ui,
                 bq_full_path_str=bq_full_path_ui
             )
     elif app_mode == "FHRSID Lookup":
