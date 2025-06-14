@@ -17,6 +17,7 @@ from bq_utils import (
     read_from_bigquery,
     update_manual_review,
     load_all_data_from_bq, # Added import
+    append_to_bigquery, # Added for new flow
     BigQueryExecutionError,  # Added import
     DataFrameConversionError # Added import
 )
@@ -339,6 +340,125 @@ def _write_data_to_bigquery(master_restaurant_data: List[Dict[str, Any]], bq_ful
     except Exception as e:
         st.error(f"An unexpected error occurred during BigQuery operations setup or write: {e}")
 
+def _append_new_data_to_bigquery(new_restaurants: List[Dict[str, Any]], project_id: str, dataset_id: str, table_id: str):
+    """
+    Converts new restaurant data to a DataFrame, defines schema, sanitizes columns,
+    and appends to the specified BigQuery table.
+    """
+    if not new_restaurants:
+        st.info("No new restaurants found to add to BigQuery.")
+        return
+
+    st.info(f"Preparing {len(new_restaurants)} new records for BigQuery append...")
+    df_new_restaurants = pd.json_normalize(new_restaurants)
+
+    # Define comprehensive schema for append operation
+    # Ensures all expected columns from new_restaurants are included and correctly typed.
+    bq_schema_for_append = [
+        bigquery.SchemaField(sanitize_column_name('FHRSID'), 'INTEGER'), # FHRSID is typically integer
+        bigquery.SchemaField(sanitize_column_name('LocalAuthorityBusinessID'), 'STRING'),
+        bigquery.SchemaField(sanitize_column_name('BusinessName'), 'STRING'),
+        bigquery.SchemaField(sanitize_column_name('BusinessType'), 'STRING'),
+        bigquery.SchemaField(sanitize_column_name('BusinessTypeID'), 'INTEGER'),
+        bigquery.SchemaField(sanitize_column_name('AddressLine1'), 'STRING'),
+        bigquery.SchemaField(sanitize_column_name('AddressLine2'), 'STRING', mode='NULLABLE'),
+        bigquery.SchemaField(sanitize_column_name('AddressLine3'), 'STRING', mode='NULLABLE'),
+        bigquery.SchemaField(sanitize_column_name('AddressLine4'), 'STRING', mode='NULLABLE'),
+        bigquery.SchemaField(sanitize_column_name('PostCode'), 'STRING'),
+        bigquery.SchemaField(sanitize_column_name('RatingValue'), 'STRING'), # Can be "Pass", "Exempt", or number
+        bigquery.SchemaField(sanitize_column_name('RatingKey'), 'STRING'),
+        bigquery.SchemaField(sanitize_column_name('RatingDate'), 'TIMESTAMP'), # Or DATE if time component is not important
+        bigquery.SchemaField(sanitize_column_name('LocalAuthorityCode'), 'STRING'),
+        bigquery.SchemaField(sanitize_column_name('LocalAuthorityName'), 'STRING'),
+        bigquery.SchemaField(sanitize_column_name('LocalAuthorityWebSite'), 'STRING'),
+        bigquery.SchemaField(sanitize_column_name('LocalAuthorityEmailAddress'), 'STRING'),
+        bigquery.SchemaField(sanitize_column_name('Scores.Hygiene'), 'INTEGER', mode='NULLABLE'),
+        bigquery.SchemaField(sanitize_column_name('Scores.Structural'), 'INTEGER', mode='NULLABLE'),
+        bigquery.SchemaField(sanitize_column_name('Scores.ConfidenceInManagement'), 'INTEGER', mode='NULLABLE'),
+        bigquery.SchemaField(sanitize_column_name('SchemeType'), 'STRING'),
+        bigquery.SchemaField(sanitize_column_name('Geocode.Longitude'), 'FLOAT'), # Handled by append_to_bigquery
+        bigquery.SchemaField(sanitize_column_name('Geocode.Latitude'), 'FLOAT'),  # Handled by append_to_bigquery
+        bigquery.SchemaField(sanitize_column_name('NewRatingPending'), 'BOOLEAN'), # Handled by append_to_bigquery
+        bigquery.SchemaField(sanitize_column_name('first_seen'), 'DATE'),
+        bigquery.SchemaField(sanitize_column_name('manual_review'), 'STRING')
+    ]
+
+    # Sanitize DataFrame column names to match BQ schema conventions
+    # And ensure only columns defined in the schema are present, in the correct order.
+    sanitized_df_columns = {}
+    final_df_cols_for_bq = []
+    schema_field_names = [field.name for field in bq_schema_for_append]
+
+    for orig_col in df_new_restaurants.columns:
+        sanitized = sanitize_column_name(orig_col)
+        sanitized_df_columns[orig_col] = sanitized
+        if sanitized in schema_field_names:
+            final_df_cols_for_bq.append(sanitized)
+
+    df_new_restaurants.columns = df_new_restaurants.columns.map(sanitized_df_columns)
+
+    # Data type conversions for specific columns before sending to BQ
+    # append_to_bigquery handles Geocode and NewRatingPending
+
+    s_first_seen = sanitize_column_name('first_seen')
+    if s_first_seen in df_new_restaurants.columns:
+        df_new_restaurants[s_first_seen] = pd.to_datetime(df_new_restaurants[s_first_seen]).dt.date
+    else:
+        st.warning(f"Column '{s_first_seen}' (expected for first_seen date) not found in new restaurants DataFrame. It will be skipped for BQ append.")
+
+
+    s_rating_date = sanitize_column_name('RatingDate')
+    if s_rating_date in df_new_restaurants.columns:
+         df_new_restaurants[s_rating_date] = pd.to_datetime(df_new_restaurants[s_rating_date], errors='coerce')
+    else:
+        st.warning(f"Column '{s_rating_date}' (expected for RatingDate) not found. It will be skipped for BQ append.")
+
+
+    score_cols_original = ['Scores.Hygiene', 'Scores.Structural', 'Scores.ConfidenceInManagement']
+    for orig_col_name in score_cols_original:
+        s_col_name = sanitize_column_name(orig_col_name)
+        if s_col_name in df_new_restaurants.columns:
+            df_new_restaurants[s_col_name] = pd.to_numeric(df_new_restaurants[s_col_name], errors='coerce').astype('Int64') # Use Int64 for nullable integers
+        else:
+            # It's possible scores are not present for all records, so this might not be a warning if optional
+            print(f"Info: Score column '{s_col_name}' not found in new restaurants DataFrame. Will be skipped if not in schema or be Null.")
+
+    # Ensure FHRSID is integer
+    s_fhrsid = sanitize_column_name('FHRSID')
+    if s_fhrsid in df_new_restaurants.columns:
+        df_new_restaurants[s_fhrsid] = pd.to_numeric(df_new_restaurants[s_fhrsid], errors='coerce').astype('Int64')
+
+    s_business_type_id = sanitize_column_name('BusinessTypeID')
+    if s_business_type_id in df_new_restaurants.columns:
+        df_new_restaurants[s_business_type_id] = pd.to_numeric(df_new_restaurants[s_business_type_id], errors='coerce').astype('Int64')
+
+    # Reorder df_new_restaurants columns to match schema order and select only schema columns
+    # This is important because append_to_bigquery itself will select based on schema, but good practice.
+    # df_new_restaurants should now have sanitized column names
+    cols_to_keep = [field.name for field in bq_schema_for_append if field.name in df_new_restaurants.columns]
+    df_for_bq = df_new_restaurants[cols_to_keep]
+
+    # Filter schema to only include fields present in the DataFrame to avoid errors
+    # if some fields (e.g. a score field) were missing from all new_restaurants records
+    final_bq_schema = [field for field in bq_schema_for_append if field.name in df_for_bq.columns]
+
+    if df_for_bq.empty:
+        st.warning("After processing, the DataFrame for new restaurants is empty. Skipping BigQuery append.")
+        return
+
+    success = append_to_bigquery(
+        df=df_for_bq,
+        project_id=project_id,
+        dataset_id=dataset_id,
+        table_id=table_id,
+        bq_schema=final_bq_schema
+    )
+
+    if success:
+        st.success(f"Successfully appended {len(df_for_bq)} new records to BigQuery table {project_id}.{dataset_id}.{table_id}.")
+    else:
+        st.error(f"Failed to append new records to BigQuery table {project_id}.{dataset_id}.{table_id}.")
+
 
 def handle_fetch_data_action(
     coordinate_pairs_str: str,
@@ -393,35 +513,61 @@ def handle_fetch_data_action(
     # Validation for master_list_uri_str and parsing of project_id_master_val, dataset_id_master_val, table_id_master_val
     # has already been done before API calls. We use those validated variables here.
 
-    st.info(f"Loading master restaurant data from BigQuery table: {master_list_uri_str}")
-    # Use the validated project_id_master_val, dataset_id_master_val, table_id_master_val from the early validation
-    master_restaurant_data = load_all_data_from_bq(project_id_master_val, dataset_id_master_val, table_id_master_val)
-    # load_all_data_from_bq returns [] on error, and load_master_data (called below) handles empty list.
+    # 3a. Load master data using load_master_data and passing load_all_data_from_bq
+    master_restaurant_data = load_master_data(
+        project_id=project_id_master_val,
+        dataset_id=dataset_id_master_val,
+        table_id=table_id_master_val,
+        load_bq_func=load_all_data_from_bq # Pass the actual function
+    )
+    # load_master_data handles logging and returns [] on error or if empty.
 
-    # The original load_master_data function was designed to take a path and a load_function (for GCS/local).
-    # Since we're now directly getting the data from BQ, we can simplify.
-    # If load_all_data_from_bq returns an empty list (e.g. table not found, or error),
-    # process_and_update_master_data will treat it as starting with no master data, which is acceptable.
-    if not master_restaurant_data:
-        st.warning(f"No data loaded from BigQuery table {master_list_uri_str}, or table is empty. Proceeding as if with an empty master list.")
-        master_restaurant_data = [] # Ensure it's an empty list if nothing loaded
+    # 4. Process API data with master data to find new restaurants
+    # master_restaurant_data (from BQ) is used to check for existing FHRSIDs.
+    # new_restaurants will be a list of dicts for new items.
+    new_restaurants = process_and_update_master_data(master_restaurant_data, combined_api_data)
+    # process_and_update_master_data handles its own logging for new records identified.
 
-    # 4. Process API data with master data
-    # Pass the directly loaded (or empty) master_restaurant_data
-    master_restaurant_data, _ = process_and_update_master_data(master_restaurant_data, combined_api_data)
+    # 5. Append new restaurants to BigQuery
+    # The bq_full_path_str is for the same master table, which we are appending to.
+    if not bq_full_path_str:
+        st.warning("BigQuery Table Path for append is missing. Skipping BigQuery append for new records.")
+    else:
+        try:
+            project_id_append, dataset_id_append, table_id_append = bq_full_path_str.split('.')
+            if not all([project_id_append, dataset_id_append, table_id_append]):
+                st.error(f"Invalid BigQuery Table Path for append: '{bq_full_path_str}'. Each part must be non-empty.")
+            else:
+                # Call the new helper to handle the append logic
+                _append_new_data_to_bigquery(new_restaurants, project_id_append, dataset_id_append, table_id_append)
+        except ValueError:
+            st.error(f"Invalid BigQuery Table Path format for append: '{bq_full_path_str}'. Expected 'project.dataset.table'.")
+        except Exception as e: # Catch any other unexpected error during append setup
+            st.error(f"An unexpected error occurred before appending to BigQuery: {e}")
 
-    # 5. Handle GCS Uploads
+
+    # 6. Handle GCS Uploads
+    # The master_restaurant_data here is the initial load from BQ.
+    # If gcs_master_output_uri_str is meant to store the *appended* state, this needs adjustment.
+    # For now, sticking to the instruction to leave as is.
     _handle_gcs_uploads(combined_api_data, master_restaurant_data, gcs_destination_uri_str, gcs_master_output_uri_str)
 
-    # 6. Display data
+    # 7. Display data
+    # This displays the initial master_restaurant_data. If the display should reflect the appended data,
+    # it would need to either re-load from BQ or combine master_restaurant_data + new_restaurants (if df versions are compatible).
+    # For now, sticking to displaying initial load.
+    st.info("Displaying master data loaded from BigQuery (before current API fetch append). Refresh page or re-fetch to see appended data reflected in subsequent loads.")
     display_data(master_restaurant_data)
 
-    # 7. Write data to BigQuery (conditionally, based on api_data having results)
-    if all_api_establishments: # Check if any data was fetched to justify writing
-        _write_data_to_bigquery(master_restaurant_data, bq_full_path_str)
-    else:
-        st.info("No new API data was fetched, so skipping BigQuery write.") # Should be caught earlier, but as a safeguard
+    # If new_restaurants were found, also display them for clarity in this run
+    if new_restaurants:
+        st.subheader(f"Newly identified restaurants from this fetch ({len(new_restaurants)}):")
+        display_data(new_restaurants) # Use the same display_data function
 
+    # The function is expected to return List[Dict[str, Any]].
+    # Returning the initial master_data for now, as the old _write_data_to_bigquery
+    # was also based on the (then modified) master_data.
+    # If the expectation is to return the "complete" data after append, this would need adjustment.
     return master_restaurant_data
 
 def main_ui():

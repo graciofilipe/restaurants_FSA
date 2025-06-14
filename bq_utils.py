@@ -275,3 +275,62 @@ def update_manual_review(fhrsid_list: List[str], manual_review_value: str, proje
         # Also print to console for backend logging
         print(f"Error updating manual_review for FHRSIDs: {', '.join(fhrsid_list)}: {e}")
         return False
+
+def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str, bq_schema: List[bigquery.SchemaField]) -> bool:
+    """
+    Appends a Pandas DataFrame to an existing BigQuery table.
+
+    Args:
+        df: The DataFrame to append. Assumes column names are already sanitized.
+        project_id: The Google Cloud project ID.
+        dataset_id: The BigQuery dataset ID.
+        table_id: The BigQuery table ID.
+        bq_schema: A list of bigquery.SchemaField objects for the BigQuery table.
+
+    Returns:
+        True if the append operation was successful, False otherwise.
+    """
+    client = bigquery.Client(project=project_id)
+    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+
+    # Assume df columns are already sanitized as per requirements.
+    # Select only columns defined in bq_schema
+    schema_columns = [field.name for field in bq_schema]
+    df_subset = df[schema_columns].copy()
+
+    # Convert specific columns, assuming sanitized names
+    # Example sanitized names used here, adjust if actual sanitization differs
+    geocode_latitude_col = 'geocode_latitude' # Sanitized from 'Geocode.Latitude'
+    geocode_longitude_col = 'geocode_longitude' # Sanitized from 'Geocode.Longitude'
+    new_rating_pending_col = 'newratingpending' # Sanitized from 'NewRatingPending'
+
+    if geocode_latitude_col in df_subset.columns:
+        df_subset[geocode_latitude_col] = pd.to_numeric(df_subset[geocode_latitude_col], errors='coerce')
+    if geocode_longitude_col in df_subset.columns:
+        df_subset[geocode_longitude_col] = pd.to_numeric(df_subset[geocode_longitude_col], errors='coerce')
+
+    if new_rating_pending_col in df_subset.columns:
+        # Convert 'NewRatingPending' (sanitized version) to Boolean
+        mapping = {'true': True, 'false': False, 'TRUE': True, 'FALSE': False}
+        # Ensure column is string before .lower() or .map()
+        df_subset[new_rating_pending_col] = df_subset[new_rating_pending_col].astype(str).str.lower().map(mapping)
+        # Convert to pandas Boolean type to handle NA properly if needed, though BQ might handle True/False/None directly
+        df_subset[new_rating_pending_col] = df_subset[new_rating_pending_col].astype('boolean')
+
+
+    job_config = bigquery.LoadJobConfig(
+        schema=bq_schema,
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        column_name_character_map="V2", # As in write_to_bigquery
+    )
+
+    try:
+        job = client.load_table_from_dataframe(df_subset, table_ref_str, job_config=job_config)
+        job.result()  # Wait for the job to complete
+        st.success(f"Successfully appended data to BigQuery table {table_ref_str}.")
+        return True
+    except Exception as e:
+        st.error(f"Error appending data to BigQuery table {table_ref_str}: {e}")
+        # Also print to console for backend logging
+        print(f"Error appending data to BigQuery table {table_ref_str}: {e}")
+        return False
