@@ -91,12 +91,12 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
 
     existing_fhrsid_set = set()
     for est in master_data:
-        if isinstance(est, dict) and 'FHRSID' in est and est['FHRSID'] is not None:
+        if isinstance(est, dict) and 'fhrsid' in est and est['fhrsid'] is not None:
             try:
-                canonical_fhrsid = str(int(est['FHRSID']))
+                canonical_fhrsid = str(int(est['fhrsid']))
             except ValueError:
-                canonical_fhrsid = str(est['FHRSID'])
-                st.warning(f"FHRSID '{est['FHRSID']}' from master_data could not be converted to int. Using original string value for comparison.")
+                canonical_fhrsid = str(est['fhrsid'])
+                st.warning(f"FHRSID '{est['fhrsid']}' from master_data could not be converted to int. Using original string value for comparison.")
             existing_fhrsid_set.add(canonical_fhrsid)
 
     today_date = datetime.now().strftime("%Y-%m-%d")

@@ -459,6 +459,96 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         # Also check success message for the correct count
         mock_st.success.assert_called_once_with("Processed API response. Identified 3 unique new restaurant records to be added.")
 
+    @patch('data_processing.datetime')
+    @patch('data_processing.st')
+    def test_deduplication_with_corrected_fhrsid_key(self, mock_st, mock_datetime):
+        mock_date_str = "2024-01-01"
+        mock_datetime.now.return_value.strftime.return_value = mock_date_str
+
+        # Master data uses lowercase 'fhrsid'
+        master_data = [
+            {'fhrsid': "123", 'BusinessName': 'BQ Cafe Old'}, # Numeric FHRSID
+            {'fhrsid': "ABC", 'BusinessName': 'BQ NonNumeric Old'} # Non-numeric FHRSID
+            # Other ORIGINAL_COLUMNS_TO_KEEP fields are not strictly necessary for master_data
+            # in the context of FHRSID matching, as the function only uses 'fhrsid'.
+        ]
+
+        # API data uses 'FHRSID' and includes all ORIGINAL_COLUMNS_TO_KEEP for new items
+        api_establishments = [
+            # Matches master_data 'fhrsid': "123"
+            {'FHRSID': "123", 'BusinessName': 'API Cafe Update', 'RatingValue': '3', 'NewRatingPending': 'false',
+             'AddressLine1': 'Addr1', 'AddressLine2': None, 'AddressLine3': None, 'PostCode': 'PC1',
+             'LocalAuthorityName': 'LA1', 'gemini_insights': None},
+            # New numeric FHRSID
+            {'FHRSID': "789", 'BusinessName': 'API Cafe New Numeric', 'RatingValue': '5', 'NewRatingPending': 'false',
+             'AddressLine1': 'Addr2', 'AddressLine2': 'Suite B', 'AddressLine3': None, 'PostCode': 'PC2',
+             'LocalAuthorityName': 'LA2', 'gemini_insights': 'Good place'},
+            # Matches master_data 'fhrsid': "ABC"
+            {'FHRSID': "ABC", 'BusinessName': 'API NonNumeric Update', 'RatingValue': '2', 'NewRatingPending': 'true',
+             'AddressLine1': 'Addr3', 'AddressLine2': None, 'AddressLine3': 'Old Town', 'PostCode': 'PC3',
+             'LocalAuthorityName': 'LA3', 'gemini_insights': None},
+            # New non-numeric FHRSID
+            {'FHRSID': "XYZ", 'BusinessName': 'API Cafe New NonNumeric', 'RatingValue': '1', 'NewRatingPending': 'true',
+             'AddressLine1': 'Addr4', 'AddressLine2': None, 'AddressLine3': None, 'PostCode': 'PC4',
+             'LocalAuthorityName': 'LA4', 'gemini_insights': None}
+        ]
+        # Ensure all ORIGINAL_COLUMNS_TO_KEEP are present if not already defined for API items
+        for est_api in api_establishments:
+            for key in ORIGINAL_COLUMNS_TO_KEEP:
+                if key not in est_api: # Set missing keys to None for realistic processing by the function
+                    est_api[key] = None
+            # Ensure FHRSID is present as it's the primary key for matching
+            if 'FHRSID' not in est_api: # Should not happen with above data, but good check
+                est_api['FHRSID'] = None
+
+
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': api_establishments}}}
+
+        new_restaurants = process_and_update_master_data(master_data, api_data)
+
+        self.assertEqual(len(new_restaurants), 2, "Should identify 2 new unique restaurants.")
+
+        added_fhrsids = sorted([r['FHRSID'] for r in new_restaurants])
+        expected_fhrsids = sorted(["789", "XYZ"])
+        self.assertEqual(added_fhrsids, expected_fhrsids)
+
+        expected_new_numeric = {col: None for col in ORIGINAL_COLUMNS_TO_KEEP}
+        expected_new_numeric.update({
+            'FHRSID': "789", 'BusinessName': 'API Cafe New Numeric', 'RatingValue': '5',
+            'NewRatingPending': 'false', 'first_seen': mock_date_str, 'manual_review': "not reviewed",
+            'AddressLine1': 'Addr2', 'AddressLine2': 'Suite B', 'PostCode': 'PC2',
+            'LocalAuthorityName': 'LA2', 'gemini_insights': 'Good place'
+        })
+
+        expected_new_non_numeric = {col: None for col in ORIGINAL_COLUMNS_TO_KEEP}
+        expected_new_non_numeric.update({
+            'FHRSID': "XYZ", 'BusinessName': 'API Cafe New NonNumeric', 'RatingValue': '1',
+            'NewRatingPending': 'true', 'first_seen': mock_date_str, 'manual_review': "not reviewed",
+            'AddressLine1': 'Addr4', 'PostCode': 'PC4', 'LocalAuthorityName': 'LA4'
+        })
+
+        # Check details of the new restaurants
+        for r_new in new_restaurants:
+            if r_new['FHRSID'] == "789":
+                self.assertEqual(r_new, expected_new_numeric)
+            elif r_new['FHRSID'] == "XYZ":
+                self.assertEqual(r_new, expected_new_non_numeric)
+
+        # Assert st.warning calls
+        # 1. Master: "ABC" (int(est['fhrsid']) fails)
+        # 2. API: "ABC" (int(original_api_fhrsid) fails for its canonicalization)
+        # 3. API: "XYZ" (int(original_api_fhrsid) fails for its canonicalization)
+        expected_warning_calls = [
+            unittest.mock.call("FHRSID 'ABC' from master_data could not be converted to int. Using original string value for comparison."),
+            unittest.mock.call("FHRSID 'ABC' from API data could not be converted to int. Using original string value."),
+            unittest.mock.call("FHRSID 'XYZ' from API data could not be converted to int. Using original string value.")
+        ]
+        # Use assert_has_calls which allows for other calls in between, or check call_count and specific calls
+        mock_st.warning.assert_has_calls(expected_warning_calls, any_order=False) # Order should be preserved here
+        self.assertEqual(mock_st.warning.call_count, 3, "Expected 3 warning calls for non-numeric FHRSIDs.")
+
+        mock_st.success.assert_called_once_with("Processed API response. Identified 2 unique new restaurant records to be added.")
+
 
 if __name__ == '__main__':
     unittest.main()
