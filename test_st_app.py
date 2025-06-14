@@ -1,12 +1,13 @@
 import unittest
 import re
-from unittest.mock import patch, MagicMock, PropertyMock, call
+from unittest.mock import patch, MagicMock, PropertyMock, call, ANY
 import pandas as pd
 import streamlit as st # We will mock this heavily
+from datetime import datetime # Import for mocking datetime.now()
 
 # Import functions from st_app.py
 # Assuming st_app.py is in the same directory or accessible via PYTHONPATH
-from st_app import fhrsid_lookup_logic, main_ui, handle_fetch_data_action
+from st_app import fhrsid_lookup_logic, main_ui, handle_fetch_data_action, _handle_gcs_uploads
 # We also need to patch functions imported by st_app, like read_from_bigquery and update_manual_review
 # Also, BigQueryExecutionError may be raised by read_from_bigquery
 from bq_utils import BigQueryExecutionError
@@ -34,7 +35,7 @@ class MockSessionState(dict): # Inherit from dict for easier state management
         # Default behavior for common Streamlit session_state attributes if not set
         if key == 'fhrsid_df': return pd.DataFrame()
         if key == 'successful_fhrsids': return []
-        # Fallback to raising AttributeError if key genuinely doesn't exist and has no default
+        # Fallback to raising AttributeError if key genuinely doesn't exist and has no default defined
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}' and no default defined")
 
     def __setattr__(self, key, value):
@@ -308,124 +309,122 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
 
         self._run_test_with_patches(logic, mock_st_config)
 
-if __name__ == '__main__':
-    unittest.main(argv=['first-arg-is-ignored'], exit=False)
 
-
-@patch('st_app.st', autospec=True)
+@patch('st_app.st', autospec=True) # Applied at class level
 class TestHandleFetchDataAction(unittest.TestCase):
 
-    def common_mocks(self, mock_st_global):
+    def common_mocks(self, mock_st_global_for_test_method): # Parameter name changed for clarity
         """Helper to create a dictionary of common mocks for patch.multiple."""
-        # Reset mocks for each test case if they are attributes of the test class
-        self.mock_load_all_data_from_bq = MagicMock()
-        self.mock_fetch_api_data = MagicMock()
-        self.mock_upload_to_gcs = MagicMock()
-        self.mock_write_to_bigquery_helper = MagicMock() # For _write_data_to_bigquery
-        self.mock_display_data = MagicMock()
-        # process_and_update_master_data will be imported and run directly.
-        # load_master_data is effectively replaced by load_all_data_from_bq for BQ path
+        # Mocks are now instance variables, reset them in setUp or ensure they're fresh.
+        # For this structure, it's better to create them fresh each time common_mocks is called.
+        mock_load_all_data_from_bq = MagicMock()
+        mock_fetch_api_data = MagicMock()
+        mock_upload_to_gcs = MagicMock()
+        mock_write_to_bigquery_helper = MagicMock()
+        mock_display_data = MagicMock()
 
         return {
-            'load_all_data_from_bq': self.mock_load_all_data_from_bq,
-            'fetch_api_data': self.mock_fetch_api_data,
-            'upload_to_gcs': self.mock_upload_to_gcs,
-            '_write_data_to_bigquery': self.mock_write_to_bigquery_helper,
-            'display_data': self.mock_display_data,
-            # 'process_and_update_master_data': self.mock_process_and_update_master_data # Not mocking this
+            'load_all_data_from_bq': mock_load_all_data_from_bq,
+            'fetch_api_data': mock_fetch_api_data,
+            'upload_to_gcs': mock_upload_to_gcs,
+            '_write_data_to_bigquery': mock_write_to_bigquery_helper,
+            'display_data': mock_display_data,
         }
 
+    # Test methods receive mock_st_global from the class-level patch
     def test_successful_flow_with_data(self, mock_st_global):
         """Test a successful run with initial data, API data, GCS and BQ writes."""
-        with patch.multiple('st_app', **self.common_mocks(mock_st_global)):
-            # Configure mock return values
+        # Use a fresh set of mocks for this specific test method
+        current_test_mocks = self.common_mocks(mock_st_global)
+        # Apply patches using with patch.multiple, targeting 'st_app'
+        with patch.multiple('st_app', **current_test_mocks):
             initial_master_data = [{'FHRSID': 1, 'BusinessName': 'Old Cafe'}]
             api_establishments = [{'FHRSID': 2, 'BusinessName': 'New Cafe', 'Geocode.Longitude': '1.0', 'Geocode.Latitude': '1.0'}]
 
-            self.mock_load_all_data_from_bq.return_value = initial_master_data
-            self.mock_fetch_api_data.return_value = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': api_establishments}}}
-            self.mock_upload_to_gcs.return_value = True # Simulate successful upload
+            current_test_mocks['load_all_data_from_bq'].return_value = initial_master_data
+            current_test_mocks['fetch_api_data'].return_value = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': api_establishments}}}
+            current_test_mocks['upload_to_gcs'].return_value = True
 
+            # Call the function under test
             result = handle_fetch_data_action(
-                coordinate_pairs_str="1.0,1.0", # Valid coordinates for _parse_coordinates
+                coordinate_pairs_str="1.0,1.0",
                 max_results=100,
                 gcs_destination_uri_str="gs://bucket/api_raw/",
                 master_list_uri_str="proj.dset.master_table",
-                gcs_master_output_uri_str="gs://bucket/master_out.json",
+                # gcs_master_output_uri_str was removed
                 bq_full_path_str="out_proj.out_dset.out_table"
             )
 
-            self.mock_load_all_data_from_bq.assert_called_once_with("proj", "dset", "master_table")
-            self.mock_fetch_api_data.assert_called_once() # Called once for the valid coordinate pair
+            current_test_mocks['load_all_data_from_bq'].assert_called_once_with("proj", "dset", "master_table")
+            current_test_mocks['fetch_api_data'].assert_called_once()
 
-            # Check GCS uploads
-            self.assertEqual(self.mock_upload_to_gcs.call_count, 2)
-            self.mock_upload_to_gcs.assert_any_call(data=unittest.mock.ANY, destination_uri=unittest.mock.ANY) # Check API raw upload
-            self.mock_upload_to_gcs.assert_any_call(data=unittest.mock.ANY, destination_uri="gs://bucket/master_out.json") # Check master data upload
+            # GCS upload for API data only (since master data upload was removed)
+            # Expected one call to upload_to_gcs (for API data)
+            self.assertEqual(current_test_mocks['upload_to_gcs'].call_count, 1)
+            # Check the arguments of the call to upload_to_gcs
+            args_call, kwargs_call = current_test_mocks['upload_to_gcs'].call_args_list[0]
+            self.assertTrue(kwargs_call['destination_uri'].startswith("gs://bucket/api_raw/combined_api_response_"))
 
-            self.mock_display_data.assert_called_once()
-            self.mock_write_to_bigquery_helper.assert_called_once()
 
-            # Verify data passed to _write_data_to_bigquery (simplified check)
-            args, _ = self.mock_write_to_bigquery_helper.call_args
+            current_test_mocks['display_data'].assert_called_once()
+            current_test_mocks['_write_data_to_bigquery'].assert_called_once() # Changed from mock_write_to_bigquery_helper
+
+            args, _ = current_test_mocks['_write_data_to_bigquery'].call_args # Changed from mock_write_to_bigquery_helper
             written_data = args[0]
-            self.assertEqual(len(written_data), 2) # Old Cafe + New Cafe
+            self.assertEqual(len(written_data), 2)
             self.assertTrue(any(d['BusinessName'] == 'New Cafe' for d in written_data))
 
             mock_st_global.success.assert_any_call("Total establishments fetched from all API calls: 1")
-            # Check for the specific success message with regex
             expected_pattern = re.compile(r"Successfully uploaded combined raw API response to gs://bucket/api_raw/combined_api_response_.*\.json")
-            found_gcs_api_success_message = False
-            for call_args in mock_st_global.success.call_args_list:
-                args, _ = call_args
-                if args and isinstance(args[0], str) and expected_pattern.match(args[0]):
-                    found_gcs_api_success_message = True
-                    break
-            self.assertTrue(found_gcs_api_success_message, "Expected st.success call with GCS API response upload message was not found.")
-            mock_st_global.success.assert_any_call("Successfully uploaded master restaurant data to gs://bucket/master_out.json")
-
+            found_gcs_api_success_message = any(
+                call_args_tuple and isinstance(call_args_tuple[0][0], str) and expected_pattern.match(call_args_tuple[0][0])
+                for call_args_tuple in mock_st_global.success.call_args_list
+            )
+            self.assertTrue(found_gcs_api_success_message)
+            # No longer expect success message for master data GCS upload
             self.assertEqual(len(result), 2)
 
 
     def test_load_all_data_from_bq_returns_empty(self, mock_st_global):
-        """Test flow when master BQ table is empty or load_all_data_from_bq returns empty list."""
-        with patch.multiple('st_app', **self.common_mocks(mock_st_global)):
-            self.mock_load_all_data_from_bq.return_value = [] # Simulate empty master list from BQ
+        current_test_mocks = self.common_mocks(mock_st_global)
+        with patch.multiple('st_app', **current_test_mocks):
+            current_test_mocks['load_all_data_from_bq'].return_value = []
             api_establishments = [{'FHRSID': 1, 'BusinessName': 'First Cafe', 'Geocode.Longitude': '1.0', 'Geocode.Latitude': '1.0'}]
-            self.mock_fetch_api_data.return_value = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': api_establishments}}}
+            current_test_mocks['fetch_api_data'].return_value = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': api_establishments}}}
 
             result = handle_fetch_data_action(
                 coordinate_pairs_str="1.0,1.0",
                 max_results=100,
                 master_list_uri_str="proj.dset.empty_table",
-                gcs_destination_uri_str="",
-                gcs_master_output_uri_str="",
+                gcs_destination_uri_str="", # No GCS API upload
+                # gcs_master_output_uri_str was removed
                 bq_full_path_str="out_proj.out_dset.out_table"
             )
 
-            self.mock_load_all_data_from_bq.assert_called_once_with("proj", "dset", "empty_table")
+            current_test_mocks['load_all_data_from_bq'].assert_called_once_with("proj", "dset", "empty_table")
             mock_st_global.warning.assert_any_call("No data loaded from BigQuery table proj.dset.empty_table, or table is empty. Proceeding as if with an empty master list.")
-
-            self.mock_fetch_api_data.assert_called_once()
-            self.mock_write_to_bigquery_helper.assert_called_once()
-            args, _ = self.mock_write_to_bigquery_helper.call_args
+            current_test_mocks['fetch_api_data'].assert_called_once()
+            current_test_mocks['_write_data_to_bigquery'].assert_called_once() # Changed
+            args, _ = current_test_mocks['_write_data_to_bigquery'].call_args # Changed
             written_data = args[0]
-            self.assertEqual(len(written_data), 1) # Only the new cafe
+            self.assertEqual(len(written_data), 1)
             self.assertEqual(written_data[0]['BusinessName'], 'First Cafe')
             self.assertEqual(len(result), 1)
+            current_test_mocks['upload_to_gcs'].assert_not_called() # No GCS URI provided
 
     def test_invalid_master_bq_identifier_format(self, mock_st_global):
-        """Test error handling for invalid master_list_uri_str format."""
-        with patch.multiple('st_app', **self.common_mocks(mock_st_global)):
-            invalid_uris = ["proj.dset", "invalid", "", "proj..table", ".dset.table"]
-            for invalid_uri in invalid_uris:
-                # Reset mocks for st.stop() and st.error() for each iteration
-                mock_st_global.reset_mock() # Resets all sub-mocks of mock_st_global like .error, .stop
+        invalid_uris = ["proj.dset", "invalid", "", "proj..table", ".dset.table"]
+        for invalid_uri in invalid_uris:
+            # Need to re-apply mocks for each iteration because st.stop might be tricky
+            current_test_mocks = self.common_mocks(mock_st_global)
+            with patch.multiple('st_app', **current_test_mocks):
+                mock_st_global.reset_mock()
 
                 handle_fetch_data_action(
                     coordinate_pairs_str="0,0", max_results=100,
                     master_list_uri_str=invalid_uri,
-                    gcs_destination_uri_str="", gcs_master_output_uri_str="",
+                    gcs_destination_uri_str="",
+                    # gcs_master_output_uri_str was removed
                     bq_full_path_str="out.proj.table"
                 )
 
@@ -433,45 +432,96 @@ class TestHandleFetchDataAction(unittest.TestCase):
                     mock_st_global.error.assert_any_call("Master Restaurant BigQuery Table identifier is missing.")
                 elif len(invalid_uri.split('.')) != 3 or not all(p for p in invalid_uri.split('.')):
                     expected_pattern = re.compile(r"Invalid Master Restaurant BigQuery Table format")
-                    found_error_message = False
-                    for call_args in mock_st_global.error.call_args_list:
-                        args, _ = call_args
-                        if args and isinstance(args[0], str) and expected_pattern.search(args[0]): # Using search to find the substring
-                            found_error_message = True
-                            break
-                    self.assertTrue(found_error_message, "Expected st.error call with invalid BQ table format message was not found.")
+                    found_error_message = any(
+                        args and isinstance(args[0], str) and expected_pattern.search(args[0])
+                        for args, _ in mock_st_global.error.call_args_list
+                    )
+                    self.assertTrue(found_error_message)
 
                 mock_st_global.stop.assert_called()
-                self.mock_fetch_api_data.assert_not_called() # Should stop before API call
-                self.mock_load_all_data_from_bq.assert_not_called() # Should stop before BQ load call
-                # Reset mocks for next iteration if they were part of self.common_mocks setup
-                self.mock_fetch_api_data.reset_mock()
-                self.mock_load_all_data_from_bq.reset_mock()
+                current_test_mocks['fetch_api_data'].assert_not_called()
+                current_test_mocks['load_all_data_from_bq'].assert_not_called()
 
 
     def test_api_fetches_no_new_establishments(self, mock_st_global):
-        """Test handling when API returns no new establishments."""
-        with patch.multiple('st_app', **self.common_mocks(mock_st_global)):
+        current_test_mocks = self.common_mocks(mock_st_global)
+        with patch.multiple('st_app', **current_test_mocks):
             initial_master_data = [{'FHRSID': 1, 'BusinessName': 'Existing Cafe', 'first_seen': '2023-01-01'}]
-            self.mock_load_all_data_from_bq.return_value = initial_master_data
-            self.mock_fetch_api_data.return_value = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': []}}} # No new data
+            current_test_mocks['load_all_data_from_bq'].return_value = initial_master_data
+            current_test_mocks['fetch_api_data'].return_value = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': []}}}
 
-            result = handle_fetch_data_action(
+            handle_fetch_data_action(
                 coordinate_pairs_str="0,0", max_results=100,
                 master_list_uri_str="proj.dset.master_table",
-                gcs_destination_uri_str="", gcs_master_output_uri_str="",
+                gcs_destination_uri_str="",
+                # gcs_master_output_uri_str was removed
                 bq_full_path_str="out_proj.out_dset.out_table"
             )
 
-            self.mock_load_all_data_from_bq.assert_called_once()
-            self.mock_fetch_api_data.assert_called_once()
+            current_test_mocks['load_all_data_from_bq'].assert_called_once()
+            current_test_mocks['fetch_api_data'].assert_called_once()
             mock_st_global.info.assert_any_call("No establishments found from any of the API calls. Nothing to process further.")
-            mock_st_global.stop.assert_called() # Expect st.stop if no API data
+            mock_st_global.stop.assert_called()
+            current_test_mocks['_write_data_to_bigquery'].assert_not_called() # Changed
 
-            # Because of st.stop(), these should not be called if no API data
-            self.mock_write_to_bigquery_helper.assert_not_called()
-            # result should be the return from st.stop() or whatever the state is before it.
-            # Given st.stop() is called, the return value of handle_fetch_data_action itself is not standard.
-            # The primary check is that processing stops.
-            # Depending on st.stop() implementation in tests, result might be None or a special mock object.
-            # For this test, let's assume st.stop effectively halts execution, so no further assertions on 'result' length.
+
+class TestHandleGCSUploads(unittest.TestCase):
+    @patch('st_app.datetime')
+    @patch('st_app.upload_to_gcs')
+    @patch('st_app.st') # Mock streamlit functions like st.success, st.error
+    def test_handle_gcs_uploads_master_data_not_uploaded(self, mock_st, mock_upload_to_gcs, mock_datetime):
+        # Arrange
+        # Configure the mock for datetime.now()
+        mock_now = MagicMock()
+        mock_datetime.now.return_value = mock_now
+        mock_now.strftime.return_value = "2023-10-26" # Example fixed date
+
+        mock_upload_to_gcs.return_value = True # Simulate successful upload
+
+        api_data_arg = {"key": "api_data_value"}
+        master_data_arg = [{"master_key": "master_value"}]
+        gcs_api_destination_uri_folder = "gs://test-bucket/api_responses/"
+
+        # Expected path for API data (filename includes the mocked date)
+        expected_api_filename = "combined_api_response_2023-10-26.json"
+        expected_full_gcs_path_api_response = f"{gcs_api_destination_uri_folder}{expected_api_filename}"
+
+        # Act
+        _handle_gcs_uploads(
+            api_data=api_data_arg,
+            master_restaurant_data=master_data_arg,
+            gcs_destination_uri_str=gcs_api_destination_uri_folder
+        )
+
+        # Assert
+        # Check that upload_to_gcs was called once for the API data.
+        self.assertEqual(mock_upload_to_gcs.call_count, 1)
+
+        # Get the arguments of the call
+        # call_args is a tuple (args, kwargs), we are interested in kwargs
+        _, called_kwargs = mock_upload_to_gcs.call_args_list[0]
+
+        self.assertEqual(called_kwargs['data'], api_data_arg)
+        self.assertEqual(called_kwargs['destination_uri'], expected_full_gcs_path_api_response)
+
+        # Check that st.success was called with the correct message for API data
+        mock_st.success.assert_called_once_with(f"Successfully uploaded combined raw API response to {expected_full_gcs_path_api_response}")
+
+        # Crucially, verify no other calls were made to upload_to_gcs.
+        # This is implicitly covered by call_count == 1.
+
+        # Test case where gcs_destination_uri_str is empty (no API upload)
+        mock_upload_to_gcs.reset_mock()
+        mock_st.reset_mock() # Reset st mock as well
+
+        _handle_gcs_uploads(
+            api_data=api_data_arg,
+            master_restaurant_data=master_data_arg,
+            gcs_destination_uri_str="" # Empty URI for API data
+        )
+        mock_upload_to_gcs.assert_not_called()
+        mock_st.success.assert_not_called() # No success message if no upload attempted
+
+
+if __name__ == '__main__':
+    unittest.main(argv=['first-arg-is-ignored'], exit=False)
