@@ -346,7 +346,7 @@ def _append_new_data_to_bigquery(new_restaurants: List[Dict[str, Any]], project_
         bigquery.SchemaField(sanitize_column_name('PostCode'), 'STRING'),
         bigquery.SchemaField(sanitize_column_name('RatingValue'), 'STRING'), # Can be "Pass", "Exempt", or number
         bigquery.SchemaField(sanitize_column_name('RatingKey'), 'STRING'),
-        bigquery.SchemaField(sanitize_column_name('RatingDate'), 'TIMESTAMP'), # Or DATE if time component is not important
+        bigquery.SchemaField(sanitize_column_name('RatingDate'), 'STRING'), # Or DATE if time component is not important
         bigquery.SchemaField(sanitize_column_name('LocalAuthorityCode'), 'STRING'),
         bigquery.SchemaField(sanitize_column_name('LocalAuthorityName'), 'STRING'),
         bigquery.SchemaField(sanitize_column_name('LocalAuthorityWebSite'), 'STRING'),
@@ -388,7 +388,25 @@ def _append_new_data_to_bigquery(new_restaurants: List[Dict[str, Any]], project_
 
     s_rating_date = sanitize_column_name('RatingDate')
     if s_rating_date in df_new_restaurants.columns:
-         df_new_restaurants[s_rating_date] = pd.to_datetime(df_new_restaurants[s_rating_date], errors='coerce')
+        # Ensure the column is treated as string.
+        # If it was parsed as datetime, convert to ISO string.
+        # If it's already string, this should be mostly idempotent.
+        # If it's None/NaT, it should become None.
+        def stringify_date(x):
+            if pd.isna(x):
+                return None
+            if isinstance(x, str):
+                return x
+            try:
+                # Attempt to format if it's a datetime-like object
+                return pd.Timestamp(x).strftime('%Y-%m-%d')
+            except ValueError:
+                # If conversion to Timestamp fails, just convert to string
+                return str(x)
+
+        df_new_restaurants[s_rating_date] = df_new_restaurants[s_rating_date].apply(stringify_date)
+        # Ensure the final dtype is object (which Pandas uses for strings) to be safe.
+        df_new_restaurants[s_rating_date] = df_new_restaurants[s_rating_date].astype('object')
     else:
         st.warning(f"Column '{s_rating_date}' (expected for RatingDate) not found. It will be skipped for BQ append.")
 
