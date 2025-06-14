@@ -47,8 +47,8 @@ class TestLoadMasterData(unittest.TestCase):
     def test_load_master_data_success_and_manual_review_init(self, mock_st):
         # Mock for the load_bq_func argument
         mock_bq_loader = MagicMock(return_value=[
-            {'FHRSID': 1, 'name': 'Restaurant A'},
-            {'FHRSID': 2, 'name': 'Restaurant B', 'manual_review': 'already_reviewed'}
+            {'FHRSID': "1", 'name': 'Restaurant A'}, # FHRSID is string
+            {'FHRSID': "2", 'name': 'Restaurant B', 'manual_review': 'already_reviewed'} # FHRSID is string
         ])
 
         project_id = "test_p"
@@ -96,8 +96,8 @@ class TestLoadMasterData(unittest.TestCase):
 class TestProcessAndUpdateMasterData(unittest.TestCase):
     @patch('data_processing.st') # Mock streamlit
     def test_no_new_restaurants(self, mock_st):
-        master_data = [{'FHRSID': 1, 'name': 'A'}]
-        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [{'FHRSID': 1, 'name': 'A'}]}}}
+        master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [{'FHRSID': "1", 'name': 'A'}]}}} # FHRSID is string
         new_restaurants = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 0)
         mock_st.info.assert_called_once_with("Processed API response. No new restaurant records identified.")
@@ -108,11 +108,11 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         # Setup mock for datetime.now().strftime()
         mock_datetime.now.return_value.strftime.return_value = "2023-10-26"
 
-        master_data = [{'FHRSID': 1, 'name': 'A'}]
+        master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         # Define API data with one existing and two new restaurants
-        api_restaurant_1_existing = {'FHRSID': 1, 'name': 'A_updated'}
-        api_restaurant_2_new = {'FHRSID': 2, 'name': 'B', 'RatingValue': '5'}
-        api_restaurant_3_new = {'FHRSID': 3, 'name': 'C'}
+        api_restaurant_1_existing = {'FHRSID': "1", 'name': 'A_updated'} # FHRSID is string
+        api_restaurant_2_new = {'FHRSID': "2", 'name': 'B', 'RatingValue': '5'} # FHRSID is string
+        api_restaurant_3_new = {'FHRSID': "3", 'name': 'C'} # FHRSID is string
 
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [
             api_restaurant_1_existing,
@@ -126,17 +126,17 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         # Check if the new restaurants are the correct ones (order might not be guaranteed)
         fhrsid_in_new = [r['FHRSID'] for r in new_restaurants]
-        self.assertIn(2, fhrsid_in_new)
-        self.assertIn(3, fhrsid_in_new)
+        self.assertIn("2", fhrsid_in_new) # Expect string FHRSID
+        self.assertIn("3", fhrsid_in_new) # Expect string FHRSID
 
         # Check properties of the new restaurants
         for r_new in new_restaurants:
             self.assertEqual(r_new['first_seen'], "2023-10-26")
             self.assertEqual(r_new['manual_review'], "not reviewed")
-            if r_new['FHRSID'] == 2: # api_restaurant_2_new
+            if r_new['FHRSID'] == "2": # api_restaurant_2_new, compare with string
                 self.assertEqual(r_new['name'], 'B')
                 self.assertEqual(r_new['RatingValue'], '5') # Ensure other fields preserved
-            elif r_new['FHRSID'] == 3: # api_restaurant_3_new
+            elif r_new['FHRSID'] == "3": # api_restaurant_3_new, compare with string
                  self.assertEqual(r_new['name'], 'C')
 
         mock_st.success.assert_called_once_with("Processed API response. Identified 2 new restaurant records to be added.")
@@ -144,7 +144,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
     @patch('data_processing.st')
     def test_empty_master_data_all_api_items_are_new(self, mock_st):
         master_data = []
-        api_restaurant = {'FHRSID': 1, 'name': 'A'}
+        api_restaurant = {'FHRSID': "1", 'name': 'A'} # FHRSID is string
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [api_restaurant]}}}
 
         with patch('data_processing.datetime') as mock_dt: # Mock datetime for first_seen
@@ -152,13 +152,13 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
             new_restaurants = process_and_update_master_data(master_data, api_data)
 
         self.assertEqual(len(new_restaurants), 1)
-        self.assertEqual(new_restaurants[0]['FHRSID'], 1)
+        self.assertEqual(new_restaurants[0]['FHRSID'], "1") # Expect string FHRSID
         self.assertEqual(new_restaurants[0]['first_seen'], "mock_date")
         self.assertEqual(new_restaurants[0]['manual_review'], "not reviewed")
 
     @patch('data_processing.st')
     def test_empty_api_data_detail(self, mock_st):
-        master_data = [{'FHRSID': 1, 'name': 'A'}]
+        master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': []}}}
         new_restaurants = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 0)
@@ -167,7 +167,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
     @patch('data_processing.st')
     def test_api_data_establishment_detail_is_none(self, mock_st):
-        master_data = [{'FHRSID': 1, 'name': 'A'}]
+        master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': None}}}
         new_restaurants = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 0)
@@ -175,7 +175,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
     @patch('data_processing.st')
     def test_api_data_missing_establishment_collection(self, mock_st):
-        master_data = [{'FHRSID': 1, 'name': 'A'}]
+        master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {'FHRSEstablishment': {}} # EstablishmentCollection is missing
         new_restaurants = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 0)
@@ -196,7 +196,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
     @patch('data_processing.st')
     def test_api_data_missing_fhrestablishment_key(self, mock_st):
-        master_data = [{'FHRSID': 1, 'name': 'A'}]
+        master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {} # FHRSEstablishment key is missing
         new_restaurants = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 0)
@@ -205,20 +205,17 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
     @patch('data_processing.datetime')
     @patch('data_processing.st')
-    def test_fhrsid_is_integer_after_processing(self, mock_st, mock_datetime):
+    def test_fhrsid_is_string_after_processing(self, mock_st, mock_datetime): # Renamed test
         """
-        Test that FHRSID remains an integer if it's an integer in the API data and when processed.
+        Test that FHRSID is a string after processing, regardless of original type from API.
         """
         # Setup mock for datetime.now().strftime()
         mock_datetime.now.return_value.strftime.return_value = "2023-10-27"
 
         master_data = [] # No existing master data
 
-        # API data with one establishment having an integer FHRSID
-        # The FHRSID from API is expected to be an integer or string that can be converted to int.
-        # data_processing.py now tries to convert to int.
+        # API data with FHRSID as integer and string
         api_establishment_int_fhrsid = {'FHRSID': 123, 'name': 'Testaurant'}
-        # Test with string FHRSID from API that should be converted
         api_establishment_str_fhrsid = {'FHRSID': "456", 'name': 'Another Testaurant'}
 
         api_data = {
@@ -235,18 +232,18 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         self.assertEqual(len(new_restaurants), 2, "Should find two new restaurants")
         mock_st.success.assert_called_once_with("Processed API response. Identified 2 new restaurant records to be added.")
 
-        # Check first restaurant (originally int FHRSID)
+        # Check first restaurant (originally int FHRSID from API)
         added_restaurant_1 = next(r for r in new_restaurants if r['name'] == 'Testaurant')
-        self.assertIsInstance(added_restaurant_1['FHRSID'], int, "FHRSID should be an integer for original int FHRSID")
-        self.assertEqual(added_restaurant_1['FHRSID'], 123, "FHRSID should be the integer 123")
+        self.assertIsInstance(added_restaurant_1['FHRSID'], str, "FHRSID should be a string")
+        self.assertEqual(added_restaurant_1['FHRSID'], "123", "FHRSID should be the string '123'")
         self.assertEqual(added_restaurant_1['name'], 'Testaurant')
         self.assertEqual(added_restaurant_1['first_seen'], "2023-10-27")
         self.assertEqual(added_restaurant_1['manual_review'], "not reviewed")
 
-        # Check second restaurant (originally string FHRSID, should be converted)
+        # Check second restaurant (originally string FHRSID from API)
         added_restaurant_2 = next(r for r in new_restaurants if r['name'] == 'Another Testaurant')
-        self.assertIsInstance(added_restaurant_2['FHRSID'], int, "FHRSID should be an integer for original string FHRSID")
-        self.assertEqual(added_restaurant_2['FHRSID'], 456, "FHRSID should be the integer 456")
+        self.assertIsInstance(added_restaurant_2['FHRSID'], str, "FHRSID should be a string")
+        self.assertEqual(added_restaurant_2['FHRSID'], "456", "FHRSID should be the string '456'")
         self.assertEqual(added_restaurant_2['name'], 'Another Testaurant')
         self.assertEqual(added_restaurant_2['first_seen'], "2023-10-27")
         self.assertEqual(added_restaurant_2['manual_review'], "not reviewed")
