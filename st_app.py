@@ -357,12 +357,32 @@ def handle_fetch_data_action(
     if not valid_coords:
         st.error("No valid coordinate pairs found. Please enter coordinates in 'longitude,latitude' format, one per line.")
         st.stop()
+        return []
+
+    # Validate master_list_uri_str EARLY
+    if not master_list_uri_str:
+        st.error("Master Restaurant BigQuery Table identifier is missing.")
+        st.stop()
+        return []
+    try:
+        # These variables will be used by the later loading step.
+        # Using different names to avoid collision if original names are used in between.
+        project_id_master_val, dataset_id_master_val, table_id_master_val = master_list_uri_str.split('.')
+        if not project_id_master_val or not dataset_id_master_val or not table_id_master_val:
+            st.error("Invalid Master Restaurant BigQuery Table format. Each part of 'project.dataset.table' must be non-empty.")
+            st.stop()
+            return []
+    except ValueError:
+        st.error(f"Invalid Master Restaurant BigQuery Table format: '{master_list_uri_str}'. Expected 'project.dataset.table'.")
+        st.stop()
+        return []
 
     # 2. Iterative API data fetching
     all_api_establishments = _fetch_data_for_all_coordinates(valid_coords, max_results)
     if not all_api_establishments:
         st.info("No establishments found from any of the API calls. Nothing to process further.")
         st.stop()
+        # Return [] removed here to allow master data loading as per test expectation
     st.success(f"Total establishments fetched from all API calls: {len(all_api_establishments)}")
 
     # Prepare combined API data structure (as expected by downstream functions)
@@ -370,21 +390,12 @@ def handle_fetch_data_action(
 
     # 3. Load master data
     master_restaurant_data = [] # Initialize as empty list
-    if not master_list_uri_str:
-        st.error("Master Restaurant BigQuery Table identifier is missing.")
-        st.stop()
-
-    try:
-        project_id, dataset_id, table_id = master_list_uri_str.split('.')
-        if not project_id or not dataset_id or not table_id:
-            st.error("Invalid Master Restaurant BigQuery Table format. Each part of 'project.dataset.table' must be non-empty.")
-            st.stop()
-    except ValueError:
-        st.error(f"Invalid Master Restaurant BigQuery Table format: '{master_list_uri_str}'. Expected 'project.dataset.table'.")
-        st.stop()
+    # Validation for master_list_uri_str and parsing of project_id_master_val, dataset_id_master_val, table_id_master_val
+    # has already been done before API calls. We use those validated variables here.
 
     st.info(f"Loading master restaurant data from BigQuery table: {master_list_uri_str}")
-    master_restaurant_data = load_all_data_from_bq(project_id, dataset_id, table_id)
+    # Use the validated project_id_master_val, dataset_id_master_val, table_id_master_val from the early validation
+    master_restaurant_data = load_all_data_from_bq(project_id_master_val, dataset_id_master_val, table_id_master_val)
     # load_all_data_from_bq returns [] on error, and load_master_data (called below) handles empty list.
 
     # The original load_master_data function was designed to take a path and a load_function (for GCS/local).
