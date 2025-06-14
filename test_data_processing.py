@@ -377,6 +377,88 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         mock_st.success.assert_called_once_with("Processed API response. Identified 2 unique new restaurant records to be added.")
 
+    @patch('data_processing.datetime')
+    @patch('data_processing.st')
+    def test_canonical_fhrsid_deduplication_and_non_numeric(self, mock_st, mock_datetime):
+        # Setup mock for datetime.now().strftime()
+        mock_datetime_str = "2023-11-15"
+        mock_datetime.now.return_value.strftime.return_value = mock_datetime_str
+
+        # Define master_data
+        master_data = [
+            {'FHRSID': 123, 'BusinessName': 'Integer Master', 'AddressLine1': 'Addr Master 1'}, # Will be "123"
+            {'FHRSID': "456", 'BusinessName': 'Canonical String Master', 'AddressLine1': 'Addr Master 2'}, # Already "456"
+            {'FHRSID': "ABC", 'BusinessName': 'NonNumeric Master', 'AddressLine1': 'Addr Master 3'}, # "ABC", will warn
+            {'FHRSID': "M1X", 'BusinessName': 'Malformed Master', 'AddressLine1': 'Addr Master 4'}, # "M1X", will warn
+            {'FHRSID': None, 'BusinessName': 'None FHRSID Master', 'AddressLine1': 'Addr Master 5'} # Skipped
+        ]
+
+        # Define api_data
+        api_establishments = [
+            # Duplicates of master_data after canonicalization
+            {'FHRSID': "0123", 'BusinessName': 'Integer API Dup', 'AddressLine1': 'Addr API 1'}, # Should become "123"
+            {'FHRSID': "456", 'BusinessName': 'Canonical String API Dup', 'AddressLine1': 'Addr API 2'}, # Is "456"
+            {'FHRSID': "ABC", 'BusinessName': 'NonNumeric API Dup', 'AddressLine1': 'Addr API 3'}, # Is "ABC", will warn
+            {'FHRSID': "M1X", 'BusinessName': 'Malformed API Dup', 'AddressLine1': 'Addr API 4'}, # Is "M1X", will warn
+            # New establishments
+            {'FHRSID': "0789", 'BusinessName': 'New Numeric Normalized', 'AddressLine1': 'Addr API 5'}, # Becomes "789"
+            {'FHRSID': "DEF", 'BusinessName': 'New NonNumeric', 'AddressLine1': 'Addr API 6'}, # Is "DEF", will warn
+            {'FHRSID': "A2Y", 'BusinessName': 'New Malformed API', 'AddressLine1': 'Addr API 7'}, # Is "A2Y", will warn
+            # Skipped API entry
+            {'FHRSID': None, 'BusinessName': 'None FHRSID API', 'AddressLine1': 'Addr API 8'}
+        ]
+        # Add other required fields from ORIGINAL_COLUMNS_TO_KEEP to all api_establishments for simplicity
+        for est_api in api_establishments:
+            if est_api['FHRSID'] is not None: # Only add to valid entries for processing
+                est_api.update({key: None for key in ORIGINAL_COLUMNS_TO_KEEP if key not in est_api})
+
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': api_establishments}}}
+
+        new_restaurants = process_and_update_master_data(master_data, api_data)
+
+        self.assertEqual(len(new_restaurants), 3, "Should identify 3 new unique restaurants.")
+
+        added_fhrsids = sorted([r['FHRSID'] for r in new_restaurants])
+        expected_fhrsids = sorted(["789", "DEF", "A2Y"])
+        self.assertEqual(added_fhrsids, expected_fhrsids, "FHRSIDs of new restaurants should be the canonical forms.")
+
+        # Check data for one of the new restaurants to ensure fields are set
+        new_def = next(r for r in new_restaurants if r['FHRSID'] == "DEF")
+        self.assertEqual(new_def['BusinessName'], 'New NonNumeric')
+        self.assertEqual(new_def['first_seen'], mock_datetime_str)
+        self.assertEqual(new_def['manual_review'], "not reviewed")
+
+        # Verify st.warning calls
+        # Expected warnings:
+        # 1. Master: "ABC" (int("ABC") fails)
+        # 2. Master: "M1X" (int("M1X") fails)
+        # 3. API: "ABC" (int("ABC") fails during its canonicalization)
+        # 4. API: "M1X" (int("M1X") fails during its canonicalization)
+        # 5. API: "DEF" (int("DEF") fails during its canonicalization)
+        # 6. API: "A2Y" (int("A2Y") fails during its canonicalization)
+
+        # Note: The FHRSID "0123" from API becomes "123" without warning.
+        # FHRSID "456" from API is already canonical and numeric, no warning.
+
+        expected_warning_calls = [
+            unittest.mock.call("FHRSID 'ABC' from master_data could not be converted to int. Using original string value for comparison."),
+            unittest.mock.call("FHRSID 'M1X' from master_data could not be converted to int. Using original string value for comparison."),
+            unittest.mock.call("FHRSID 'ABC' from API data could not be converted to int. Using original string value."),
+            unittest.mock.call("FHRSID 'M1X' from API data could not be converted to int. Using original string value."),
+            unittest.mock.call("FHRSID 'DEF' from API data could not be converted to int. Using original string value."),
+            unittest.mock.call("FHRSID 'A2Y' from API data could not be converted to int. Using original string value.")
+        ]
+
+        # Check if all expected calls are present, regardless of order for warnings from the same source (master/api)
+        # However, the order of master data warnings should precede api data warnings.
+        # And within API data, the order should be as per api_establishments list.
+        # So, a direct comparison of call_args_list is better.
+        mock_st.warning.assert_has_calls(expected_warning_calls, any_order=False)
+        self.assertEqual(mock_st.warning.call_count, 6, "Expected 6 warning calls.")
+
+        # Also check success message for the correct count
+        mock_st.success.assert_called_once_with("Processed API response. Identified 3 unique new restaurant records to be added.")
+
 
 if __name__ == '__main__':
     unittest.main()

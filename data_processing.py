@@ -89,23 +89,35 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
     elif not api_establishments: 
          st.info("API response contained no establishments in 'EstablishmentDetail'.")
 
-    existing_fhrsid_set = {str(est['FHRSID']) for est in master_data if isinstance(est, dict) and 'FHRSID' in est}
+    existing_fhrsid_set = set()
+    for est in master_data:
+        if isinstance(est, dict) and 'FHRSID' in est and est['FHRSID'] is not None:
+            try:
+                canonical_fhrsid = str(int(est['FHRSID']))
+            except ValueError:
+                canonical_fhrsid = str(est['FHRSID'])
+                st.warning(f"FHRSID '{est['FHRSID']}' from master_data could not be converted to int. Using original string value for comparison.")
+            existing_fhrsid_set.add(canonical_fhrsid)
+
     today_date = datetime.now().strftime("%Y-%m-%d")
     newly_added_restaurants: List[Dict[str, Any]] = []
     fhrsids_processed_in_this_batch = set() # New set to track FHRSIDs within the current batch
 
     for api_establishment in api_establishments:
-        if isinstance(api_establishment, dict) and 'FHRSID' in api_establishment:
-            # Ensure FHRSID is treated as a string for all comparisons and storage
-            fhrsid_str = str(api_establishment['FHRSID'])
+        if isinstance(api_establishment, dict) and 'FHRSID' in api_establishment and api_establishment['FHRSID'] is not None:
+            original_api_fhrsid = api_establishment['FHRSID']
+            try:
+                canonical_api_fhrsid = str(int(original_api_fhrsid))
+            except ValueError:
+                canonical_api_fhrsid = str(original_api_fhrsid)
+                st.warning(f"FHRSID '{original_api_fhrsid}' from API data could not be converted to int. Using original string value.")
 
-            # Update the FHRSID in the dictionary to its string version *before* any further processing
-            # This ensures that if the original FHRSID was, e.g., an integer, it's consistently a string.
-            api_establishment['FHRSID'] = fhrsid_str
+            # Replace the original FHRSID with the canonical version
+            api_establishment['FHRSID'] = canonical_api_fhrsid
 
-            if fhrsid_str not in existing_fhrsid_set:
-                # Check if this FHRSID has already been processed in the current batch
-                if fhrsid_str not in fhrsids_processed_in_this_batch:
+            if canonical_api_fhrsid not in existing_fhrsid_set:
+                # Check if this canonical FHRSID has already been processed in the current batch
+                if canonical_api_fhrsid not in fhrsids_processed_in_this_batch:
                     api_establishment['first_seen'] = today_date
                     api_establishment['manual_review'] = "not reviewed"
 
@@ -118,21 +130,21 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
                             # Ensure missing keys are explicitly set to None in the processed_establishment
                             processed_establishment[key] = None
 
-                    # Crucially, ensure the 'FHRSID' in processed_establishment is the string version
-                    # This is vital if 'FHRSID' is part of ORIGINAL_COLUMNS_TO_KEEP.
-                    # The previous update `api_establishment['FHRSID'] = fhrsid_str` ensures this.
-                    # If 'FHRSID' was not in ORIGINAL_COLUMNS_TO_KEEP, it would need to be added like:
-                    # processed_establishment['FHRSID'] = fhrsid_str
+                    # Ensure the 'FHRSID' in processed_establishment is the canonical_api_fhrsid.
+                    # This is guaranteed because api_establishment['FHRSID'] was updated,
+                    # and if 'FHRSID' is in ORIGINAL_COLUMNS_TO_KEEP, it will take the updated value.
+                    # If 'FHRSID' were NOT in ORIGINAL_COLUMNS_TO_KEEP, we'd need:
+                    # processed_establishment['FHRSID'] = canonical_api_fhrsid
 
                     newly_added_restaurants.append(processed_establishment)
-                    fhrsids_processed_in_this_batch.add(fhrsid_str) # Add to batch tracking set
+                    fhrsids_processed_in_this_batch.add(canonical_api_fhrsid) # Add to batch tracking set
                 else:
                     # Optional: Log that a duplicate FHRSID within the current API batch was skipped.
                     # Using print for now, can be changed to st.info or a more formal logger.
-                    print(f"Skipping duplicate FHRSID {fhrsid_str} found within the current API batch (already processed).")
+                    print(f"Skipping duplicate FHRSID {canonical_api_fhrsid} found within the current API batch (already processed).")
             # else:
                 # Optional: Log that FHRSID was found in existing_fhrsid_set (already in BQ).
-                # print(f"FHRSID {fhrsid_str} already exists in BigQuery master data. Skipping.")
+                # print(f"FHRSID {canonical_api_fhrsid} already exists in BigQuery master data. Skipping.")
     
     count_new_restaurants = len(newly_added_restaurants)
     if count_new_restaurants > 0:
