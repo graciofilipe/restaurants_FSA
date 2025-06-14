@@ -205,9 +205,9 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
     @patch('data_processing.datetime')
     @patch('data_processing.st')
-    def test_fhrsid_is_string_after_processing(self, mock_st, mock_datetime):
+    def test_fhrsid_is_integer_after_processing(self, mock_st, mock_datetime):
         """
-        Test that FHRSID is converted to a string if it's an integer in the API data.
+        Test that FHRSID remains an integer if it's an integer in the API data and when processed.
         """
         # Setup mock for datetime.now().strftime()
         mock_datetime.now.return_value.strftime.return_value = "2023-10-27"
@@ -215,11 +215,16 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         master_data = [] # No existing master data
 
         # API data with one establishment having an integer FHRSID
+        # The FHRSID from API is expected to be an integer or string that can be converted to int.
+        # data_processing.py now tries to convert to int.
         api_establishment_int_fhrsid = {'FHRSID': 123, 'name': 'Testaurant'}
+        # Test with string FHRSID from API that should be converted
+        api_establishment_str_fhrsid = {'FHRSID': "456", 'name': 'Another Testaurant'}
+
         api_data = {
             'FHRSEstablishment': {
                 'EstablishmentCollection': {
-                    'EstablishmentDetail': [api_establishment_int_fhrsid]
+                    'EstablishmentDetail': [api_establishment_int_fhrsid, api_establishment_str_fhrsid]
                 }
             }
         }
@@ -227,15 +232,24 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         new_restaurants = process_and_update_master_data(master_data, api_data)
 
         # Assertions
-        self.assertEqual(len(new_restaurants), 1, "Should find one new restaurant")
-        mock_st.success.assert_called_once_with("Processed API response. Identified 1 new restaurant records to be added.")
+        self.assertEqual(len(new_restaurants), 2, "Should find two new restaurants")
+        mock_st.success.assert_called_once_with("Processed API response. Identified 2 new restaurant records to be added.")
 
-        added_restaurant = new_restaurants[0]
-        self.assertIsInstance(added_restaurant['FHRSID'], str, "FHRSID should be a string")
-        self.assertEqual(added_restaurant['FHRSID'], '123', "FHRSID should be the string '123'")
-        self.assertEqual(added_restaurant['name'], 'Testaurant')
-        self.assertEqual(added_restaurant['first_seen'], "2023-10-27")
-        self.assertEqual(added_restaurant['manual_review'], "not reviewed")
+        # Check first restaurant (originally int FHRSID)
+        added_restaurant_1 = next(r for r in new_restaurants if r['name'] == 'Testaurant')
+        self.assertIsInstance(added_restaurant_1['FHRSID'], int, "FHRSID should be an integer for original int FHRSID")
+        self.assertEqual(added_restaurant_1['FHRSID'], 123, "FHRSID should be the integer 123")
+        self.assertEqual(added_restaurant_1['name'], 'Testaurant')
+        self.assertEqual(added_restaurant_1['first_seen'], "2023-10-27")
+        self.assertEqual(added_restaurant_1['manual_review'], "not reviewed")
+
+        # Check second restaurant (originally string FHRSID, should be converted)
+        added_restaurant_2 = next(r for r in new_restaurants if r['name'] == 'Another Testaurant')
+        self.assertIsInstance(added_restaurant_2['FHRSID'], int, "FHRSID should be an integer for original string FHRSID")
+        self.assertEqual(added_restaurant_2['FHRSID'], 456, "FHRSID should be the integer 456")
+        self.assertEqual(added_restaurant_2['name'], 'Another Testaurant')
+        self.assertEqual(added_restaurant_2['first_seen'], "2023-10-27")
+        self.assertEqual(added_restaurant_2['manual_review'], "not reviewed")
 
 
 if __name__ == '__main__':

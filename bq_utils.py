@@ -161,13 +161,21 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
     
     # --- END MODIFICATIONS ---
 
-    # Explicitly cast fhrsid to string
+    # Ensure fhrsid is integer, not string. If it was loaded as string, try to convert.
+    # However, the expectation is that FHRSID is already an integer by this stage.
+    # This line is removed as per instruction: df_subset[sanitized_fhrsid_col] = df_subset[sanitized_fhrsid_col].astype(str)
     sanitized_fhrsid_col = 'fhrsid' # Based on sanitize_column_name('fhrsid')
     if sanitized_fhrsid_col in df_subset.columns:
-        df_subset[sanitized_fhrsid_col] = df_subset[sanitized_fhrsid_col].astype(str)
+        if df_subset[sanitized_fhrsid_col].dtype == 'object': # Check if it's a string type
+            try:
+                df_subset[sanitized_fhrsid_col] = df_subset[sanitized_fhrsid_col].astype(int)
+            except ValueError:
+                print(f"Warning: Column '{sanitized_fhrsid_col}' could not be converted to int during write operation. Check data.")
+                # Depending on policy, either raise error or proceed with original type if BQ can handle it or schema defines it as string.
+                # For now, proceeding, but this indicates a potential data issue upstream.
     else:
         # This case should ideally not happen if fhrsid is expected
-        print(f"Warning: Column '{sanitized_fhrsid_col}' not found in DataFrame for fhrsid string casting during write operation.")
+        print(f"Warning: Column '{sanitized_fhrsid_col}' not found in DataFrame during write operation.")
 
     try:
         job = client.load_table_from_dataframe(df_subset, table_ref_str, job_config=job_config)
@@ -178,9 +186,9 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
         st.error(f"Error writing data to BigQuery table {table_ref_str}: {e}")
         return False
 
-def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str, table_id: str) -> pd.DataFrame: # Changed return type
+def read_from_bigquery(fhrsid_list: List[int], project_id: str, dataset_id: str, table_id: str) -> pd.DataFrame:
     """
-    Reads data from a BigQuery table for a list of FHRSIDs using pandas-gbq.
+    Reads data from a BigQuery table for a list of FHRSIDs (integers) using pandas-gbq.
 
     Args:
         fhrsid_list: A list of FHRSIDs (integers) to filter by.
@@ -202,7 +210,7 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
             'queryParameters': [
                 {
                     'name': 'fhrsid_list',
-                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'STRING'}},
+                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'INT64'}},
                     'parameterValue': {'arrayValues': [{'value': f_id} for f_id in fhrsid_list]}
                 }
             ]
@@ -224,7 +232,8 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
         # pandas_gbq.read_gbq returns an empty DataFrame if the query result is empty.
         # No need to check for df.empty and return None.
         if df.empty:
-            print(f"Query executed successfully with pandas-gbq but returned no data for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}")
+                fhrsid_list_str = [str(f_id) for f_id in fhrsid_list]
+                print(f"Query executed successfully with pandas-gbq but returned no data for FHRSIDs: {', '.join(fhrsid_list_str)} from table {table_ref_str}")
         return df
     except Exception as e:
         # Catching a broad exception category from pandas-gbq.
@@ -232,18 +241,20 @@ def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str,
         # should be caught here and wrapped into BigQueryExecutionError.
         # For example, pandas_gbq.gbq.GenericGBQException is a common one,
         # but others from google-cloud-bigquery or google-auth might also occur.
-        error_msg = f"An error occurred while querying BigQuery with pandas-gbq for FHRSIDs: {', '.join(fhrsid_list)} from table {table_ref_str}: {e}"
+        # Convert fhrsid_list to strings for the error message if it contains integers
+        fhrsid_list_str = [str(f_id) for f_id in fhrsid_list]
+        error_msg = f"An error occurred while querying BigQuery with pandas-gbq for FHRSIDs: {', '.join(fhrsid_list_str)} from table {table_ref_str}: {e}"
         print(error_msg) # Keep existing print for logging
         # Wrap unexpected errors in BigQueryExecutionError for consistency
         # No need for DataFrameConversionError as read_gbq handles DataFrame creation.
         raise BigQueryExecutionError(error_msg) from e
 
-def update_manual_review(fhrsid_list: List[str], manual_review_value: str, project_id: str, dataset_id: str, table_id: str) -> bool:
+def update_manual_review(fhrsid_list: List[int], manual_review_value: str, project_id: str, dataset_id: str, table_id: str) -> bool:
     """
-    Updates the manual_review field for a list of FHRSIDs in a BigQuery table.
+    Updates the manual_review field for a list of FHRSIDs (integers) in a BigQuery table.
 
     Args:
-        fhrsid_list: A list of FHRSIDs to update.
+        fhrsid_list: A list of FHRSIDs (integers) to update.
         manual_review_value: The new value for the manual_review field.
         project_id: The Google Cloud project ID.
         dataset_id: The BigQuery dataset ID.
@@ -265,7 +276,7 @@ def update_manual_review(fhrsid_list: List[str], manual_review_value: str, proje
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter("manual_review_value", "STRING", manual_review_value),
-            bigquery.ArrayQueryParameter("fhrsid_list", "STRING", fhrsid_list),
+            bigquery.ArrayQueryParameter("fhrsid_list", "INT64", fhrsid_list),
         ]
     )
 
@@ -276,12 +287,14 @@ def update_manual_review(fhrsid_list: List[str], manual_review_value: str, proje
         # For simplicity, we assume success if query execution doesn't throw an error.
         # A more robust check might involve verifying num_dml_affected_rows if the API provides it easily,
         # or performing a SELECT COUNT(*) before and after, but that's more complex.
-        st.success(f"Successfully updated manual_review for FHRSIDs: {', '.join(fhrsid_list)} to '{manual_review_value}'.")
+        fhrsid_list_str = [str(f_id) for f_id in fhrsid_list] # For logging
+        st.success(f"Successfully updated manual_review for FHRSIDs: {', '.join(fhrsid_list_str)} to '{manual_review_value}'.")
         return True
     except Exception as e:
-        st.error(f"Error updating manual_review for FHRSIDs: {', '.join(fhrsid_list)}: {e}")
+        fhrsid_list_str = [str(f_id) for f_id in fhrsid_list] # For logging
+        st.error(f"Error updating manual_review for FHRSIDs: {', '.join(fhrsid_list_str)}: {e}")
         # Also print to console for backend logging
-        print(f"Error updating manual_review for FHRSIDs: {', '.join(fhrsid_list)}: {e}")
+        print(f"Error updating manual_review for FHRSIDs: {', '.join(fhrsid_list_str)}: {e}")
         return False
 
 def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str, bq_schema: List[bigquery.SchemaField]) -> bool:
@@ -325,13 +338,22 @@ def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table
         # Convert to pandas Boolean type to handle NA properly if needed, though BQ might handle True/False/None directly
         df_subset[new_rating_pending_col] = df_subset[new_rating_pending_col].astype('boolean')
 
-    # Explicitly cast fhrsid to string
-    # Assuming 'fhrsid' is the sanitized column name, which it is based on sanitize_column_name logic
+    # FHRSID should be an integer. The line converting it to string is removed.
+    # df_subset[sanitized_fhrsid_col] = df_subset[sanitized_fhrsid_col].astype(str) # This line is removed.
+    # Add a check if FHRSID is not int, try to convert, similar to write_to_bigquery
     sanitized_fhrsid_col = 'fhrsid'
     if sanitized_fhrsid_col in df_subset.columns:
-        df_subset[sanitized_fhrsid_col] = df_subset[sanitized_fhrsid_col].astype(str)
+        if not pd.api.types.is_integer_dtype(df_subset[sanitized_fhrsid_col]):
+            print(f"Warning: Column '{sanitized_fhrsid_col}' in append_to_bigquery is not integer. Type: {df_subset[sanitized_fhrsid_col].dtype}. Attempting conversion.")
+            try:
+                df_subset[sanitized_fhrsid_col] = pd.to_numeric(df_subset[sanitized_fhrsid_col], errors='raise').astype(int)
+            except (ValueError, TypeError) as e:
+                print(f"Error: Could not convert '{sanitized_fhrsid_col}' to int in append_to_bigquery: {e}. Data might be lost or incorrect for this column.")
+                # Decide handling: raise error, or fill with NA (though FHRSID is likely a key)
+                # For now, BQ will likely fail if schema expects INT64 and gets string/float.
     else:
-        print(f"Warning: Column '{sanitized_fhrsid_col}' not found in DataFrame for fhrsid string casting.")
+        print(f"Warning: Column '{sanitized_fhrsid_col}' not found in DataFrame for append_to_bigquery.")
+
 
     job_config = bigquery.LoadJobConfig(
         schema=bq_schema,
