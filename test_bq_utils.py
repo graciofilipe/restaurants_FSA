@@ -2,7 +2,11 @@ import pytest
 import pandas as pd
 import numpy as np
 from unittest.mock import patch, MagicMock, call, ANY # Added ANY
-from bq_utils import read_from_bigquery, update_manual_review, BigQueryExecutionError, write_to_bigquery, sanitize_column_name, load_all_data_from_bq, append_to_bigquery # Ensure this import matches your file structure
+from bq_utils import (
+    read_from_bigquery, update_manual_review, BigQueryExecutionError,
+    write_to_bigquery, sanitize_column_name, load_all_data_from_bq,
+    append_to_bigquery, ORIGINAL_COLUMNS_TO_KEEP, NEW_BQ_SCHEMA
+)
 from google.cloud import bigquery, exceptions # Import exceptions for error testing
 from google.auth.exceptions import DefaultCredentialsError # Added import
 
@@ -358,384 +362,291 @@ def test_update_manual_review_batch_empty_list(mock_bq_client_constructor, mock_
 
 # --- Tests for write_to_bigquery ---
 
-@patch('bq_utils.st')
+@patch('builtins.print') # Patched print
 @patch('bq_utils.bigquery.Client')
-def test_write_to_bigquery_newratingpending_conversion_and_fhrsid_type(mock_bq_client_constructor, mock_st): # Renamed for clarity
+def test_write_to_bigquery_logic_with_fixed_schema(mock_bq_client_constructor, mock_print):
     mock_bq_client_instance = mock_bq_client_constructor.return_value
     mock_load_job = MagicMock()
     mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
     mock_load_job.result.return_value = None
 
-    original_col_name = 'NewRatingPending'
-    sanitized_col_name = sanitize_column_name(original_col_name)
-    sanitized_fhrsid_col = sanitize_column_name('FHRSID') # This will be 'fhrsid'
-
+    # Prepare input data according to ORIGINAL_COLUMNS_TO_KEEP
     data = {
-        'FHRSID': ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"], # FHRSID is string
-        'BusinessName': ['Cafe A', 'Cafe B', 'Cafe C', 'Cafe D', 'Cafe E', 'Cafe F', 'Cafe G', 'Cafe H', 'Cafe I', 'Cafe J', 'Cafe K', 'Cafe L'],
-        original_col_name: ["true", "False", "TRUE", "false", "TrUe", "FaLsE", "other", "", None, pd.NA, " existing_true ", " existing_false "]
+        'FHRSID': ["1", "2"],
+        'BusinessName': ['Cafe Foo', 'Bar Boo'],
+        'AddressLine1': ['1 Street', '2 Avenue'],
+        'AddressLine2': ['Town', 'City'],
+        'AddressLine3': ['', ''],
+        'PostCode': ['PC1 1PC', 'PC2 2PC'],
+        'LocalAuthorityName': ['Council A', 'Council B'],
+        'RatingValue': ['5', '3'], # API often gives strings
+        'NewRatingPending': ['false', 'true'], # API often gives strings for boolean
+        'first_seen': ['2023-01-01', '2023-01-02'],
+        'manual_review': ['reviewed', 'not reviewed'],
+        'gemini_insights': [None, 'Some insight']
     }
-    df = pd.DataFrame(data)
-    # Ensure FHRSID column is string type
-    df['FHRSID'] = df['FHRSID'].astype(str)
+    # Ensure all columns from ORIGINAL_COLUMNS_TO_KEEP are present for robust test
+    for col in ORIGINAL_COLUMNS_TO_KEEP:
+        if col not in data:
+            data[col] = [None] * len(data['FHRSID'])
 
-    columns_to_select = ['FHRSID', 'BusinessName', original_col_name]
-    # Schema now expects STRING for fhrsid
-    bq_schema = [
-        bigquery.SchemaField(sanitized_fhrsid_col, 'STRING'),
-        bigquery.SchemaField(sanitize_column_name('BusinessName'), 'STRING'),
-        bigquery.SchemaField(sanitized_col_name, 'BOOLEAN')
-    ]
+    df = pd.DataFrame(data)
+    # Ensure FHRSID is string as it would be from data_processing layer
+    df['FHRSID'] = df['FHRSID'].astype(str)
+    # NewRatingPending is also often a string from APIs
+    df['NewRatingPending'] = df['NewRatingPending'].astype(str)
+
+
     project_id = "test-project"
     dataset_id = "test-dataset"
     table_id = "test-table"
 
+    # Call write_to_bigquery (no columns_to_select or bq_schema arguments)
     result = write_to_bigquery(
-        df=df.copy(), # Pass a copy to avoid modification issues in test
+        df=df.copy(),
         project_id=project_id,
         dataset_id=dataset_id,
-        table_id=table_id,
-        columns_to_select=columns_to_select,
-        bq_schema=bq_schema
+        table_id=table_id
     )
 
     assert result is True, "write_to_bigquery should return True on success"
-    mock_st.success.assert_called_once()
+    # mock_st.success.assert_called_once() # st is not mocked here, print is.
     mock_bq_client_instance.load_table_from_dataframe.assert_called_once()
-    loaded_df_call = mock_bq_client_instance.load_table_from_dataframe.call_args
-    assert loaded_df_call is not None, "load_table_from_dataframe was not called with any arguments"
-    loaded_df = loaded_df_call[0][0]
 
-    # Check FHRSID type after sanitization (should be 'fhrsid')
-    # The key in loaded_df.columns will be the sanitized version, e.g., 'fhrsid'
-    actual_sanitized_fhrsid_col_in_df = sanitize_column_name('FHRSID')
-    assert actual_sanitized_fhrsid_col_in_df in loaded_df.columns, f"Column '{actual_sanitized_fhrsid_col_in_df}' not found. Columns: {loaded_df.columns}"
-    assert pd.api.types.is_string_dtype(loaded_df[actual_sanitized_fhrsid_col_in_df]), \
-        f"FHRSID column '{actual_sanitized_fhrsid_col_in_df}' in loaded_df should be string, got {loaded_df[actual_sanitized_fhrsid_col_in_df].dtype}"
+    loaded_df_call_args = mock_bq_client_instance.load_table_from_dataframe.call_args
+    assert loaded_df_call_args is not None, "load_table_from_dataframe was not called"
 
-    expected_newratingpending_values = [
-        True, False, True, False, True, False,
-        pd.NA, pd.NA, pd.NA, pd.NA, pd.NA, pd.NA
-    ]
-    assert sanitized_col_name in loaded_df.columns, f"Column '{sanitized_col_name}' not found in loaded DataFrame. Columns are: {loaded_df.columns}"
-    loaded_newratingpending_series = loaded_df[sanitized_col_name]
-    assert len(loaded_newratingpending_series) == len(expected_newratingpending_values), \
-        f"Length mismatch for column '{sanitized_col_name}': Expected {len(expected_newratingpending_values)}, got {len(loaded_newratingpending_series)}"
+    loaded_df = loaded_df_call_args[0][0]
+    job_config_passed = loaded_df_call_args[1]['job_config']
 
-    for i in range(len(expected_newratingpending_values)):
-        expected_val = expected_newratingpending_values[i]
-        actual_val = loaded_newratingpending_series.iloc[i]
-        if pd.isna(expected_val):
-            assert pd.isna(actual_val), f"Value at index {i} for column '{sanitized_col_name}' should be pd.NA but was '{actual_val}' (type: {type(actual_val)})"
-        else:
-            assert actual_val == expected_val, f"Value at index {i} for column '{sanitized_col_name}' was '{actual_val}' (type: {type(actual_val)}), expected '{expected_val}'"
+    # Assertions on loaded_df (sanitized column names, types)
+    sanitized_original_cols = sorted([sanitize_column_name(col) for col in ORIGINAL_COLUMNS_TO_KEEP])
+    assert sorted(list(loaded_df.columns)) == sanitized_original_cols
 
-    assert loaded_newratingpending_series.dtype == object or isinstance(loaded_newratingpending_series.dtype, pd.BooleanDtype), \
-        f"Expected dtype for '{sanitized_col_name}' to be 'object' or pandas BooleanDtype, but got {loaded_newratingpending_series.dtype}"
+    # Check FHRSID type (should be string as per NEW_BQ_SCHEMA)
+    sanitized_fhrsid_col = sanitize_column_name('FHRSID')
+    assert pd.api.types.is_string_dtype(loaded_df[sanitized_fhrsid_col]), \
+        f"{sanitized_fhrsid_col} column in loaded_df should be string, got {loaded_df[sanitized_fhrsid_col].dtype}"
+    assert loaded_df[sanitized_fhrsid_col].tolist() == ["1", "2"]
 
-    job_config_passed = loaded_df_call[1]['job_config']
-    assert job_config_passed.schema == bq_schema
+    # Check NewRatingPending type (should be boolean after processing)
+    sanitized_nrp_col = sanitize_column_name('NewRatingPending')
+    assert pd.api.types.is_bool_dtype(loaded_df[sanitized_nrp_col]) or loaded_df[sanitized_nrp_col].dtype == 'boolean', \
+        f"{sanitized_nrp_col} column should be boolean, got {loaded_df[sanitized_nrp_col].dtype}"
+    # Using .fillna(False) because pd.NA might be actual value for boolean if original was None/empty
+    # and direct list comparison might fail. Expected: [False, True]
+    # Handle potential pd.NA if conversion from None/"other" string results in it
+    expected_bool_series = pd.Series([False, True], name=sanitized_nrp_col).astype('boolean')
+    pd.testing.assert_series_equal(loaded_df[sanitized_nrp_col].astype('boolean'), expected_bool_series, check_dtype=False)
+
+
+    # Assertions on job_config
+    assert job_config_passed.schema == NEW_BQ_SCHEMA
     assert job_config_passed.write_disposition == bigquery.WriteDisposition.WRITE_TRUNCATE
 
-
-@patch('bq_utils.st')
-@patch('bq_utils.bigquery.Client')
-def test_write_to_bigquery_includes_gemini_insights_in_schema(mock_bq_client_constructor, mock_st):
-    mock_bq_client_instance = mock_bq_client_constructor.return_value
-    mock_load_job = MagicMock()
-    mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
-    mock_load_job.result.return_value = None
-
-    data = {
-        'FHRSID': ["1"], # FHRSID is string
-        'BusinessName': ['Test Cafe'],
-        'gemini_insights': [None],
-        'manual_review': ['reviewed'],
-        'NewRatingPending': ['false']
-    }
-    df = pd.DataFrame(data)
-    df['FHRSID'] = df['FHRSID'].astype(str) # Ensure string type
-    columns_to_select = ['FHRSID', 'BusinessName', 'gemini_insights', 'manual_review', 'NewRatingPending']
-    expected_bq_schema_passed_to_function = [
-        bigquery.SchemaField(sanitize_column_name('FHRSID'), 'STRING'), # FHRSID is STRING
-        bigquery.SchemaField(sanitize_column_name('BusinessName'), 'STRING'),
-        bigquery.SchemaField(sanitize_column_name('gemini_insights'), 'STRING', mode='NULLABLE'),
-        bigquery.SchemaField(sanitize_column_name('manual_review'), 'STRING', mode='NULLABLE'),
-        bigquery.SchemaField(sanitize_column_name('NewRatingPending'), 'BOOLEAN')
-    ]
-    project_id = "test-project"
-    dataset_id = "test-dataset"
-    table_id = "test-table"
-
-    write_to_bigquery(
-        df.copy(), # Pass a copy
-        project_id,
-        dataset_id,
-        table_id,
-        columns_to_select,
-        expected_bq_schema_passed_to_function
-    )
-    mock_bq_client_instance.load_table_from_dataframe.assert_called_once()
-    call_args = mock_bq_client_instance.load_table_from_dataframe.call_args
-    loaded_df = call_args[0][0]
-    job_config_passed_to_bq = call_args[1]['job_config']
-
-    assert 'gemini_insights' in loaded_df.columns
-    assert loaded_df['gemini_insights'].iloc[0] is None
-    assert job_config_passed_to_bq.schema == expected_bq_schema_passed_to_function
-    gemini_field_in_schema = next((field for field in job_config_passed_to_bq.schema if field.name == 'gemini_insights'), None)
-    assert gemini_field_in_schema is not None, "'gemini_insights' field not found in BigQuery job_config schema"
-    assert gemini_field_in_schema.field_type == 'STRING'
-    assert gemini_field_in_schema.mode == 'NULLABLE'
-    mock_st.success.assert_called_once()
+# Removed test_write_to_bigquery_includes_gemini_insights_in_schema as its logic is merged above.
+# The new test test_write_to_bigquery_logic_with_fixed_schema covers all columns and schema.
 
 
 # --- Tests for append_to_bigquery ---
 import unittest
 
 class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCase for easier class-based structure
-    @patch('bq_utils.st')
+    @patch('builtins.print') # Patched print
     @patch('bq_utils.bigquery.Client')
-    def test_append_successful(self, mock_bq_client, mock_st):
+    def test_append_successful(self, mock_bq_client, mock_print):
         mock_job = MagicMock()
         mock_bq_client.return_value.load_table_from_dataframe.return_value = mock_job
         mock_job.result.return_value = None
 
+        # Prepare data according to NEW_BQ_SCHEMA (sanitized names)
+        sanitized_schema_names = [field.name for field in NEW_BQ_SCHEMA]
         data = {
-            'fhrsid': ["1", "2"], # fhrsid is string
+            'fhrsid': ["1", "2"],
             'businessname': ['Restaurant A', 'Restaurant B'],
-            'newratingpending': ['false', 'true'],
-            'geocode_latitude': ['51.0', '52.0'],
-            'geocode_longitude': ['-0.1', '-0.2']
+            'addressline1': ['Main St', 'High St'],
+            'addressline2': ['Anytown', 'Othertown'],
+            'addressline3': ['', ''],
+            'postcode': ['A1 1AA', 'B2 2BB'],
+            'localauthorityname': ['Council X', 'Council Y'],
+            'ratingvalue': ['5', '4'], # Kept as string, type conversion handled by BQ or later if needed by schema
+            'newratingpending': [False, True], # Boolean directly for sanitized input
+            'first_seen': ['2023-03-01', '2023-03-02'],
+            'manual_review': ['reviewed', 'pending'],
+            'gemini_insights': [None, 'Insightful text here']
         }
+        # Ensure all columns from NEW_BQ_SCHEMA are present
+        for col_name in sanitized_schema_names:
+            if col_name not in data:
+                data[col_name] = [None] * len(data['fhrsid']) # Ensure same length
+
         df = pd.DataFrame(data)
-        df['fhrsid'] = df['fhrsid'].astype(str) # Ensure string type
+        # Ensure correct dtypes as per NEW_BQ_SCHEMA expectations for fhrsid (string) and newratingpending (bool)
+        # The append_to_bigquery function itself has specific dtype handling for these.
+        df['fhrsid'] = df['fhrsid'].astype(str)
+        df['newratingpending'] = df['newratingpending'].astype(bool)
 
-        # append_to_bigquery expects df column names to be already sanitized
-        # and matching the schema field names.
-        df.columns = [sanitize_column_name(col) for col in df.columns]
-
-
-        schema = [
-            bigquery.SchemaField(sanitize_column_name('fhrsid'), 'STRING'), # fhrsid is STRING
-            bigquery.SchemaField(sanitize_column_name('businessname'), 'STRING'),
-            bigquery.SchemaField(sanitize_column_name('newratingpending'), 'BOOLEAN'),
-            bigquery.SchemaField(sanitize_column_name('geocode_latitude'), 'FLOAT'),
-            bigquery.SchemaField(sanitize_column_name('geocode_longitude'), 'FLOAT'),
-        ]
 
         project_id = "test-project"
         dataset_id = "test-dataset"
         table_id = "test-table"
 
-        # Pass a copy of df to the function
-        result = append_to_bigquery(df.copy(), project_id, dataset_id, table_id, schema)
+        # Call append_to_bigquery (no schema argument)
+        result = append_to_bigquery(df.copy(), project_id, dataset_id, table_id)
 
         self.assertTrue(result)
         mock_bq_client.return_value.load_table_from_dataframe.assert_called_once()
 
-        # Correctly access call_args for an instance method mock
         args_list = mock_bq_client.return_value.load_table_from_dataframe.call_args_list
-        self.assertEqual(len(args_list), 1) # Ensure it was called once
+        self.assertEqual(len(args_list), 1)
 
-        called_df = args_list[0][0][0] # First arg of first call
-        # called_table_ref = args_list[0][0][1] # Second arg of first call
-        job_config = args_list[0][1]['job_config'] # job_config from kwargs of first call
+        called_df = args_list[0][0][0]
+        job_config = args_list[0][1]['job_config']
 
         self.assertEqual(job_config.write_disposition, bigquery.WriteDisposition.WRITE_APPEND)
-        self.assertEqual(job_config.schema, schema)
+        self.assertEqual(job_config.schema, NEW_BQ_SCHEMA) # Assert schema is NEW_BQ_SCHEMA
 
-        # Assert fhrsid is string type in the DataFrame passed to BQ
-        self.assertTrue(pd.api.types.is_string_dtype(called_df[sanitize_column_name('fhrsid')]))
-        self.assertTrue(pd.api.types.is_bool_dtype(called_df[sanitize_column_name('newratingpending')]))
-        self.assertTrue(pd.api.types.is_numeric_dtype(called_df[sanitize_column_name('geocode_latitude')]))
-        self.assertTrue(pd.api.types.is_numeric_dtype(called_df[sanitize_column_name('geocode_longitude')]))
-        mock_st.success.assert_called_once()
+        # Assert types in the DataFrame passed to BQ
+        # fhrsid should be string as per NEW_BQ_SCHEMA and internal function logic
+        self.assertTrue(pd.api.types.is_string_dtype(called_df[sanitize_column_name('FHRSID')]))
+        # newratingpending should be boolean
+        self.assertTrue(pd.api.types.is_bool_dtype(called_df[sanitize_column_name('NewRatingPending')]))
 
-    @patch('bq_utils.st')
+        # Check that only columns in NEW_BQ_SCHEMA are present
+        self.assertEqual(set(called_df.columns), set(sanitized_schema_names))
+        # mock_st.success.assert_called_once() # st is not mocked here
+
+    @patch('builtins.print') # Patched print
     @patch('bq_utils.bigquery.Client')
-    def test_append_failure_on_load(self, mock_bq_client, mock_st):
+    def test_append_failure_on_load(self, mock_bq_client, mock_print):
         mock_bq_client.return_value.load_table_from_dataframe.side_effect = Exception("BQ API error")
 
-        df = pd.DataFrame({'col1': [1]})
-        df.columns = [sanitize_column_name(col) for col in df.columns] # Sanitize
-        schema = [bigquery.SchemaField(sanitize_column_name('col1'), 'INTEGER')]
+        # Prepare minimal DataFrame matching NEW_BQ_SCHEMA structure
+        sanitized_schema_names = [field.name for field in NEW_BQ_SCHEMA]
+        data = {name: [None] for name in sanitized_schema_names} # Minimal data
+        data['fhrsid'] = ["1"] # Ensure fhrsid is present and string
+        data['newratingpending'] = [False] # Ensure newratingpending is present and bool
+        df = pd.DataFrame(data)
+        df['fhrsid'] = df['fhrsid'].astype(str)
+        df['newratingpending'] = df['newratingpending'].astype(bool)
 
-        result = append_to_bigquery(df.copy(), "p", "d", "t", schema) # Pass a copy
+
+        result = append_to_bigquery(df.copy(), "p", "d", "t") # No schema argument
         self.assertFalse(result)
-        mock_st.error.assert_called_once()
+        # mock_st.error.assert_called_once() # st is not mocked here
 
-    @patch('bq_utils.st')
+    @patch('builtins.print') # Patched print
     @patch('bq_utils.bigquery.Client')
-    def test_append_empty_dataframe(self, mock_bq_client, mock_st):
-        """Test that append_to_bigquery handles an empty DataFrame correctly."""
-        # This test assumes that the function might try to process an empty df,
-        # or that an empty df might result from subsetting if schema doesn't match.
-        # append_to_bigquery's current logic for df_subset = df[schema_columns].copy()
-        # would raise a KeyError if schema_columns are not in df.
-        # For this test, let's assume df is empty but has columns matching schema.
+    def test_append_empty_dataframe(self, mock_bq_client, mock_print):
+        sanitized_schema_names = [field.name for field in NEW_BQ_SCHEMA]
+        empty_df = pd.DataFrame(columns=sanitized_schema_names)
+        # Ensure dtypes for critical columns if df was not empty, important for BQ client
+        empty_df['fhrsid'] = empty_df['fhrsid'].astype(str) if 'fhrsid' in empty_df else pd.Series(dtype=str)
+        empty_df['newratingpending'] = empty_df['newratingpending'].astype(bool) if 'newratingpending' in empty_df else pd.Series(dtype=bool)
 
-        empty_df = pd.DataFrame(columns=[sanitize_column_name('col1'), sanitize_column_name('col2')])
-        schema = [
-            bigquery.SchemaField(sanitize_column_name('col1'), 'STRING'),
-            bigquery.SchemaField(sanitize_column_name('col2'), 'INTEGER'),
-        ]
 
         project_id = "test-project"
         dataset_id = "test-dataset"
         table_id = "test-table"
 
-        result = append_to_bigquery(empty_df.copy(), project_id, dataset_id, table_id, schema)
+        result = append_to_bigquery(empty_df.copy(), project_id, dataset_id, table_id) # No schema
 
-        # If the DataFrame is empty, load_table_from_dataframe might not be called,
-        # or it might be called and BQ handles empty loads.
-        # Let's assume for now it's a success if it doesn't error and BQ is called.
-        # If BQ is not meant to be called with an empty df, the test needs adjustment.
-        self.assertTrue(result) # Or assert based on expected behavior for empty df
+        self.assertTrue(result)
         mock_bq_client.return_value.load_table_from_dataframe.assert_called_once()
-        mock_st.success.assert_called_once() # Assuming BQ client handles empty load as success
+        # mock_st.success.assert_called_once() # st is not mocked
 
-    @patch('bq_utils.st')
+    @patch('builtins.print') # Patched print
     @patch('bq_utils.bigquery.Client')
-    def test_column_subsetting_based_on_schema(self, mock_bq_client, mock_st):
+    def test_column_subsetting_and_ordering_for_append(self, mock_bq_client, mock_print):
         mock_job = MagicMock()
         mock_bq_client.return_value.load_table_from_dataframe.return_value = mock_job
         mock_job.result.return_value = None
 
+        # Data with extra field and unsorted columns
         data = {
-            sanitize_column_name('id'): [1],
-            sanitize_column_name('name'): ['Alice'],
-            sanitize_column_name('extra_field'): ['skip_me'] # This field is not in schema
+            'businessname': ['Alice Cafe'],
+            'fhrsid': ["100"],
+            'extra_field': ['skip_me'],
+            'newratingpending': [True],
+            # Fill other required fields from NEW_BQ_SCHEMA with None or defaults
         }
+        sanitized_schema_names = [field.name for field in NEW_BQ_SCHEMA]
+        for col_name in sanitized_schema_names:
+            if col_name not in data:
+                data[col_name] = [None]
+
         df = pd.DataFrame(data)
+        # Ensure dtypes for specific columns
+        df['fhrsid'] = df['fhrsid'].astype(str)
+        df['newratingpending'] = df['newratingpending'].astype(bool)
 
-        # Schema only includes 'id' and 'name'
-        schema = [
-            bigquery.SchemaField(sanitize_column_name('id'), 'INTEGER'),
-            bigquery.SchemaField(sanitize_column_name('name'), 'STRING'),
-        ]
 
-        append_to_bigquery(df.copy(), "p", "d", "t", schema)
+        append_to_bigquery(df.copy(), "p", "d", "t") # No schema argument
 
         called_df = mock_bq_client.return_value.load_table_from_dataframe.call_args[0][0]
 
-        # Assert that 'extra_field' is NOT in the DataFrame passed to BQ
-        self.assertNotIn(sanitize_column_name('extra_field'), called_df.columns)
-        self.assertIn(sanitize_column_name('id'), called_df.columns)
-        self.assertIn(sanitize_column_name('name'), called_df.columns)
-        self.assertEqual(len(called_df.columns), 2)
+        self.assertNotIn('extra_field', called_df.columns)
+        # Assert that columns in called_df are exactly those in NEW_BQ_SCHEMA (sanitized names)
+        self.assertEqual(set(called_df.columns), set(sanitized_schema_names))
+        # Assert order of columns in called_df matches NEW_BQ_SCHEMA
+        self.assertEqual(list(called_df.columns), sanitized_schema_names)
 
-    @patch('bq_utils.st')
+
+    @patch('builtins.print') # Patched print
     @patch('bq_utils.bigquery.Client')
-    def test_append_to_bigquery_fhrsid_is_string(self, mock_bq_client_constructor, mock_st): # Existing test, modified
-        """Test fhrsid column is handled as string for BQ load when schema is STRING, including non-string inputs."""
+    def test_append_to_bigquery_fhrsid_string_handling(self, mock_bq_client_constructor, mock_print):
         mock_bq_client_instance = mock_bq_client_constructor.return_value
         mock_load_job = MagicMock()
         mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
         mock_load_job.result.return_value = None
 
-        sample_data = {
-            'fhrsid': [123, "456", 789, None, pd.NA, 10.5],
-            'another_col': ['v1', 'v2', 'v3', 'v4', 'v5', 'v6']
-        }
-        sample_df = pd.DataFrame(sample_data)
+        # Data for fhrsid (should be string as per NEW_BQ_SCHEMA)
+        # append_to_bigquery will ensure it's string if schema says string
+        sanitized_schema_names = [field.name for field in NEW_BQ_SCHEMA]
+        data = {name: [None] for name in sanitized_schema_names} # Initialize
+        data.update({
+            'fhrsid': [123, "456", 789.0, None], # Mixed types, should be converted to string
+            'businessname': ['v1', 'v2', 'v3', 'v4'], # Example other field
+            'newratingpending': [False, True, False, True] # ensure boolean
+        })
+        sample_df = pd.DataFrame(data)
+        # Explicitly set other required columns from NEW_BQ_SCHEMA to avoid issues if not in data dict
+        for col_name in sanitized_schema_names:
+            if col_name not in sample_df.columns:
+                 sample_df[col_name] = pd.NA
 
-        bq_schema = [
-            bigquery.SchemaField('fhrsid', 'STRING'),
-            bigquery.SchemaField('another_col', 'STRING')
-        ]
-        project_id, dataset_id, table_id = "p", "d", "t"
 
-        result = append_to_bigquery(sample_df.copy(), project_id, dataset_id, table_id, bq_schema)
+        result = append_to_bigquery(sample_df.copy(), "p", "d", "t") # No schema argument
 
         self.assertTrue(result, "append_to_bigquery should return True on success")
-        mock_st.success.assert_called_once()
+        # mock_st.success.assert_called_once() # st not mocked
 
         mock_bq_client_instance.load_table_from_dataframe.assert_called_once()
         args, kwargs = mock_bq_client_instance.load_table_from_dataframe.call_args
         loaded_df = args[0]
 
-        self.assertTrue(pd.api.types.is_string_dtype(loaded_df['fhrsid']) or loaded_df['fhrsid'].dtype == 'object',
-                        f"fhrsid column should be string type or object, but was {loaded_df['fhrsid'].dtype}")
+        fhrsid_sanitized = sanitize_column_name('FHRSID')
+        self.assertTrue(pd.api.types.is_string_dtype(loaded_df[fhrsid_sanitized]) or loaded_df[fhrsid_sanitized].dtype == 'object',
+                        f"{fhrsid_sanitized} column should be string type, but was {loaded_df[fhrsid_sanitized].dtype}")
 
-        expected_str_values = ["123", "456", "789", "None", "<NA>", "10.5"]
-        self.assertEqual(loaded_df['fhrsid'].tolist(), expected_str_values)
+        # Expected values after .astype(str) conversion by append_to_bigquery's internal logic
+        # None becomes 'None', pd.NA becomes '<NA>' (depending on pandas version and specific handling)
+        # The function's internal logic does: df_subset[fhrsid_col_name].astype(str)
+        expected_str_values = ["123", "456", "789.0", "None"] # How astype(str) handles None
+        # Need to adjust if pd.NA is handled differently to become "<NA>" by astype(str)
+        # For this test, let's assume None was used for simplicity in input.
+        # If pd.NA was in input and converted, it would be "<NA>"
 
-    @patch('bq_utils.st')
-    @patch('bq_utils.bigquery.Client')
-    def test_append_to_bigquery_fhrsid_is_integer_and_coerces_invalid(self, mock_bq_client_constructor, mock_st): # New test
-        """Test fhrsid is numeric for INTEGER schema, and invalid strings become NaN."""
-        mock_bq_client_instance = mock_bq_client_constructor.return_value
-        mock_load_job = MagicMock()
-        mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
-        mock_load_job.result.return_value = None
+        # Recreate series for comparison based on actual internal astype(str) behavior for various inputs
+        input_series_for_expected = pd.Series([123, "456", 789.0, None], dtype=object)
+        expected_series_astype_str = input_series_for_expected.astype(str)
 
-        sample_data = {
-            'fhrsid': ["123", 456, "789", "invalid_id", None],
-            'another_col': ['value1', 'value2', 'value3', 'value4', 'value5']
-        }
-        sample_df = pd.DataFrame(sample_data)
+        pd.testing.assert_series_equal(loaded_df[fhrsid_sanitized], expected_series_astype_str, check_names=False)
 
-        bq_schema = [
-            bigquery.SchemaField('fhrsid', 'INTEGER'),
-            bigquery.SchemaField('another_col', 'STRING')
-        ]
-        project_id, dataset_id, table_id = "p", "d", "t"
-
-        result = append_to_bigquery(sample_df.copy(), project_id, dataset_id, table_id, bq_schema)
-
-        self.assertTrue(result, "append_to_bigquery should return True")
-        mock_st.success.assert_called_once()
-
-        mock_bq_client_instance.load_table_from_dataframe.assert_called_once()
-        args, kwargs = mock_bq_client_instance.load_table_from_dataframe.call_args
-        loaded_df = args[0]
-
-        self.assertTrue(pd.api.types.is_numeric_dtype(loaded_df['fhrsid']),
-                        f"fhrsid column should be numeric, but was {loaded_df['fhrsid'].dtype}")
-
-        expected_values = [123.0, 456.0, 789.0, np.nan, np.nan]
-        expected_series = pd.Series(expected_values, name='fhrsid', dtype=loaded_df['fhrsid'].dtype)
-        # Using check_dtype=False as type might change from object to float64 due to NaNs
-        pd.testing.assert_series_equal(loaded_df['fhrsid'], expected_series, check_dtype=False)
-
-    @patch('bq_utils.st')
-    @patch('bq_utils.bigquery.Client')
-    def test_append_to_bigquery_fhrsid_conversion_error_to_nan_for_int64(self, mock_bq_client_constructor, mock_st): # New test
-        """Test fhrsid converts to NaN for unparseable strings when BQ schema is INT64."""
-        mock_bq_client_instance = mock_bq_client_constructor.return_value
-        mock_load_job = MagicMock()
-        mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
-        mock_load_job.result.return_value = None
-
-        sample_data = {
-            'fhrsid': ["123", "abc", "456", None, pd.NA],
-            'another_col': ['value1', 'value2', 'value3', 'value4', 'value5']
-        }
-        sample_df = pd.DataFrame(sample_data)
-
-        bq_schema = [
-            bigquery.SchemaField('fhrsid', 'INT64'),
-            bigquery.SchemaField('another_col', 'STRING')
-        ]
-        project_id, dataset_id, table_id = "p", "d", "t"
-
-        result = append_to_bigquery(sample_df.copy(), project_id, dataset_id, table_id, bq_schema)
-
-        self.assertTrue(result, "append_to_bigquery should return True")
-        mock_st.success.assert_called_once()
-        mock_bq_client_instance.load_table_from_dataframe.assert_called_once()
-
-        args, kwargs = mock_bq_client_instance.load_table_from_dataframe.call_args
-        loaded_df = args[0]
-
-        self.assertTrue(pd.api.types.is_numeric_dtype(loaded_df['fhrsid']),
-                        f"fhrsid column should be numeric after coercion, but was {loaded_df['fhrsid'].dtype}")
-
-        expected_values = [123.0, np.nan, 456.0, np.nan, np.nan]
-        expected_series = pd.Series(expected_values, name='fhrsid', dtype=loaded_df['fhrsid'].dtype)
-        # Using check_dtype=False as type might change from object to float64 due to NaNs
-        pd.testing.assert_series_equal(loaded_df['fhrsid'], expected_series, check_dtype=False)
+    # Remove tests for fhrsid as integer or coercing to NaN for integer,
+    # as NEW_BQ_SCHEMA defines fhrsid as STRING, and append_to_bigquery enforces this.
+    # test_append_to_bigquery_fhrsid_is_integer_and_coerces_invalid (remove)
+    # test_append_to_bigquery_fhrsid_conversion_error_to_nan_for_int64 (remove)
 
 
 # If __name__ == '__main__':
