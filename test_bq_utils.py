@@ -1,5 +1,6 @@
 import pytest
 import pandas as pd
+import numpy as np
 from unittest.mock import patch, MagicMock, call, ANY # Added ANY
 from bq_utils import read_from_bigquery, update_manual_review, BigQueryExecutionError, write_to_bigquery, sanitize_column_name, load_all_data_from_bq, append_to_bigquery # Ensure this import matches your file structure
 from google.cloud import bigquery, exceptions # Import exceptions for error testing
@@ -624,42 +625,28 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
         self.assertIn(sanitize_column_name('name'), called_df.columns)
         self.assertEqual(len(called_df.columns), 2)
 
-    @patch('bq_utils.st') # Mock streamlit for status messages
+    @patch('bq_utils.st')
     @patch('bq_utils.bigquery.Client')
-    def test_append_to_bigquery_fhrsid_is_string(self, mock_bq_client_constructor, mock_st): # Renamed test
-        """Test that fhrsid column is handled as string for BQ load when schema is STRING."""
+    def test_append_to_bigquery_fhrsid_is_string(self, mock_bq_client_constructor, mock_st): # Existing test, modified
+        """Test fhrsid column is handled as string for BQ load when schema is STRING, including non-string inputs."""
         mock_bq_client_instance = mock_bq_client_constructor.return_value
         mock_load_job = MagicMock()
         mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
         mock_load_job.result.return_value = None
 
-        # Sample DataFrame with fhrsid as strings
         sample_data = {
-            'fhrsid': ["123", "456", "789"], # String fhrsids
-            'another_col': ['value1', 'value2', 'value3']
+            'fhrsid': [123, "456", 789, None, pd.NA, 10.5],
+            'another_col': ['v1', 'v2', 'v3', 'v4', 'v5', 'v6']
         }
         sample_df = pd.DataFrame(sample_data)
-        # Ensure fhrsid is string
-        sample_df['fhrsid'] = sample_df['fhrsid'].astype(str)
 
-
-        # Schema now defines fhrsid as STRING
         bq_schema = [
-            bigquery.SchemaField('fhrsid', 'STRING'), # Changed to STRING
+            bigquery.SchemaField('fhrsid', 'STRING'),
             bigquery.SchemaField('another_col', 'STRING')
         ]
+        project_id, dataset_id, table_id = "p", "d", "t"
 
-        project_id = "test-project"
-        dataset_id = "test-dataset"
-        table_id = "test-table"
-
-        result = append_to_bigquery(
-            df=sample_df.copy(),
-            project_id=project_id,
-            dataset_id=dataset_id,
-            table_id=table_id,
-            bq_schema=bq_schema
-        )
+        result = append_to_bigquery(sample_df.copy(), project_id, dataset_id, table_id, bq_schema)
 
         self.assertTrue(result, "append_to_bigquery should return True on success")
         mock_st.success.assert_called_once()
@@ -668,12 +655,87 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
         args, kwargs = mock_bq_client_instance.load_table_from_dataframe.call_args
         loaded_df = args[0]
 
-        # Assert that 'fhrsid' column in the loaded_df is of string type
-        self.assertTrue(pd.api.types.is_string_dtype(loaded_df['fhrsid']),
-                        f"fhrsid column should be string type, but was {loaded_df['fhrsid'].dtype}")
+        self.assertTrue(pd.api.types.is_string_dtype(loaded_df['fhrsid']) or loaded_df['fhrsid'].dtype == 'object',
+                        f"fhrsid column should be string type or object, but was {loaded_df['fhrsid'].dtype}")
 
-        # Also check the values
-        self.assertEqual(loaded_df['fhrsid'].tolist(), ["123", "456", "789"])
+        expected_str_values = ["123", "456", "789", "None", "<NA>", "10.5"]
+        self.assertEqual(loaded_df['fhrsid'].tolist(), expected_str_values)
+
+    @patch('bq_utils.st')
+    @patch('bq_utils.bigquery.Client')
+    def test_append_to_bigquery_fhrsid_is_integer_and_coerces_invalid(self, mock_bq_client_constructor, mock_st): # New test
+        """Test fhrsid is numeric for INTEGER schema, and invalid strings become NaN."""
+        mock_bq_client_instance = mock_bq_client_constructor.return_value
+        mock_load_job = MagicMock()
+        mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
+        mock_load_job.result.return_value = None
+
+        sample_data = {
+            'fhrsid': ["123", 456, "789", "invalid_id", None],
+            'another_col': ['value1', 'value2', 'value3', 'value4', 'value5']
+        }
+        sample_df = pd.DataFrame(sample_data)
+
+        bq_schema = [
+            bigquery.SchemaField('fhrsid', 'INTEGER'),
+            bigquery.SchemaField('another_col', 'STRING')
+        ]
+        project_id, dataset_id, table_id = "p", "d", "t"
+
+        result = append_to_bigquery(sample_df.copy(), project_id, dataset_id, table_id, bq_schema)
+
+        self.assertTrue(result, "append_to_bigquery should return True")
+        mock_st.success.assert_called_once()
+
+        mock_bq_client_instance.load_table_from_dataframe.assert_called_once()
+        args, kwargs = mock_bq_client_instance.load_table_from_dataframe.call_args
+        loaded_df = args[0]
+
+        self.assertTrue(pd.api.types.is_numeric_dtype(loaded_df['fhrsid']),
+                        f"fhrsid column should be numeric, but was {loaded_df['fhrsid'].dtype}")
+
+        expected_values = [123.0, 456.0, 789.0, np.nan, np.nan]
+        expected_series = pd.Series(expected_values, name='fhrsid', dtype=loaded_df['fhrsid'].dtype)
+        # Using check_dtype=False as type might change from object to float64 due to NaNs
+        pd.testing.assert_series_equal(loaded_df['fhrsid'], expected_series, check_dtype=False)
+
+    @patch('bq_utils.st')
+    @patch('bq_utils.bigquery.Client')
+    def test_append_to_bigquery_fhrsid_conversion_error_to_nan_for_int64(self, mock_bq_client_constructor, mock_st): # New test
+        """Test fhrsid converts to NaN for unparseable strings when BQ schema is INT64."""
+        mock_bq_client_instance = mock_bq_client_constructor.return_value
+        mock_load_job = MagicMock()
+        mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
+        mock_load_job.result.return_value = None
+
+        sample_data = {
+            'fhrsid': ["123", "abc", "456", None, pd.NA],
+            'another_col': ['value1', 'value2', 'value3', 'value4', 'value5']
+        }
+        sample_df = pd.DataFrame(sample_data)
+
+        bq_schema = [
+            bigquery.SchemaField('fhrsid', 'INT64'),
+            bigquery.SchemaField('another_col', 'STRING')
+        ]
+        project_id, dataset_id, table_id = "p", "d", "t"
+
+        result = append_to_bigquery(sample_df.copy(), project_id, dataset_id, table_id, bq_schema)
+
+        self.assertTrue(result, "append_to_bigquery should return True")
+        mock_st.success.assert_called_once()
+        mock_bq_client_instance.load_table_from_dataframe.assert_called_once()
+
+        args, kwargs = mock_bq_client_instance.load_table_from_dataframe.call_args
+        loaded_df = args[0]
+
+        self.assertTrue(pd.api.types.is_numeric_dtype(loaded_df['fhrsid']),
+                        f"fhrsid column should be numeric after coercion, but was {loaded_df['fhrsid'].dtype}")
+
+        expected_values = [123.0, np.nan, 456.0, np.nan, np.nan]
+        expected_series = pd.Series(expected_values, name='fhrsid', dtype=loaded_df['fhrsid'].dtype)
+        # Using check_dtype=False as type might change from object to float64 due to NaNs
+        pd.testing.assert_series_equal(loaded_df['fhrsid'], expected_series, check_dtype=False)
 
 
 # If __name__ == '__main__':

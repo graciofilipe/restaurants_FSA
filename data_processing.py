@@ -94,6 +94,10 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
 
     for api_establishment in api_establishments:
         if isinstance(api_establishment, dict) and 'FHRSID' in api_establishment:
+            # Note: FHRSID is converted to string here for consistency within the list of dictionaries.
+            # The definitive data typing for BigQuery (e.g., to INT64 or STRING) is handled
+            # by the BigQuery utility functions (e.g., append_to_bigquery in bq_utils.py)
+            # when the DataFrame is prepared for loading, based on the target table's schema.
             # Ensure FHRSID is treated as a string
             fhrsid_str = str(api_establishment['FHRSID'])
 
