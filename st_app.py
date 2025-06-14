@@ -16,6 +16,7 @@ from bq_utils import (
     write_to_bigquery,
     read_from_bigquery,
     update_manual_review,
+    load_all_data_from_bq, # Added import
     BigQueryExecutionError,  # Added import
     DataFrameConversionError # Added import
 )
@@ -368,13 +369,34 @@ def handle_fetch_data_action(
     combined_api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': all_api_establishments}}}
 
     # 3. Load master data
-    if master_list_uri_str.startswith("gs://"):
-        load_function = load_json_from_gcs
-    else:
-        load_function = load_json_from_local_file_path
-    master_restaurant_data = load_master_data(master_list_uri_str, load_function)
+    master_restaurant_data = [] # Initialize as empty list
+    if not master_list_uri_str:
+        st.error("Master Restaurant BigQuery Table identifier is missing.")
+        st.stop()
+
+    try:
+        project_id, dataset_id, table_id = master_list_uri_str.split('.')
+        if not project_id or not dataset_id or not table_id:
+            st.error("Invalid Master Restaurant BigQuery Table format. Each part of 'project.dataset.table' must be non-empty.")
+            st.stop()
+    except ValueError:
+        st.error(f"Invalid Master Restaurant BigQuery Table format: '{master_list_uri_str}'. Expected 'project.dataset.table'.")
+        st.stop()
+
+    st.info(f"Loading master restaurant data from BigQuery table: {master_list_uri_str}")
+    master_restaurant_data = load_all_data_from_bq(project_id, dataset_id, table_id)
+    # load_all_data_from_bq returns [] on error, and load_master_data (called below) handles empty list.
+
+    # The original load_master_data function was designed to take a path and a load_function (for GCS/local).
+    # Since we're now directly getting the data from BQ, we can simplify.
+    # If load_all_data_from_bq returns an empty list (e.g. table not found, or error),
+    # process_and_update_master_data will treat it as starting with no master data, which is acceptable.
+    if not master_restaurant_data:
+        st.warning(f"No data loaded from BigQuery table {master_list_uri_str}, or table is empty. Proceeding as if with an empty master list.")
+        master_restaurant_data = [] # Ensure it's an empty list if nothing loaded
 
     # 4. Process API data with master data
+    # Pass the directly loaded (or empty) master_restaurant_data
     master_restaurant_data, _ = process_and_update_master_data(master_restaurant_data, combined_api_data)
 
     # 5. Handle GCS Uploads
@@ -416,9 +438,9 @@ def main_ui():
         # These _ui variables are used to distinguish from the parameters of handle_fetch_data_action
         max_results_input_ui = st.number_input("Enter Max Results for API Call", min_value=1, max_value=5000, value=200)
         gcs_destination_uri_ui = st.text_input("Enter GCS destination folder for the scan (e.g., gs://bucket-name/scans-folder/)")
-        master_list_uri_ui = st.text_input("Enter Master Restaurant Data URI (JSON) (e.g., gs://bucket/file.json or /path/to/file.json)")
+        master_list_uri_ui = st.text_input("Master Restaurant BigQuery Table (project.dataset.table)")
         gcs_master_dictionary_output_uri_ui = st.text_input("Enter GCS URI for Master Restaurant Data Output (e.g., gs://bucket-name/path/filename.json)")
-        bq_full_path_ui = st.text_input("Enter BigQuery Table Path (project.dataset.table)")
+        bq_full_path_ui = st.text_input("Enter BigQuery Table Path to write updated data (project.dataset.table)")
 
         if st.button("Fetch Data"):
             handle_fetch_data_action(

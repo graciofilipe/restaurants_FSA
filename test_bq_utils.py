@@ -1,14 +1,99 @@
 import pytest
 import pandas as pd
 from unittest.mock import patch, MagicMock, call
-from bq_utils import read_from_bigquery, update_manual_review, BigQueryExecutionError, write_to_bigquery, sanitize_column_name # Ensure this import matches your file structure
+from bq_utils import read_from_bigquery, update_manual_review, BigQueryExecutionError, write_to_bigquery, sanitize_column_name, load_all_data_from_bq # Ensure this import matches your file structure
 from google.cloud import bigquery, exceptions # Import exceptions for error testing
 from google.cloud import bigquery # Ensure full import as per instruction
+from google.auth.exceptions import DefaultCredentialsError # Added import
+
 # Attempt to import GenericGBQException for more specific error testing if available
 try:
     from pandas_gbq.gbq import GenericGBQException
 except ImportError:
     GenericGBQException = None # Fallback if pandas_gbq is not installed or structure differs
+
+# --- Tests for load_all_data_from_bq ---
+
+@patch('bq_utils.pandas_gbq.read_gbq')
+def test_load_all_data_from_bq_success(mock_read_gbq):
+    """Test successful data loading and conversion to list of dicts."""
+    sample_data = {'col1': [1, 2], 'col2': ['a', 'b']}
+    mock_df = pd.DataFrame(sample_data)
+    mock_read_gbq.return_value = mock_df
+
+    project_id = 'test-proj'
+    dataset_id = 'test-dset'
+    table_id = 'test-tbl'
+
+    result = load_all_data_from_bq(project_id, dataset_id, table_id)
+    expected_result = [{'col1': 1, 'col2': 'a'}, {'col1': 2, 'col2': 'b'}]
+
+    assert result == expected_result
+    mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
+
+@patch('bq_utils.pandas_gbq.read_gbq')
+def test_load_all_data_from_bq_empty_table(mock_read_gbq):
+    """Test loading from an empty table returns an empty list."""
+    mock_df = pd.DataFrame()
+    mock_read_gbq.return_value = mock_df
+
+    project_id = 'test-proj'
+    dataset_id = 'test-dset'
+    table_id = 'empty-tbl'
+
+    result = load_all_data_from_bq(project_id, dataset_id, table_id)
+
+    assert result == []
+    mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
+
+@patch('bq_utils.pandas_gbq.read_gbq')
+@patch('builtins.print') # Mock print to check error logging
+def test_load_all_data_from_bq_pandas_gbq_exception(mock_print, mock_read_gbq):
+    """Test that GenericGBQException is caught and returns an empty list."""
+    project_id = 'test-proj'
+    dataset_id = 'test-dset'
+    table_id = 'gbq-exception-tbl'
+    error_message = "Simulated pandas_gbq.gbq.GenericGBQException"
+    mock_read_gbq.side_effect = GenericGBQException(error_message)
+
+    result = load_all_data_from_bq(project_id, dataset_id, table_id)
+
+    assert result == []
+    mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
+    # Check if error was printed (optional, but good for verifying logging)
+    mock_print.assert_any_call(f"Error loading data from BigQuery table {project_id}.{dataset_id}.{table_id}: {error_message}")
+
+@patch('bq_utils.pandas_gbq.read_gbq')
+@patch('builtins.print')
+def test_load_all_data_from_bq_google_auth_exception(mock_print, mock_read_gbq):
+    """Test that DefaultCredentialsError is caught and returns an empty list."""
+    project_id = 'test-proj'
+    dataset_id = 'test-dset'
+    table_id = 'auth-exception-tbl'
+    error_message = "Simulated DefaultCredentialsError"
+    mock_read_gbq.side_effect = DefaultCredentialsError(error_message)
+
+    result = load_all_data_from_bq(project_id, dataset_id, table_id)
+
+    assert result == []
+    mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
+    mock_print.assert_any_call(f"Error loading data from BigQuery table {project_id}.{dataset_id}.{table_id}: {error_message}")
+
+@patch('bq_utils.pandas_gbq.read_gbq')
+@patch('builtins.print')
+def test_load_all_data_from_bq_generic_exception(mock_print, mock_read_gbq):
+    """Test that a generic Exception is caught and returns an empty list."""
+    project_id = 'test-proj'
+    dataset_id = 'test-dset'
+    table_id = 'generic-exception-tbl'
+    error_message = "Simulated generic Exception"
+    mock_read_gbq.side_effect = Exception(error_message)
+
+    result = load_all_data_from_bq(project_id, dataset_id, table_id)
+
+    assert result == []
+    mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
+    mock_print.assert_any_call(f"An unexpected error occurred while loading data from BigQuery table {project_id}.{dataset_id}.{table_id}: {error_message}")
 
 # --- Tests for read_from_bigquery (New implementation with pandas-gbq) ---
 
