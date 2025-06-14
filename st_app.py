@@ -533,7 +533,7 @@ def handle_fetch_data_action(
 
     # 6. Handle GCS Uploads
     # The master_restaurant_data here is the initial load from BQ.
-    # If gcs_master_output_uri_str is meant to store the *appended* state, this needs adjustment.
+    # If gcs_master_output_uri_str was meant to store the *appended* state, this needs adjustment.
     # For now, sticking to the instruction to leave as is.
 
     # 7. Display data

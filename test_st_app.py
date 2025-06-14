@@ -320,7 +320,6 @@ class TestHandleFetchDataAction(unittest.TestCase):
         # Reset mocks for each test case if they are attributes of the test class
         self.mock_load_all_data_from_bq = MagicMock()
         self.mock_fetch_api_data = MagicMock()
-        self.mock_upload_to_gcs = MagicMock()
         self.mock_append_to_bigquery_helper = MagicMock() # For _append_new_data_to_bigquery
         self.mock_display_data = MagicMock()
         # process_and_update_master_data will be imported and run directly.
@@ -329,7 +328,6 @@ class TestHandleFetchDataAction(unittest.TestCase):
         return {
             'load_all_data_from_bq': self.mock_load_all_data_from_bq,
             'fetch_api_data': self.mock_fetch_api_data,
-            'upload_to_gcs': self.mock_upload_to_gcs,
             '_append_new_data_to_bigquery': self.mock_append_to_bigquery_helper,
             'display_data': self.mock_display_data,
             # 'process_and_update_master_data': self.mock_process_and_update_master_data # Not mocking this
@@ -348,24 +346,22 @@ class TestHandleFetchDataAction(unittest.TestCase):
 
             self.mock_load_all_data_from_bq.return_value = initial_master_data
             self.mock_fetch_api_data.return_value = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': api_establishments}}}
-            self.mock_upload_to_gcs.return_value = True # Simulate successful upload
+            # self.mock_upload_to_gcs.return_value = True # Simulate successful upload # Removed this line as mock_upload_to_gcs is removed
 
             result = handle_fetch_data_action(
                 coordinate_pairs_str="1.0,1.0", # Valid coordinates for _parse_coordinates
                 max_results=100,
-                gcs_destination_uri_str="gs://bucket/api_raw/",
                 master_list_uri_str="proj.dset.master_table",
-                gcs_master_output_uri_str="gs://bucket/master_out.json",
                 bq_full_path_str="proj.dset.master_table" # Using same table for append
             )
 
             self.mock_load_all_data_from_bq.assert_called_once_with("proj", "dset", "master_table")
             self.mock_fetch_api_data.assert_called_once() # Called once for the valid coordinate pair
 
-            # Check GCS uploads
-            self.assertEqual(self.mock_upload_to_gcs.call_count, 2)
-            self.mock_upload_to_gcs.assert_any_call(data=unittest.mock.ANY, destination_uri=unittest.mock.ANY) # Check API raw upload
-            self.mock_upload_to_gcs.assert_any_call(data=initial_master_data, destination_uri="gs://bucket/master_out.json") # Check master data upload
+            # Check GCS uploads # Removed GCS upload checks
+            # self.assertEqual(self.mock_upload_to_gcs.call_count, 2)
+            # self.mock_upload_to_gcs.assert_any_call(data=unittest.mock.ANY, destination_uri=unittest.mock.ANY) # Check API raw upload
+            # self.mock_upload_to_gcs.assert_any_call(data=initial_master_data, destination_uri="gs://bucket/master_out.json") # Check master data upload
 
             self.assertEqual(self.mock_display_data.call_count, 2) # Called for master_data and new_restaurants
             self.mock_append_to_bigquery_helper.assert_called_once()
@@ -380,16 +376,16 @@ class TestHandleFetchDataAction(unittest.TestCase):
 
 
             mock_st_global.success.assert_any_call("Total establishments fetched from all API calls: 1")
-            # Check for the specific success message with regex
-            expected_pattern = re.compile(r"Successfully uploaded combined raw API response to gs://bucket/api_raw/combined_api_response_.*\.json")
-            found_gcs_api_success_message = False
-            for call_args in mock_st_global.success.call_args_list:
-                args, _ = call_args
-                if args and isinstance(args[0], str) and expected_pattern.match(args[0]):
-                    found_gcs_api_success_message = True
-                    break
-            self.assertTrue(found_gcs_api_success_message, "Expected st.success call with GCS API response upload message was not found.")
-            mock_st_global.success.assert_any_call("Successfully uploaded master restaurant data to gs://bucket/master_out.json")
+            # Check for the specific success message with regex # Removed GCS success message checks
+            # expected_pattern = re.compile(r"Successfully uploaded combined raw API response to gs://bucket/api_raw/combined_api_response_.*\.json")
+            # found_gcs_api_success_message = False
+            # for call_args in mock_st_global.success.call_args_list:
+            #     args, _ = call_args
+            #     if args and isinstance(args[0], str) and expected_pattern.match(args[0]):
+            #         found_gcs_api_success_message = True
+            #         break
+            # self.assertTrue(found_gcs_api_success_message, "Expected st.success call with GCS API response upload message was not found.")
+            # mock_st_global.success.assert_any_call("Successfully uploaded master restaurant data to gs://bucket/master_out.json")
 
             self.assertEqual(len(result), 1) # Returns initial master data (1 item)
 
@@ -408,8 +404,6 @@ class TestHandleFetchDataAction(unittest.TestCase):
                 coordinate_pairs_str="1.0,1.0",
                 max_results=100,
                 master_list_uri_str="proj.dset.empty_table",
-                gcs_destination_uri_str="",
-                gcs_master_output_uri_str="",
                 bq_full_path_str="out_proj.out_dset.out_table"
             )
 
@@ -451,7 +445,6 @@ class TestHandleFetchDataAction(unittest.TestCase):
                 handle_fetch_data_action(
                     coordinate_pairs_str="0,0", max_results=100,
                     master_list_uri_str=invalid_uri,
-                    gcs_destination_uri_str="", gcs_master_output_uri_str="",
                     bq_full_path_str="out.proj.table"
                 )
 
@@ -488,7 +481,6 @@ class TestHandleFetchDataAction(unittest.TestCase):
             result = handle_fetch_data_action(
                 coordinate_pairs_str="0,0", max_results=100,
                 master_list_uri_str="proj.dset.master_table",
-                gcs_destination_uri_str="", gcs_master_output_uri_str="",
                 bq_full_path_str="out_proj.out_dset.out_table"
             )
 
