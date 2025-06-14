@@ -5,10 +5,13 @@ import streamlit as st # We will mock this heavily
 
 # Import functions from st_app.py
 # Assuming st_app.py is in the same directory or accessible via PYTHONPATH
-from st_app import fhrsid_lookup_logic, main_ui
+from st_app import fhrsid_lookup_logic, main_ui, handle_fetch_data_action
 # We also need to patch functions imported by st_app, like read_from_bigquery and update_manual_review
 # Also, BigQueryExecutionError may be raised by read_from_bigquery
 from bq_utils import BigQueryExecutionError
+# Import process_and_update_master_data as it's called by handle_fetch_data_action
+# and we want to let it run (not mock it directly)
+from data_processing import process_and_update_master_data
 
 # Helper class to simulate streamlit.SessionState more directly
 class MockSessionState(dict): # Inherit from dict for easier state management
@@ -306,3 +309,153 @@ class TestFhrsidLookupAndUpdateWorkflow(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(argv=['first-arg-is-ignored'], exit=False)
+
+
+@patch('st_app.st', autospec=True)
+class TestHandleFetchDataAction(unittest.TestCase):
+
+    def common_mocks(self, mock_st_global):
+        """Helper to create a dictionary of common mocks for patch.multiple."""
+        # Reset mocks for each test case if they are attributes of the test class
+        self.mock_load_all_data_from_bq = MagicMock()
+        self.mock_fetch_api_data = MagicMock()
+        self.mock_upload_to_gcs = MagicMock()
+        self.mock_write_to_bigquery_helper = MagicMock() # For _write_data_to_bigquery
+        self.mock_display_data = MagicMock()
+        # process_and_update_master_data will be imported and run directly.
+        # load_master_data is effectively replaced by load_all_data_from_bq for BQ path
+
+        return {
+            'load_all_data_from_bq': self.mock_load_all_data_from_bq,
+            'fetch_api_data': self.mock_fetch_api_data,
+            'upload_to_gcs': self.mock_upload_to_gcs,
+            '_write_data_to_bigquery': self.mock_write_to_bigquery_helper,
+            'display_data': self.mock_display_data,
+            # 'process_and_update_master_data': self.mock_process_and_update_master_data # Not mocking this
+        }
+
+    def test_successful_flow_with_data(self, mock_st_global):
+        """Test a successful run with initial data, API data, GCS and BQ writes."""
+        with patch.multiple('st_app', **self.common_mocks(mock_st_global)):
+            # Configure mock return values
+            initial_master_data = [{'FHRSID': 1, 'BusinessName': 'Old Cafe'}]
+            api_establishments = [{'FHRSID': 2, 'BusinessName': 'New Cafe', 'Geocode.Longitude': '1.0', 'Geocode.Latitude': '1.0'}]
+
+            self.mock_load_all_data_from_bq.return_value = initial_master_data
+            self.mock_fetch_api_data.return_value = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': api_establishments}}}
+            self.mock_upload_to_gcs.return_value = True # Simulate successful upload
+
+            result = handle_fetch_data_action(
+                coordinate_pairs_str="1.0,1.0", # Valid coordinates for _parse_coordinates
+                max_results=100,
+                gcs_destination_uri_str="gs://bucket/api_raw/",
+                master_list_uri_str="proj.dset.master_table",
+                gcs_master_output_uri_str="gs://bucket/master_out.json",
+                bq_full_path_str="out_proj.out_dset.out_table"
+            )
+
+            self.mock_load_all_data_from_bq.assert_called_once_with("proj", "dset", "master_table")
+            self.mock_fetch_api_data.assert_called_once() # Called once for the valid coordinate pair
+
+            # Check GCS uploads
+            self.assertEqual(self.mock_upload_to_gcs.call_count, 2)
+            self.mock_upload_to_gcs.assert_any_call(data=unittest.mock.ANY, destination_uri=unittest.mock.ANY) # Check API raw upload
+            self.mock_upload_to_gcs.assert_any_call(data=unittest.mock.ANY, destination_uri="gs://bucket/master_out.json") # Check master data upload
+
+            self.mock_display_data.assert_called_once()
+            self.mock_write_to_bigquery_helper.assert_called_once()
+
+            # Verify data passed to _write_data_to_bigquery (simplified check)
+            args, _ = self.mock_write_to_bigquery_helper.call_args
+            written_data = args[0]
+            self.assertEqual(len(written_data), 2) # Old Cafe + New Cafe
+            self.assertTrue(any(d['BusinessName'] == 'New Cafe' for d in written_data))
+
+            mock_st_global.success.assert_any_call("Total establishments fetched from all API calls: 1")
+            mock_st_global.success.assert_any_call(unittest.mock.stringMatching("Successfully uploaded combined raw API response to gs://bucket/api_raw/combined_api_response_.*.json"))
+            mock_st_global.success.assert_any_call("Successfully uploaded master restaurant data to gs://bucket/master_out.json")
+
+            self.assertEqual(len(result), 2)
+
+
+    def test_load_all_data_from_bq_returns_empty(self, mock_st_global):
+        """Test flow when master BQ table is empty or load_all_data_from_bq returns empty list."""
+        with patch.multiple('st_app', **self.common_mocks(mock_st_global)):
+            self.mock_load_all_data_from_bq.return_value = [] # Simulate empty master list from BQ
+            api_establishments = [{'FHRSID': 1, 'BusinessName': 'First Cafe', 'Geocode.Longitude': '1.0', 'Geocode.Latitude': '1.0'}]
+            self.mock_fetch_api_data.return_value = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': api_establishments}}}
+
+            result = handle_fetch_data_action(
+                coordinate_pairs_str="1.0,1.0",
+                max_results=100,
+                master_list_uri_str="proj.dset.empty_table",
+                gcs_destination_uri_str="",
+                gcs_master_output_uri_str="",
+                bq_full_path_str="out_proj.out_dset.out_table"
+            )
+
+            self.mock_load_all_data_from_bq.assert_called_once_with("proj", "dset", "empty_table")
+            mock_st_global.warning.assert_any_call("No data loaded from BigQuery table proj.dset.empty_table, or table is empty. Proceeding as if with an empty master list.")
+
+            self.mock_fetch_api_data.assert_called_once()
+            self.mock_write_to_bigquery_helper.assert_called_once()
+            args, _ = self.mock_write_to_bigquery_helper.call_args
+            written_data = args[0]
+            self.assertEqual(len(written_data), 1) # Only the new cafe
+            self.assertEqual(written_data[0]['BusinessName'], 'First Cafe')
+            self.assertEqual(len(result), 1)
+
+    def test_invalid_master_bq_identifier_format(self, mock_st_global):
+        """Test error handling for invalid master_list_uri_str format."""
+        with patch.multiple('st_app', **self.common_mocks(mock_st_global)):
+            invalid_uris = ["proj.dset", "invalid", "", "proj..table", ".dset.table"]
+            for invalid_uri in invalid_uris:
+                # Reset mocks for st.stop() and st.error() for each iteration
+                mock_st_global.reset_mock() # Resets all sub-mocks of mock_st_global like .error, .stop
+
+                handle_fetch_data_action(
+                    coordinate_pairs_str="0,0", max_results=100,
+                    master_list_uri_str=invalid_uri,
+                    gcs_destination_uri_str="", gcs_master_output_uri_str="",
+                    bq_full_path_str="out.proj.table"
+                )
+
+                if not invalid_uri:
+                    mock_st_global.error.assert_any_call("Master Restaurant BigQuery Table identifier is missing.")
+                elif len(invalid_uri.split('.')) != 3 or not all(p for p in invalid_uri.split('.')):
+                     mock_st_global.error.assert_any_call(unittest.mock.stringMatching(f"Invalid Master Restaurant BigQuery Table format"))
+
+                mock_st_global.stop.assert_called()
+                self.mock_fetch_api_data.assert_not_called() # Should stop before API call
+                self.mock_load_all_data_from_bq.assert_not_called() # Should stop before BQ load call
+                # Reset mocks for next iteration if they were part of self.common_mocks setup
+                self.mock_fetch_api_data.reset_mock()
+                self.mock_load_all_data_from_bq.reset_mock()
+
+
+    def test_api_fetches_no_new_establishments(self, mock_st_global):
+        """Test handling when API returns no new establishments."""
+        with patch.multiple('st_app', **self.common_mocks(mock_st_global)):
+            initial_master_data = [{'FHRSID': 1, 'BusinessName': 'Existing Cafe', 'first_seen': '2023-01-01'}]
+            self.mock_load_all_data_from_bq.return_value = initial_master_data
+            self.mock_fetch_api_data.return_value = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': []}}} # No new data
+
+            result = handle_fetch_data_action(
+                coordinate_pairs_str="0,0", max_results=100,
+                master_list_uri_str="proj.dset.master_table",
+                gcs_destination_uri_str="", gcs_master_output_uri_str="",
+                bq_full_path_str="out_proj.out_dset.out_table"
+            )
+
+            self.mock_load_all_data_from_bq.assert_called_once()
+            self.mock_fetch_api_data.assert_called_once()
+            mock_st_global.info.assert_any_call("No establishments found from any of the API calls. Nothing to process further.")
+            mock_st_global.stop.assert_called() # Expect st.stop if no API data
+
+            # Because of st.stop(), these should not be called if no API data
+            self.mock_write_to_bigquery_helper.assert_not_called()
+            # result should be the return from st.stop() or whatever the state is before it.
+            # Given st.stop() is called, the return value of handle_fetch_data_action itself is not standard.
+            # The primary check is that processing stops.
+            # Depending on st.stop() implementation in tests, result might be None or a special mock object.
+            # For this test, let's assume st.stop effectively halts execution, so no further assertions on 'result' length.

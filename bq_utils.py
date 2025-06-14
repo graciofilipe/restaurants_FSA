@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 from google.cloud import bigquery
-from typing import List # Removed Optional
+from typing import List, Dict, Any # Removed Optional, Added Dict, Any
 import re
 import pandas_gbq # Added import
+from google.auth.exceptions import DefaultCredentialsError # Added import
 
 # Custom Exceptions
 class BigQueryExecutionError(Exception):
@@ -13,6 +14,43 @@ class BigQueryExecutionError(Exception):
 class DataFrameConversionError(Exception):
     """Custom exception for errors during DataFrame conversion from BigQuery results."""
     pass
+
+def load_all_data_from_bq(project_id: str, dataset_id: str, table_id: str) -> List[Dict[str, Any]]:
+    """
+    Loads all data from a specified BigQuery table.
+
+    Args:
+        project_id: The Google Cloud project ID.
+        dataset_id: The BigQuery dataset ID.
+        table_id: The BigQuery table ID.
+
+    Returns:
+        A list of dictionaries, where each dictionary represents a row from the table.
+        Returns an empty list if the table is empty or if an error occurs during the process.
+    """
+    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+    query = f"SELECT * FROM `{table_ref_str}`"
+    print(f"Executing BigQuery query: {query}")
+
+    try:
+        df = pandas_gbq.read_gbq(query, project_id=project_id)
+        if df is not None and not df.empty:
+            return df.to_dict(orient='records')
+        else:
+            return []
+    except (pandas_gbq.gbq.GenericGBQException, DefaultCredentialsError) as e:
+        print(f"Error loading data from BigQuery table {table_ref_str}: {e}")
+        # As per plan, return an empty list in case of failure.
+        # If re-raising was preferred: raise BigQueryExecutionError(f"Failed to load data from {table_ref_str}") from e
+        return []
+    except AttributeError as e: # Handles case where df might be None and .empty or .to_dict is called
+        print(f"AttributeError during DataFrame processing for {table_ref_str}: {e}. This might indicate an issue with read_gbq's return value.")
+        return []
+    except Exception as e:
+        print(f"An unexpected error occurred while loading data from BigQuery table {table_ref_str}: {e}")
+        # As per plan, return an empty list for other unexpected errors.
+        # If re-raising was preferred: raise BigQueryExecutionError(f"An unexpected error occurred while loading data from {table_ref_str}") from e
+        return []
 
 def sanitize_column_name(column_name: str) -> str:
     """
