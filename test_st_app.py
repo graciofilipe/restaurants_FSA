@@ -1,4 +1,5 @@
 import unittest
+import re
 from unittest.mock import patch, MagicMock, PropertyMock, call
 import pandas as pd
 import streamlit as st # We will mock this heavily
@@ -372,7 +373,15 @@ class TestHandleFetchDataAction(unittest.TestCase):
             self.assertTrue(any(d['BusinessName'] == 'New Cafe' for d in written_data))
 
             mock_st_global.success.assert_any_call("Total establishments fetched from all API calls: 1")
-            mock_st_global.success.assert_any_call(unittest.mock.stringMatching("Successfully uploaded combined raw API response to gs://bucket/api_raw/combined_api_response_.*.json"))
+            # Check for the specific success message with regex
+            expected_pattern = re.compile(r"Successfully uploaded combined raw API response to gs://bucket/api_raw/combined_api_response_.*\.json")
+            found_gcs_api_success_message = False
+            for call_args in mock_st_global.success.call_args_list:
+                args, _ = call_args
+                if args and isinstance(args[0], str) and expected_pattern.match(args[0]):
+                    found_gcs_api_success_message = True
+                    break
+            self.assertTrue(found_gcs_api_success_message, "Expected st.success call with GCS API response upload message was not found.")
             mock_st_global.success.assert_any_call("Successfully uploaded master restaurant data to gs://bucket/master_out.json")
 
             self.assertEqual(len(result), 2)
@@ -423,7 +432,14 @@ class TestHandleFetchDataAction(unittest.TestCase):
                 if not invalid_uri:
                     mock_st_global.error.assert_any_call("Master Restaurant BigQuery Table identifier is missing.")
                 elif len(invalid_uri.split('.')) != 3 or not all(p for p in invalid_uri.split('.')):
-                     mock_st_global.error.assert_any_call(unittest.mock.stringMatching(f"Invalid Master Restaurant BigQuery Table format"))
+                    expected_pattern = re.compile(r"Invalid Master Restaurant BigQuery Table format")
+                    found_error_message = False
+                    for call_args in mock_st_global.error.call_args_list:
+                        args, _ = call_args
+                        if args and isinstance(args[0], str) and expected_pattern.search(args[0]): # Using search to find the substring
+                            found_error_message = True
+                            break
+                    self.assertTrue(found_error_message, "Expected st.error call with invalid BQ table format message was not found.")
 
                 mock_st_global.stop.assert_called()
                 self.mock_fetch_api_data.assert_not_called() # Should stop before API call
