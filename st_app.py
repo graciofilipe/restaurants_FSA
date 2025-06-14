@@ -334,7 +334,7 @@ def _append_new_data_to_bigquery(new_restaurants: List[Dict[str, Any]], project_
     # Define comprehensive schema for append operation
     # Ensures all expected columns from new_restaurants are included and correctly typed.
     bq_schema_for_append = [
-        bigquery.SchemaField(sanitize_column_name('FHRSID'), 'INTEGER'), # FHRSID is typically integer
+        bigquery.SchemaField(sanitize_column_name('FHRSID'), 'STRING'), # FHRSID is typically integer
         bigquery.SchemaField(sanitize_column_name('LocalAuthorityBusinessID'), 'STRING'),
         bigquery.SchemaField(sanitize_column_name('BusinessName'), 'STRING'),
         bigquery.SchemaField(sanitize_column_name('BusinessType'), 'STRING'),
@@ -402,10 +402,11 @@ def _append_new_data_to_bigquery(new_restaurants: List[Dict[str, Any]], project_
             # It's possible scores are not present for all records, so this might not be a warning if optional
             print(f"Info: Score column '{s_col_name}' not found in new restaurants DataFrame. Will be skipped if not in schema or be Null.")
 
-    # Ensure FHRSID is integer
+    # Ensure FHRSID is string
     s_fhrsid = sanitize_column_name('FHRSID')
     if s_fhrsid in df_new_restaurants.columns:
-        df_new_restaurants[s_fhrsid] = pd.to_numeric(df_new_restaurants[s_fhrsid], errors='coerce').astype('Int64')
+        # Convert all values in the column to string, including None or NA
+        df_new_restaurants[s_fhrsid] = df_new_restaurants[s_fhrsid].astype(str)
 
     s_business_type_id = sanitize_column_name('BusinessTypeID')
     if s_business_type_id in df_new_restaurants.columns:
