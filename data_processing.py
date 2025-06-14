@@ -93,8 +93,11 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
 
     for api_establishment in api_establishments:
         if isinstance(api_establishment, dict) and 'FHRSID' in api_establishment:
-            if api_establishment['FHRSID'] not in existing_fhrsid_set:
-                # Add required fields to the new establishment
+            # Convert FHRSID to string
+            fhrsid_str = str(api_establishment['FHRSID'])
+            if fhrsid_str not in existing_fhrsid_set:
+                # Use the string version of FHRSID
+                api_establishment['FHRSID'] = fhrsid_str
                 api_establishment['first_seen'] = today_date
                 api_establishment['manual_review'] = "not reviewed"
                 newly_added_restaurants.append(api_establishment)

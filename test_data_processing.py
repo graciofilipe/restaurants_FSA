@@ -203,6 +203,40 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         # Similar to above, this will result in api_establishments = []
         mock_st.info.assert_any_call("API response contained no establishments in 'EstablishmentDetail'.")
 
+    @patch('data_processing.datetime')
+    @patch('data_processing.st')
+    def test_fhrsid_is_string_after_processing(self, mock_st, mock_datetime):
+        """
+        Test that FHRSID is converted to a string if it's an integer in the API data.
+        """
+        # Setup mock for datetime.now().strftime()
+        mock_datetime.now.return_value.strftime.return_value = "2023-10-27"
+
+        master_data = [] # No existing master data
+
+        # API data with one establishment having an integer FHRSID
+        api_establishment_int_fhrsid = {'FHRSID': 123, 'name': 'Testaurant'}
+        api_data = {
+            'FHRSEstablishment': {
+                'EstablishmentCollection': {
+                    'EstablishmentDetail': [api_establishment_int_fhrsid]
+                }
+            }
+        }
+
+        new_restaurants = process_and_update_master_data(master_data, api_data)
+
+        # Assertions
+        self.assertEqual(len(new_restaurants), 1, "Should find one new restaurant")
+        mock_st.success.assert_called_once_with("Processed API response. Identified 1 new restaurant records to be added.")
+
+        added_restaurant = new_restaurants[0]
+        self.assertIsInstance(added_restaurant['FHRSID'], str, "FHRSID should be a string")
+        self.assertEqual(added_restaurant['FHRSID'], '123', "FHRSID should be the string '123'")
+        self.assertEqual(added_restaurant['name'], 'Testaurant')
+        self.assertEqual(added_restaurant['first_seen'], "2023-10-27")
+        self.assertEqual(added_restaurant['manual_review'], "not reviewed")
+
 
 if __name__ == '__main__':
     unittest.main()
