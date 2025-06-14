@@ -334,13 +334,47 @@ def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table
         # Convert to pandas Boolean type to handle NA properly if needed, though BQ might handle True/False/None directly
         df_subset[new_rating_pending_col] = df_subset[new_rating_pending_col].astype('boolean')
 
-    # Ensure fhrsid is string.
-    sanitized_fhrsid_col = 'fhrsid' # Based on sanitize_column_name('fhrsid')
-    if sanitized_fhrsid_col in df_subset.columns:
-        if df_subset[sanitized_fhrsid_col].dtype != 'object': # Check if it's not a string type
-            df_subset[sanitized_fhrsid_col] = df_subset[sanitized_fhrsid_col].astype(str)
+    # Dynamically handle fhrsid data type based on BigQuery schema for append operations.
+    # Record of previous attempts/fixes:
+    # - Originally, fhrsid was often cast to string by default in write/append functions.
+    # - This caused "Could not convert 'value' with type str: tried to convert to int64"
+    #   errors when appending to tables like 'fsa_master' where 'fhrsid' is INT64.
+    # - This fix inspects the bq_schema to apply appropriate type conversion for 'fhrsid'.
+    fhrsid_col_name = 'fhrsid' # Assuming 'fhrsid' is the sanitized column name in bq_schema and df_subset
+
+    if fhrsid_col_name in df_subset.columns:
+        fhrsid_bq_type = None
+        for field in bq_schema:
+            if field.name == fhrsid_col_name:
+                fhrsid_bq_type = field.field_type
+                break
+
+        if fhrsid_bq_type:
+            current_type = df_subset[fhrsid_col_name].dtype
+            print(f"FHRSID_DEBUG: Column '{fhrsid_col_name}' current initial dtype: {current_type}, Target BQ schema type: {fhrsid_bq_type}")
+
+            if fhrsid_bq_type in ['INTEGER', 'INT64', 'NUMERIC']:
+                # Convert to numeric. pd.to_numeric handles various input types including strings.
+                # errors='coerce' will turn unparseable strings into NaN.
+                print(f"FHRSID_DEBUG: Converting column '{fhrsid_col_name}' to numeric for BQ type {fhrsid_bq_type}.")
+                df_subset[fhrsid_col_name] = pd.to_numeric(df_subset[fhrsid_col_name], errors='coerce')
+                # Note: If FHRSID is a primary key or non-nullable INT64, NaNs (from coercion errors) could be an issue.
+                # This matches behavior of Geocode coordinate coercion.
+                print(f"FHRSID_DEBUG: Column '{fhrsid_col_name}' dtype after pd.to_numeric: {df_subset[fhrsid_col_name].dtype}")
+
+            elif fhrsid_bq_type == 'STRING':
+                # Convert to string if not already an object type (which pandas often uses for strings).
+                if current_type != 'object' and not pd.api.types.is_string_dtype(df_subset[fhrsid_col_name]):
+                    print(f"FHRSID_DEBUG: Converting column '{fhrsid_col_name}' to string for BQ type {fhrsid_bq_type}.")
+                    df_subset[fhrsid_col_name] = df_subset[fhrsid_col_name].astype(str)
+                else:
+                    print(f"FHRSID_DEBUG: Column '{fhrsid_col_name}' is already dtype {current_type}. Assuming string compatible for BQ STRING.")
+            else:
+                print(f"FHRSID_DEBUG: Column '{fhrsid_col_name}' is type {fhrsid_bq_type} in BQ schema. No explicit fhrsid-specific conversion applied here.")
+        else:
+            print(f"Warning: Column '{fhrsid_col_name}' (for FHRSID) not found in bq_schema. No fhrsid-specific type conversion applied.")
     else:
-        print(f"Warning: Column '{sanitized_fhrsid_col}' not found in DataFrame for append_to_bigquery.")
+        print(f"Warning: Column '{fhrsid_col_name}' (for FHRSID) not found in DataFrame for append_to_bigquery.")
 
     job_config = bigquery.LoadJobConfig(
         schema=bq_schema,
