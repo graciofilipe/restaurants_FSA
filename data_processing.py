@@ -71,14 +71,15 @@ def load_master_data(project_id: str, dataset_id: str, table_id: str, load_bq_fu
 
 def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Processes API data and identifies new establishments not present in the master data.
+    Processes API data and identifies new establishments not present in the master data,
+    ensuring no duplicates from the current API batch are added.
 
     Args:
         master_data: The current list of master restaurant data (used to check for existing FHRSIDs).
         api_data: The raw JSON data (as a dict) from the API.
 
     Returns:
-        A list of newly added restaurant dictionaries.
+        A list of newly added restaurant dictionaries, unique within this processing batch.
     """
     api_establishments = api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
     
@@ -88,44 +89,55 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
     elif not api_establishments: 
          st.info("API response contained no establishments in 'EstablishmentDetail'.")
 
-    # Ensure FHRSIDs in existing_fhrsid_set are strings
     existing_fhrsid_set = {str(est['FHRSID']) for est in master_data if isinstance(est, dict) and 'FHRSID' in est}
     today_date = datetime.now().strftime("%Y-%m-%d")
     newly_added_restaurants: List[Dict[str, Any]] = []
+    fhrsids_processed_in_this_batch = set() # New set to track FHRSIDs within the current batch
 
     for api_establishment in api_establishments:
         if isinstance(api_establishment, dict) and 'FHRSID' in api_establishment:
-            # Note: FHRSID is converted to string here for consistency within the list of dictionaries.
-            # The definitive data typing for BigQuery (e.g., to INT64 or STRING) is handled
-            # by the BigQuery utility functions (e.g., append_to_bigquery in bq_utils.py)
-            # when the DataFrame is prepared for loading, based on the target table's schema.
-            # Ensure FHRSID is treated as a string
+            # Ensure FHRSID is treated as a string for all comparisons and storage
             fhrsid_str = str(api_establishment['FHRSID'])
 
-            # FHRSID is now a string, ensure it's stored as such
+            # Update the FHRSID in the dictionary to its string version *before* any further processing
+            # This ensures that if the original FHRSID was, e.g., an integer, it's consistently a string.
             api_establishment['FHRSID'] = fhrsid_str
 
             if fhrsid_str not in existing_fhrsid_set:
-                api_establishment['first_seen'] = today_date
-                api_establishment['manual_review'] = "not reviewed"
+                # Check if this FHRSID has already been processed in the current batch
+                if fhrsid_str not in fhrsids_processed_in_this_batch:
+                    api_establishment['first_seen'] = today_date
+                    api_establishment['manual_review'] = "not reviewed"
 
-                # ---- NEW FILTERING LOGIC ----
-                processed_establishment = {}
-                for key in ORIGINAL_COLUMNS_TO_KEEP:
-                    if key in api_establishment:
-                        processed_establishment[key] = api_establishment[key]
-                    else:
-                        processed_establishment[key] = None # Set to None if key is missing
+                    # Filter and prepare the establishment data using ORIGINAL_COLUMNS_TO_KEEP
+                    processed_establishment = {}
+                    for key in ORIGINAL_COLUMNS_TO_KEEP:
+                        if key in api_establishment:
+                            processed_establishment[key] = api_establishment[key]
+                        else:
+                            # Ensure missing keys are explicitly set to None in the processed_establishment
+                            processed_establishment[key] = None
 
-                newly_added_restaurants.append(processed_establishment)
-                # ---- END NEW FILTERING LOGIC ----
-                # Note: We do not add to existing_fhrsid_set here as master_data is not modified by this function.
-                # If multiple identical new FHRSIDs are in api_data, they will all be added. This is consistent with previous behavior of adding all to master.
+                    # Crucially, ensure the 'FHRSID' in processed_establishment is the string version
+                    # This is vital if 'FHRSID' is part of ORIGINAL_COLUMNS_TO_KEEP.
+                    # The previous update `api_establishment['FHRSID'] = fhrsid_str` ensures this.
+                    # If 'FHRSID' was not in ORIGINAL_COLUMNS_TO_KEEP, it would need to be added like:
+                    # processed_establishment['FHRSID'] = fhrsid_str
+
+                    newly_added_restaurants.append(processed_establishment)
+                    fhrsids_processed_in_this_batch.add(fhrsid_str) # Add to batch tracking set
+                else:
+                    # Optional: Log that a duplicate FHRSID within the current API batch was skipped.
+                    # Using print for now, can be changed to st.info or a more formal logger.
+                    print(f"Skipping duplicate FHRSID {fhrsid_str} found within the current API batch (already processed).")
+            # else:
+                # Optional: Log that FHRSID was found in existing_fhrsid_set (already in BQ).
+                # print(f"FHRSID {fhrsid_str} already exists in BigQuery master data. Skipping.")
     
     count_new_restaurants = len(newly_added_restaurants)
     if count_new_restaurants > 0:
-        st.success(f"Processed API response. Identified {count_new_restaurants} new restaurant records to be added.")
+        st.success(f"Processed API response. Identified {count_new_restaurants} unique new restaurant records to be added.")
     else:
-        st.info("Processed API response. No new restaurant records identified.")
+        st.info("Processed API response. No new restaurant records identified (or all were duplicates within the batch or already in BigQuery).")
 
     return newly_added_restaurants
