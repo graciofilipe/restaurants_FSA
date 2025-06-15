@@ -498,7 +498,7 @@ def main_ui():
                     if not project_id or not dataset_id or not table_id:
                         raise ValueError("Each part of 'project.dataset.table' must be non-empty.")
 
-                    st.info(f"Fetching restaurants from the last {n_days} days from table {bq_table_full_path}...")
+                    st.info(f"Fetching recent restaurants from the last {n_days} days from {bq_table_full_path}...") # Made comprehensive
 
                     # Call bq_utils function
                     fetched_df = get_recent_restaurants(
@@ -509,11 +509,12 @@ def main_ui():
                     )
 
                     if fetched_df is not None and not fetched_df.empty:
+                        print(f"Fetched recent restaurants DataFrame shape: {fetched_df.shape}") # Print log
                         st.session_state.recent_restaurants_df = fetched_df
-                        st.success(f"Successfully fetched {len(fetched_df)} recent restaurants.")
+                        st.success(f"Successfully fetched {len(fetched_df)} recent restaurants.") # Confirmed
 
                         # Call create_recent_restaurants_temp_table here
-                        st.info("Attempting to create/update the 'recent_restaurants_temp' table in BigQuery...")
+                        st.info(f"Creating/updating temporary table '{project_id}.{dataset_id}.recent_restaurants_temp' with these restaurants...") # Made comprehensive
                         create_recent_restaurants_temp_table(
                             restaurants_df=fetched_df,
                             project_id=project_id,
@@ -553,21 +554,66 @@ def main_ui():
             else:
                 if st.button("Run Gemini Analysis on Recent Restaurants"):
                     # Define Gemini Prompt (can be made configurable later)
+                    st.info("Starting Gemini analysis process...") # Added
                     gemini_prompt = "Be succint and tell me what cuisine and dishes this specific London restaurant serve. \
                         Do not infer from the name of the restaurant. Instead base your answer on what you find in Google Search. \
                         Here is the Restaurant information: "
 
                     try:
                         # Call the Gemini analysis function
-                        st.info(f"Calling Gemini for Project: {project_id_for_gemini}, Dataset: {dataset_id_for_gemini}")
-                        call_gemini_with_fhrs_data(
-                            project_id=project_id_for_gemini,
-                            dataset_id=dataset_id_for_gemini,
-                            gemini_prompt=gemini_prompt,
-                            fhrs_ids=fhrs_ids_list
+                        st.info(f"Requesting Gemini analysis for restaurants in {st.session_state['current_project_id']}.{st.session_state['current_dataset_id']}...") # Made comprehensive
+                        insights_df = call_gemini_with_fhrs_data(
+                            project_id=st.session_state['current_project_id'],
+                            dataset_id=st.session_state['current_dataset_id'],
+                            gemini_prompt=gemini_prompt
                         )
-                    except:
-                        pass
+
+                        if insights_df is not None and not insights_df.empty:
+                            print(f"Received insights DataFrame shape: {insights_df.shape}") # Print log
+                            st.info("Preparing to update the main BigQuery table with Gemini insights...")
+                            main_table_path = bq_source_table_input # Get from UI input
+
+                            if not main_table_path:
+                                st.error("Main BigQuery table path is not available. Cannot update.")
+                                return # Or st.stop() if appropriate in Streamlit context
+
+                            try:
+                                main_project_id, main_dataset_id, main_table_id = main_table_path.split('.')
+                                if not all([main_project_id, main_dataset_id, main_table_id]):
+                                    raise ValueError("Each part of the main table path must be non-empty.")
+                            except ValueError as e:
+                                st.error(f"Invalid BigQuery table path for the main table: '{main_table_path}'. Error: {e}")
+                                return # Or st.stop()
+
+                            # Prepare insights_df for update
+                            if 'fhrsid' not in insights_df.columns:
+                                st.error("FHRSID column is missing in Gemini insights. Cannot update main table.")
+                                return # Or st.stop()
+                            if 'gemini_insights' not in insights_df.columns:
+                                st.error("gemini_insights column is missing. Cannot update main table.")
+                                return # Or st.stop()
+
+                            if 'manual_review' not in insights_df.columns:
+                                insights_df['manual_review'] = None # Add manual_review if not present
+
+                            print(f"Preparing to update main table {main_table_path} with {len(insights_df)} insights.") # Print log
+                            st.info(f"Attempting to update main table {main_table_path}...") # Added st.info
+
+                            update_success = update_gemini_and_review_in_bq(
+                                project_id=main_project_id,
+                                dataset_id=main_dataset_id,
+                                table_id=main_table_id,
+                                df_updates=insights_df
+                            )
+                            if update_success:
+                                st.success(f"Successfully updated table '{main_table_path}' with Gemini insights.")
+                            else:
+                                st.error(f"Failed to update table '{main_table_path}' with Gemini insights. Check logs for details.")
+                        else:
+                            st.warning("No insights were generated or returned, so the main table was not updated.")
+
+                    except Exception as e:
+                        st.error(f"An error occurred during Gemini analysis or subsequent table update: {e}")
 
 
 if __name__ == "__main__":
