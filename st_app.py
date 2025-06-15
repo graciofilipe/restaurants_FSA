@@ -18,8 +18,7 @@ from bq_utils import (
     append_to_bigquery, # Added for new flow
     BigQueryExecutionError,  # Added import
     DataFrameConversionError, # Added import
-    get_recent_restaurants,
-    update_gemini_and_review_in_bq
+    get_recent_restaurants
 )
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
 from recent_restaurant_analysis import call_gemini_with_fhrs_data, create_recent_restaurants_temp_table
