@@ -15,7 +15,12 @@ from data_processing import process_and_update_master_data
 class TestMainUI(unittest.TestCase):
     def test_main_ui_radio_options(self, mock_st_global):
         # Mock session state if it's accessed by main_ui before radio
-        mock_st_global.session_state = {'recent_restaurants_df': None}
+        # Change to MagicMock to allow attribute assignment like st.session_state.displaying_genai_temp
+        mock_st_global.session_state = MagicMock()
+        mock_st_global.session_state.recent_restaurants_df = None
+        # Other session state variables like 'current_project_id', 'current_dataset_id',
+        # and 'displaying_genai_temp' will be initialized by main_ui if not present,
+        # which MagicMock handles correctly for 'in' checks and attribute setting.
 
         main_ui()
 

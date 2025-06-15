@@ -447,6 +447,8 @@ def main_ui():
         st.session_state['current_project_id'] = None
     if 'current_dataset_id' not in st.session_state:
         st.session_state['current_dataset_id'] = None
+    if 'displaying_genai_temp' not in st.session_state: # Initialize new session state variable
+        st.session_state.displaying_genai_temp = False
 
 
     app_mode = st.radio("Choose an action:", ("Fetch API Data", "Recent Restaurant Analysis"))
@@ -523,6 +525,7 @@ def main_ui():
                         st.session_state['current_project_id'] = project_id
                         st.session_state['current_dataset_id'] = dataset_id
                         st.info(f"Project ID ({project_id}) and Dataset ID ({dataset_id}) stored in session state.")
+                        st.session_state.displaying_genai_temp = False # Reset flag
 
                     elif fetched_df is not None and fetched_df.empty:
                         st.session_state.recent_restaurants_df = pd.DataFrame() # Store empty df
@@ -538,7 +541,10 @@ def main_ui():
                     st.error(f"An error occurred while fetching recent restaurants: {e}")
                     st.session_state.recent_restaurants_df = None
 
-        if st.session_state.recent_restaurants_df is not None and not st.session_state.recent_restaurants_df.empty:
+        # Conditionally display the fetched recent restaurants DataFrame
+        if st.session_state.recent_restaurants_df is not None and \
+           not st.session_state.recent_restaurants_df.empty and \
+           not st.session_state.get('displaying_genai_temp', False):
             st.subheader("Fetched Recent Restaurants")
             st.dataframe(st.session_state.recent_restaurants_df)
 
@@ -719,6 +725,49 @@ def main_ui():
                         st.warning("No new Gemini insights or 'rejected' reviews to save.")
                 else:
                     st.warning("Required columns ('gemini_insights', 'manual_review') not found in the DataFrame. Cannot save.")
+
+            # Section to display genairesults_temp table
+            st.markdown("---")
+            st.subheader("View GenAI Processed Temporary Data")
+
+            # Create a placeholder for the DataFrame
+            genai_temp_data_placeholder = st.empty()
+
+            if st.button("Fetch GenAI Temp Data (genairesults_temp)"):
+                genai_temp_data_placeholder.empty() # Clear previous display
+                # Set flag to indicate genai_temp data is being displayed
+                st.session_state.displaying_genai_temp = True
+
+                project_id = st.session_state.get('current_project_id')
+                dataset_id = st.session_state.get('current_dataset_id')
+
+                if not project_id or not dataset_id:
+                    st.error("Project ID or Dataset ID is not available in session state. Please fetch recent restaurants first.")
+                    st.session_state.displaying_genai_temp = False # Reset flag
+                else:
+                    table_id = "genairesults_temp"
+                    st.info(f"Fetching data from {project_id}.{dataset_id}.{table_id}...")
+                    try:
+                        genai_temp_df = load_all_data_from_bq(project_id, dataset_id, table_id)
+                        if genai_temp_df is not None and not genai_temp_df.empty:
+                            st.success(f"Successfully fetched {len(genai_temp_df)} records from {table_id}.")
+                            with genai_temp_data_placeholder.container():
+                                st.dataframe(genai_temp_df)
+                        elif genai_temp_df is not None and genai_temp_df.empty:
+                            st.warning(f"The table {table_id} exists but is empty.")
+                            with genai_temp_data_placeholder.container():
+                                st.info(f"No data to display from {table_id}.")
+                        else: # DataFrame is None, indicating an issue like table not found or query error
+                            st.error(f"Error: The table '{table_id}' could not be loaded. It might not exist or there was an issue connecting to BigQuery.")
+                            with genai_temp_data_placeholder.container():
+                                st.info(f"No data to display from {table_id}.") # Keep placeholder clean or with minimal info
+                            st.session_state.displaying_genai_temp = False # Reset flag
+
+                    except Exception as e: # Catch any other unexpected errors during the BQ call or processing
+                        st.error(f"An unexpected error occurred while fetching data from {table_id}: {e}")
+                        with genai_temp_data_placeholder.container():
+                            st.info(f"No data to display from {table_id}.") # Keep placeholder clean
+                        st.session_state.displaying_genai_temp = False # Reset flag
 
         elif st.session_state.recent_restaurants_df is not None and st.session_state.recent_restaurants_df.empty:
             st.info("No recent restaurants to display based on the last fetch attempt.")
