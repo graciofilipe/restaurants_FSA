@@ -24,7 +24,7 @@ from bq_utils import (
     update_gemini_and_review_in_bq
 )
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
-from recent_restaurant_analysis import call_gemini_with_fhrs_data
+from recent_restaurant_analysis import call_gemini_with_fhrs_data, create_recent_restaurants_temp_table
 
 def display_data(data_to_display: List[Dict[str, Any]]):
     """
@@ -765,6 +765,16 @@ def main_ui():
                     if fetched_df is not None and not fetched_df.empty:
                         st.session_state.recent_restaurants_df = fetched_df
                         st.success(f"Successfully fetched {len(fetched_df)} recent restaurants.")
+
+                        # Call create_recent_restaurants_temp_table here
+                        st.info("Attempting to create/update the 'recent_restaurants_temp' table in BigQuery...")
+                        create_recent_restaurants_temp_table(
+                            restaurants_df=fetched_df,
+                            project_id=project_id,
+                            dataset_id=dataset_id
+                        )
+                        # The create_recent_restaurants_temp_table function has its own st.success/st.error messages.
+
                     elif fetched_df is not None and fetched_df.empty:
                         st.session_state.recent_restaurants_df = pd.DataFrame() # Store empty df
                         st.warning("No recent restaurants found for the given criteria.")
