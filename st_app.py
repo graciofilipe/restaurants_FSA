@@ -19,9 +19,12 @@ from bq_utils import (
     load_all_data_from_bq, # Added import
     append_to_bigquery, # Added for new flow
     BigQueryExecutionError,  # Added import
-    DataFrameConversionError # Added import
+    DataFrameConversionError, # Added import
+    get_recent_restaurants,
+    update_gemini_and_review_in_bq
 )
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
+from recent_restaurant_analysis import call_gemini_with_fhrs_data
 
 def display_data(data_to_display: List[Dict[str, Any]]):
     """
@@ -556,7 +559,8 @@ def handle_fetch_data_action(
     # This displays the initial master_restaurant_data. If the display should reflect the appended data,
     # it would need to either re-load from BQ or combine master_restaurant_data + new_restaurants (if df versions are compatible).
     # For now, sticking to displaying initial load.
-    st.info("Displaying master data loaded from BigQuery (before current API fetch append). Refresh page or re-fetch to see appended data reflected in subsequent loads.")
+    st.info("Displaying master data loaded from BigQuery (before current API fetch append).") # Modified the info message slightly
+    display_data(master_restaurant_data) # Explicitly display the loaded master data
 
     # If new_restaurants were found, also display them for clarity in this run
     if new_restaurants:
@@ -581,9 +585,11 @@ def main_ui():
         st.session_state.fhrsid_input_str_ui = ""
     if 'bq_table_lookup_input_str_ui' not in st.session_state:
         st.session_state.bq_table_lookup_input_str_ui = ""
+    if 'recent_restaurants_df' not in st.session_state:
+        st.session_state.recent_restaurants_df = None
 
 
-    app_mode = st.radio("Choose an action:", ("Fetch API Data", "FHRSID Lookup"))
+    app_mode = st.radio("Choose an action:", ("Fetch API Data", "FHRSID Lookup", "Recent Restaurant Analysis"))
 
     if app_mode == "Fetch API Data":
         # Reset FHRSID lookup session state if switching modes
@@ -713,6 +719,245 @@ def main_ui():
         elif st.session_state.fhrsid_input_str_ui and st.session_state.fhrsid_df.empty and st.button("Retry Lookup?", key="retry_lookup"): # Existing retry
              # This button is just an example, the main "Lookup FHRSIDs" serves this purpose
              st.write("Click 'Lookup FHRSIDs' again to retry.")
+
+    elif app_mode == "Recent Restaurant Analysis":
+        st.subheader("Analyze Recently Added Restaurants")
+
+        # Input for N_DAYS
+        n_days_input = st.number_input(
+            "Enter the number of days to look back for recent restaurants (N_DAYS):",
+            min_value=1,
+            max_value=365,  # Max one year
+            value=7,        # Default to 7 days
+            help="Enter an integer between 1 and 365."
+        )
+
+        # Input for BigQuery table
+        bq_source_table_input = st.text_input(
+            "Enter BigQuery source table (project.dataset.table):",
+            placeholder="e.g., myproject.mydataset.restaurants"
+        )
+
+        # Button to trigger fetching
+        if st.button("Fetch Recent Restaurants"):
+            # Get inputs
+            n_days = n_days_input
+            bq_table_full_path = bq_source_table_input.strip()
+
+            if not bq_table_full_path:
+                st.error("BigQuery source table path is required.")
+            else:
+                try:
+                    project_id, dataset_id, table_id = bq_table_full_path.split('.')
+                    if not project_id or not dataset_id or not table_id:
+                        raise ValueError("Each part of 'project.dataset.table' must be non-empty.")
+
+                    st.info(f"Fetching restaurants from the last {n_days} days from table {bq_table_full_path}...")
+
+                    # Call bq_utils function
+                    fetched_df = get_recent_restaurants(
+                        N_DAYS=n_days,
+                        project_id=project_id,
+                        dataset_id=dataset_id,
+                        table_id=table_id
+                    )
+
+                    if fetched_df is not None and not fetched_df.empty:
+                        st.session_state.recent_restaurants_df = fetched_df
+                        st.success(f"Successfully fetched {len(fetched_df)} recent restaurants.")
+                    elif fetched_df is not None and fetched_df.empty:
+                        st.session_state.recent_restaurants_df = pd.DataFrame() # Store empty df
+                        st.warning("No recent restaurants found for the given criteria.")
+                    else: # Should ideally not happen if get_recent_restaurants returns empty df on error/no data
+                        st.session_state.recent_restaurants_df = None
+                        st.error("Failed to fetch recent restaurants. The function returned None.")
+
+                except ValueError as ve:
+                    st.error(f"Invalid BigQuery Table Path format: '{bq_table_full_path}'. Expected 'project.dataset.table'. Error: {ve}")
+                    st.session_state.recent_restaurants_df = None
+                except Exception as e:
+                    st.error(f"An error occurred while fetching recent restaurants: {e}")
+                    st.session_state.recent_restaurants_df = None
+
+        if st.session_state.recent_restaurants_df is not None and not st.session_state.recent_restaurants_df.empty:
+            st.subheader("Fetched Recent Restaurants")
+            st.dataframe(st.session_state.recent_restaurants_df)
+
+            if 'fhrsid' not in st.session_state.recent_restaurants_df.columns:
+                st.warning("The fetched data does not contain an 'fhrsid' column, which is required for Gemini analysis.")
+            else:
+                if st.button("Run Gemini Analysis on Recent Restaurants"):
+                    df_to_analyze = st.session_state.recent_restaurants_df.copy()
+
+                    # Filter for restaurants that need analysis
+                    # If 'gemini_insights' column exists, filter rows where it's null/empty
+                    if 'gemini_insights' in df_to_analyze.columns:
+                        df_needing_analysis = df_to_analyze[df_to_analyze['gemini_insights'].isnull() | (df_to_analyze['gemini_insights'] == '')]
+                    else:
+                        # If column doesn't exist, all are considered needing analysis
+                        df_needing_analysis = df_to_analyze
+
+                    if df_needing_analysis.empty:
+                        st.info("No restaurants needing Gemini analysis (either all already have insights or no restaurants fetched).")
+                    else:
+                        st.info(f"Found {len(df_needing_analysis)} restaurants for Gemini analysis.")
+
+                        fhrs_ids_list = df_needing_analysis['fhrsid'].astype(str).tolist() # Ensure FHRSIDs are strings
+
+                        # Define Gemini Prompt (can be made configurable later)
+                        gemini_prompt = (
+                            "Be succint and tell me what cuisine and dishes this specific London restaurant serve. "
+                            "Do not infer from the name of the restaurant, and base your answer on what you find in your search. \n"
+                            "Here is the Restaurant information: "
+                        )
+
+                        try:
+                            # Call the Gemini analysis function
+                            # Ensure df_needing_analysis has the columns expected by call_gemini_with_fhrs_data
+                            # (businessname, addressline1, etc.) - these should come from get_recent_restaurants
+                            gemini_results_df = call_gemini_with_fhrs_data(
+                                fhrs_ids=fhrs_ids_list,
+                                gemini_prompt=gemini_prompt,
+                                df=df_needing_analysis # Pass the filtered DataFrame
+                            )
+
+                            if gemini_results_df is not None and not gemini_results_df.empty:
+                                st.success(f"Gemini analysis completed for {len(gemini_results_df)} restaurants.")
+
+                                # Merge results back into the main session state DataFrame
+                                # Ensure 'fhrsid' in gemini_results_df is of the same type as in st.session_state.recent_restaurants_df
+                                # call_gemini_with_fhrs_data returns fhrsid as it was passed (string), so it should be fine.
+
+                                if 'gemini_insights' not in st.session_state.recent_restaurants_df.columns:
+                                    st.session_state.recent_restaurants_df['gemini_insights'] = pd.NA
+
+                                # Prepare for merge: gemini_results_df has 'fhrsid' and 'gemini_insights'
+                                # Set 'fhrsid' as index for easier update/merge
+                                gemini_results_df = gemini_results_df.set_index('fhrsid')
+
+                                # Update 'gemini_insights' in the main DataFrame
+                                for fhrsid, row in gemini_results_df.iterrows():
+                                    insights = row['gemini_insights']
+                                    # Ensure fhrsid in session state df is also string for matching
+                                    st.session_state.recent_restaurants_df['fhrsid'] = st.session_state.recent_restaurants_df['fhrsid'].astype(str)
+                                    st.session_state.recent_restaurants_df.loc[st.session_state.recent_restaurants_df['fhrsid'] == fhrsid, 'gemini_insights'] = insights
+
+                                # Also set 'manual_review' to 'rejected' for these updated rows
+                                if 'manual_review' not in st.session_state.recent_restaurants_df.columns:
+                                    st.session_state.recent_restaurants_df['manual_review'] = pd.NA # Or appropriate default like ''
+
+                                # FHRSIDs that received new insights
+                                updated_fhrsids = gemini_results_df.index.tolist()
+
+                                # Ensure fhrsid column in session state df is string for matching
+                                st.session_state.recent_restaurants_df['fhrsid'] = st.session_state.recent_restaurants_df['fhrsid'].astype(str)
+
+                                mask_updated = st.session_state.recent_restaurants_df['fhrsid'].isin(updated_fhrsids)
+                                st.session_state.recent_restaurants_df.loc[mask_updated, 'manual_review'] = "rejected"
+
+                                st.info("Default 'manual_review' status set to 'rejected' for analyzed restaurants.")
+                                # Re-display to show this change as well
+                                st.dataframe(st.session_state.recent_restaurants_df)
+
+                            elif gemini_results_df is not None and gemini_results_df.empty:
+                                st.warning("Gemini analysis ran but returned no insights.")
+                            else:
+                                st.error("Gemini analysis failed or returned unexpected data (None).")
+
+                        except Exception as e:
+                            st.error(f"An error occurred during Gemini analysis: {e}")
+
+            # Add the Save button
+            st.markdown("---") # Add a separator
+            if st.button("Save Gemini Insights and Review Status to BigQuery"):
+                # Placeholder for BQ update logic
+                st.info("Attempting to save changes to BigQuery...")
+
+                # Logic to call BQ update function will be added here in a later step.
+                # For now, just identify which rows to update.
+                # df_to_save = st.session_state.recent_restaurants_df[
+                #     st.session_state.recent_restaurants_df['fhrsid'].isin(updated_fhrsids) # Assuming updated_fhrsids is accessible
+                # ] # This assumes updated_fhrsids from the Gemini run is available in this scope.
+                  # This might need adjustment: we need to save rows that have 'gemini_insights'
+                  # and 'manual_review' set by this session's analysis.
+                  # A better way might be to filter st.session_state.recent_restaurants_df for rows
+                  # where 'gemini_insights' is not null AND 'manual_review' is 'rejected' (or similar marker).
+
+                # Revised logic for identifying rows to save:
+                # We need rows that have 'gemini_insights' populated in this session
+                # and potentially 'manual_review' set to 'rejected'.
+                # Let's assume any row in st.session_state.recent_restaurants_df that has a non-null 'gemini_insights'
+                # and a 'manual_review' column present is a candidate for saving.
+
+                if 'gemini_insights' in st.session_state.recent_restaurants_df.columns and \
+                   'manual_review' in st.session_state.recent_restaurants_df.columns:
+
+                    # Select rows where gemini_insights is not null (or not NA)
+                    # These are the rows modified by the Gemini analysis in the current session
+                    rows_with_new_insights = st.session_state.recent_restaurants_df[
+                        st.session_state.recent_restaurants_df['gemini_insights'].notna() &
+                        (st.session_state.recent_restaurants_df['gemini_insights'] != '')
+                    ]
+
+                    # Further, we are interested in those that also have manual_review = "rejected" (set by our script)
+                    # Or more broadly, any row that has a gemini_insight now.
+                    # The key columns to update are 'fhrsid', 'gemini_insights', 'manual_review'.
+
+                    df_to_save_final = rows_with_new_insights[['fhrsid', 'gemini_insights', 'manual_review']].copy()
+
+                    if not df_to_save_final.empty:
+                        st.write("Data to be saved to BigQuery:")
+                        st.dataframe(df_to_save_final)
+                        # Actual call to bq_utils function will be here:
+                        # e.g., success = update_restaurant_analysis_data(df_to_save_final, project_id, dataset_id, table_id)
+                        # if success:
+                        #   st.success("Successfully saved changes to BigQuery.")
+                        # else:
+                        #   st.error("Failed to save changes to BigQuery.")
+                        # st.warning("BigQuery update functionality is not yet fully implemented.") # Remove this line
+
+                        # Get project_id, dataset_id, table_id from the input field
+                        # This assumes bq_source_table_input is still available and holds the correct table path
+                        bq_full_path_save = bq_source_table_input.strip() # bq_source_table_input is from the top of the section
+
+                        if not bq_full_path_save:
+                            st.error("BigQuery source table path is missing. Cannot save.")
+                        else:
+                            try:
+                                project_id_save, dataset_id_save, table_id_save = bq_full_path_save.split('.')
+                                if not project_id_save or not dataset_id_save or not table_id_save:
+                                    raise ValueError("Each part of 'project.dataset.table' must be non-empty for saving.")
+
+                                st.info(f"Saving updates for {len(df_to_save_final)} restaurants to {bq_full_path_save}...")
+
+                                success = update_gemini_and_review_in_bq(
+                                    project_id=project_id_save,
+                                    dataset_id=dataset_id_save,
+                                    table_id=table_id_save,
+                                    df_updates=df_to_save_final
+                                )
+
+                                if success:
+                                    # User message is handled by the bq_utils function, but an additional one here is fine.
+                                    st.success("Successfully saved changes to BigQuery.")
+                                    # Optionally, clear or mark saved rows if needed, or prompt user to re-fetch.
+                                    # For now, the data remains in st.session_state.recent_restaurants_df as is.
+                                    # If user runs Gemini again, it won't re-analyze these due to existing insights.
+                                else:
+                                    # Error message is handled by bq_utils, but one here is fine.
+                                    st.error("Failed to save changes to BigQuery. Check logs for details.")
+
+                            except ValueError as ve:
+                                st.error(f"Invalid BigQuery Table Path for saving: '{bq_full_path_save}'. Error: {ve}")
+                            except Exception as e:
+                                st.error(f"An unexpected error occurred during the save operation: {e}")
+                    else:
+                        st.warning("No new Gemini insights or 'rejected' reviews to save.")
+                else:
+                    st.warning("Required columns ('gemini_insights', 'manual_review') not found in the DataFrame. Cannot save.")
+
+        elif st.session_state.recent_restaurants_df is not None and st.session_state.recent_restaurants_df.empty:
+            st.info("No recent restaurants to display based on the last fetch attempt.")
 
 
 if __name__ == "__main__":

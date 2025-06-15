@@ -1,3 +1,4 @@
+import streamlit as st
 from google import genai
 from google.genai import types
 import pandas as pd
@@ -60,7 +61,7 @@ def call_gemini_with_fhrs_data(fhrs_ids, gemini_prompt, df):
                 ),
             ]
             n = len(results_list)
-            print(f"--- Querying for fhrsid: {fhrs_id} ({restaurant_name}) , number {n}---")
+            st.info(f"--- Querying for fhrsid: {fhrs_id} ({restaurant_name}) , number {n}---")
 
             # 4. Call the model using the client, passing all configurations.
             # Note: The SDK doesn't support a direct 'chat' mode with the Client interface.
@@ -78,29 +79,8 @@ def call_gemini_with_fhrs_data(fhrs_ids, gemini_prompt, df):
             })
 
         else:
-            print(f"No data found for fhrsid: {fhrs_id}")
+            st.warning(f"No data found for fhrsid: {fhrs_id}")
 
         results_df = pd.DataFrame(results_list)
 
     return results_df
-
-
-new_df = get_recent_restaurants(N_DAYS=N_DAYS, project_id=, dataset_id=, table_id=)
-
-# only run the gemini analysis on the restaurants where the gemini_insights column is empty:
-new_df = new_df[new_df['gemini_insights'].isnull()]
-
-fhrs_ids_list = new_df['fhrsid'].tolist()
-gemini_prompt = "Be succint and tell me what cuisine and dishes this specific London restaurant serve. \
-    Do not infer from the name of the restaurant, and base your answer on what you find in your search. \n \
-    Here is the Restaurant information: "
-
-gemini_results_df = call_gemini_with_fhrs_data(fhrs_ids_list, gemini_prompt, new_df)
-
-# Merge the two dataframes on 'fhrsid'
-new_and_gemini_merged_df = pd.merge(new_df, gemini_results_df, on='fhrsid', how='left')
-
-# assume most will be rejected and attribute this value by default
-new_and_gemini_merged_df["manual_review"] = "rejected"
-
-# display the new_and_gemini_merged_df dataframes on the streamlit app
