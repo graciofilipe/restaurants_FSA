@@ -33,7 +33,7 @@ def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: 
     genairesults_temp_table_full_id = f"{project_id}.{dataset_id}.genairesults_temp"
     recent_restaurants_temp_table_full_id = f"{project_id}.{dataset_id}.recent_restaurants_temp"
 
-    model_params_json_lit = "JSON '''{ \"tools\": [{\"googleSearch\": {}}], \"generationConfig\": { \"temperature\": 1, \"maxOutputTokens\": 8192, \"topP\": 1, \"seed\": 0 } }'''"
+    model_params_json_lit = "JSON '''{ \"tools\": [{\"googleSearch\": {}}], \"generationConfig\": { \"temperature\": 0.2, \"maxOutputTokens\": 8192, \"topP\": 1, \"seed\": 0 } }'''"
 
     # This SQL query assumes that the table referenced by `recent_restaurants_temp_table_full_id`
     # (i.e., `recent_restaurants_temp`) already has a column named `gemini_insights`.
@@ -42,6 +42,7 @@ def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: 
     sql_query_create_results = f"""
     CREATE OR REPLACE TABLE `{genairesults_temp_table_full_id}` AS
     SELECT
+      fhrsid,
       AI.GENERATE(
         ( '{gemini_prompt}',
           businessname,
@@ -59,7 +60,11 @@ def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: 
         endpoint => 'gemini-2.0-flash-001',
         model_params => {model_params_json_lit}
       ).result AS gemini_insights,
-      fhrsid
+      businessname,
+      addressline1,
+      addressline2,
+      addressline3,
+      postcode
     FROM
       `{recent_restaurants_temp_table_full_id}`
     WHERE
