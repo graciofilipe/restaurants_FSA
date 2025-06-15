@@ -1,4 +1,5 @@
 import json
+import pandas as pd
 import streamlit as st
 from datetime import datetime
 from typing import List, Dict, Any, Callable, Tuple, Optional
@@ -153,3 +154,52 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
         st.info("Processed API response. No new restaurant records identified (or all were duplicates within the batch or already in BigQuery).")
 
     return newly_added_restaurants
+
+def load_data_from_csv(uploaded_file: Any) -> Optional[pd.DataFrame]:
+    """
+    Loads data from an uploaded CSV file into a Pandas DataFrame.
+    Checks for 'fhrsid' column (case-insensitive) and converts it to string.
+
+    Args:
+        uploaded_file: A Streamlit UploadedFile object (or any file-like object
+                       compatible with pandas.read_csv).
+
+    Returns:
+        A Pandas DataFrame if successful and 'fhrsid' column is present,
+        otherwise None.
+    """
+    try:
+        df = pd.read_csv(uploaded_file)
+        if df.empty:
+            st.error("The uploaded CSV file is empty.")
+            return None
+
+        # Search for 'fhrsid' column case-insensitively
+        fhrsid_col_name = None
+        for col in df.columns:
+            if col.lower() == 'fhrsid':
+                fhrsid_col_name = col
+                break
+
+        if fhrsid_col_name is None:
+            st.error("The required 'fhrsid' column is missing in the uploaded CSV file.")
+            return None
+
+        # Convert fhrsid column to string
+        df[fhrsid_col_name] = df[fhrsid_col_name].astype(str)
+
+        # Rename column to 'fhrsid' if it's not already named that (for consistency)
+        if fhrsid_col_name != 'fhrsid':
+            df.rename(columns={fhrsid_col_name: 'fhrsid'}, inplace=True)
+
+        return df
+
+    except pd.errors.EmptyDataError:
+        st.error("The uploaded CSV file is empty or contains no data.")
+        return None
+    except pd.errors.ParserError:
+        st.error("Error parsing the CSV file. Please ensure it's a valid CSV format.")
+        return None
+    except Exception as e:
+        st.error(f"An unexpected error occurred while reading the CSV file: {e}")
+        return None

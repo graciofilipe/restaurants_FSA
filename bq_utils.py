@@ -9,6 +9,7 @@ ORIGINAL_COLUMNS_TO_KEEP = [
 ]
 
 from google.cloud import bigquery
+from google.cloud.bigquery.client import Client # Explicit import for type hinting if needed elsewhere
 from typing import List, Dict, Any # Removed Optional, Added Dict, Any
 import re
 import pandas_gbq # Added import
@@ -22,6 +23,9 @@ class BigQueryExecutionError(Exception):
 class DataFrameConversionError(Exception):
     """Custom exception for errors during DataFrame conversion from BigQuery results."""
     pass
+
+# Module-level constant for FHRSID column name
+FHRSID_COLNAME = "fhrsid"
 
 def load_all_data_from_bq(project_id: str, dataset_id: str, table_id: str) -> List[Dict[str, Any]]:
     """
@@ -297,3 +301,79 @@ def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table
         print(f"Error appending data to BigQuery table {table_ref_str}: {e}")
         return False
 
+def update_rows_in_bigquery(project_id: str, dataset_id: str, table_id: str, fhrsid: str, update_data: Dict[str, Any]) -> bool:
+    """
+    Updates specific rows in a BigQuery table based on FHRSID.
+
+    Args:
+        project_id: The Google Cloud project ID.
+        dataset_id: The BigQuery dataset ID.
+        table_id: The BigQuery table ID.
+        fhrsid: The FHRSID value to identify the rows to update.
+        update_data: A dictionary where keys are column names and values are the new values.
+
+    Returns:
+        True if the update was successful, False otherwise.
+    """
+    if not update_data:
+        print("No data provided for update.")
+        return False
+
+    client = bigquery.Client(project=project_id)
+    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+
+    set_clauses = []
+    for column, value in update_data.items():
+        if isinstance(value, str):
+            # Escape single quotes within the string value itself
+            sanitized_value = value.replace("'", "''")
+            set_clauses.append(f"`{column}` = '{sanitized_value}'")
+        elif isinstance(value, bool):
+            set_clauses.append(f"`{column}` = {str(value).upper()}")
+        elif isinstance(value, (int, float)):
+            set_clauses.append(f"`{column}` = {value}")
+        elif value is None:
+            set_clauses.append(f"`{column}` = NULL")
+        else:
+            # Fallback for other types, assuming string representation is acceptable
+            # or specific handling might be needed for other types (e.g., DATE, TIMESTAMP)
+            sanitized_value = str(value).replace("'", "''")
+            print(f"Warning: Column '{column}' has an unhandled type {type(value)}. Converting to string: '{sanitized_value}'")
+            set_clauses.append(f"`{column}` = '{sanitized_value}'")
+
+
+    if not set_clauses:
+        print("No valid SET clauses generated from update_data.")
+        return False
+
+    set_statement = ", ".join(set_clauses)
+
+    # FHRSID_COLNAME is used here. fhrsid value is already a string.
+    # Ensure fhrsid value itself is escaped for single quotes if it can contain them,
+    # though FHRSIDs are typically numeric strings and less likely to have quotes.
+    escaped_fhrsid_value = fhrsid.replace("'", "''")
+    query = f"UPDATE `{table_ref_str}` SET {set_statement} WHERE {FHRSID_COLNAME} = '{escaped_fhrsid_value}'"
+
+    print(f"Executing BigQuery UPDATE query: {query}")
+
+    try:
+        query_job = client.query(query)
+        query_job.result()  # Wait for the query to complete
+        if query_job.errors:
+            print(f"BigQuery UPDATE failed with errors: {query_job.errors}")
+            # st.error(f"BigQuery UPDATE failed: {query_job.errors}") # Use st.error if in Streamlit context
+            return False
+        # Check if any rows were actually updated, if possible and relevant.
+        # num_dml_affected_rows is not available for UPDATE in all cases or might need specific API versions.
+        # For now, success is defined by no errors during execution.
+        print(f"Successfully updated rows in {table_ref_str} for {FHRSID_COLNAME} = '{escaped_fhrsid_value}'.")
+        # st.success(f"Successfully updated rows in {table_ref_str} for {FHRSID_COLNAME} = '{fhrsid}'.")
+        return True
+    except DefaultCredentialsError as e:
+        print(f"BigQuery authentication error: {e}. Ensure your environment is configured correctly for ADC.")
+        # st.error(f"BigQuery authentication error: {e}")
+        return False
+    except Exception as e:
+        print(f"An error occurred during BigQuery UPDATE: {e}")
+        # st.error(f"An error occurred during BigQuery UPDATE: {e}")
+        return False
