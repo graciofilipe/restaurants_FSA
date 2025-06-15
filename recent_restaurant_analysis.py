@@ -1,91 +1,93 @@
 import streamlit as st
-from google import genai
-from google.genai import types
 import pandas as pd
-from bq_utils import get_recent_restaurants
-import bq_utils
 from google.cloud import bigquery
+# from bq_utils import get_recent_restaurants # Assuming this is still needed elsewhere or will be handled
+import bq_utils # Assuming this is still needed elsewhere or will be handled
 
 N_DAYS = 1
 
 
-def call_gemini_with_fhrs_data(fhrs_ids, gemini_prompt, df):
+def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: str, fhrs_ids: list = None):
     """
-    For each FHRSID, this function calls Vertex AI Gemini with a prompt that includes
-    the restaurant's name and address, using Google Search for grounding.
-    This version uses the genai.Client() initialization pattern.
+    Uses BigQuery AI.GENERATE to get insights for restaurants from 'recent_restaurants_temp'
+    and stores them in 'genairesults_temp'.
 
     Args:
-        fhrs_ids (list): A list of FHRSIDs.
-        gemini_prompt (str): The base Gemini prompt.
-        df (pd.DataFrame): The DataFrame containing restaurant data.
+        project_id (str): Google Cloud project ID.
+        dataset_id (str): BigQuery dataset ID.
+        gemini_prompt (str): The base prompt for Gemini.
+        fhrs_ids (list, optional): List of FHRSIDs. Currently not used in the BQ query
+                                   but kept for potential future use or logging.
 
     Returns:
-        None: Prints the Gemini response for each FHRSID.
+        pd.DataFrame: DataFrame with 'fhrsid' and 'gemini_insights' from 'genairesults_temp',
+                      or an empty DataFrame on error or if no results.
     """
-    # 1. Initialize the client to use Vertex AI, specifying project and location.
-    # This is the new, recommended pattern.
-    client = genai.Client(
-        vertexai=True,
-        project="filipegracio-ai-learning",
-        location="us-central1",  # A specific region is required, 'global' is not supported for this.
-    )
+    # Ensure necessary imports are at the top of the file:
+    # import streamlit as st
+    # from google.cloud import bigquery
+    # import pandas as pd
 
-    # 2. Define the model and the tool configuration.
-    # Using a recent preview model as per your example.
-    model_name = "gemini-2.5-flash-preview-05-20"
-    tools = [
-        types.Tool(google_search=types.GoogleSearch()),
-    ]
+    client = bigquery.Client(project=project_id)
 
-    # Define the generation configuration, including the tools.
-    generation_config = types.GenerateContentConfig(tools=tools)
-    results_list=[]
-    for fhrs_id in fhrs_ids:
-        restaurant_data = df[df['fhrsid'] == fhrs_id]
+    genairesults_temp_table_full_id = f"{project_id}.{dataset_id}.genairesults_temp"
+    recent_restaurants_temp_table_full_id = f"{project_id}.{dataset_id}.recent_restaurants_temp"
 
-        if not restaurant_data.empty:
-            restaurant_name = restaurant_data['businessname'].iloc[0]
-            address_fields = ["addressline1", "addressline2", "addressline3", "postcode", "localauthorityname"]
-            address_info = ", ".join(
-                str(restaurant_data[field].iloc[0])
-                for field in address_fields
-                if pd.notna(restaurant_data[field].iloc[0]) and str(restaurant_data[field].iloc[0]).strip()
-            )
+    model_params_json_lit = "JSON '''{ \"tools\": [{\"googleSearch\": {}}], \"generationConfig\": { \"temperature\": 1, \"maxOutputTokens\": 8192, \"topP\": 1, \"seed\": 0 } }'''"
 
-            modified_prompt = f"{gemini_prompt} \n Restaurant Name: {restaurant_name}, \n Address: {address_info}"
+    # This SQL query assumes that the table referenced by `recent_restaurants_temp_table_full_id`
+    # (i.e., `recent_restaurants_temp`) already has a column named `gemini_insights`.
+    # If `gemini_insights` does not exist in `recent_restaurants_temp`, this query will fail.
+    # The original issue's query included `WHERE gemini_insights IS NULL`.
+    sql_query_create_results = f"""
+    CREATE OR REPLACE TABLE `{genairesults_temp_table_full_id}` AS
+    SELECT
+      AI.GENERATE(
+        ( '{gemini_prompt}',
+          businessname,
+          ' in ',
+          addressline1,
+          ' ',
+          addressline2,
+          ' ',
+          addressline3,
+          ' ',
+          postcode,
+          '. Use the results from Google Search and do not infer based on other knowledge.'
+        ),
+        connection_id => 'eu.gemini',
+        endpoint => 'gemini-2.0-flash-001',
+        model_params => {model_params_json_lit}
+      ).result AS gemini_insights,
+      fhrsid
+    FROM
+      `{recent_restaurants_temp_table_full_id}`
+    WHERE
+      gemini_insights IS NULL OR gemini_insights = ''
+    """
 
-            # 3. Structure the prompt using the types.Content and types.Part format.
-            contents = [
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=modified_prompt)]
-                ),
-            ]
-            n = len(results_list)
-            st.info(f"--- Querying for fhrsid: {fhrs_id} ({restaurant_name}) , number {n}---")
+    st.info(f"Executing BigQuery job to generate Gemini insights into: {genairesults_temp_table_full_id}")
+    try:
+        query_job_create = client.query(sql_query_create_results)
+        query_job_create.result()  # Wait for the job to complete
+        st.success(f"Successfully created/updated '{genairesults_temp_table_full_id}' with Gemini insights. Affected rows: {query_job_create.num_dml_affected_rows}")
 
-            # 4. Call the model using the client, passing all configurations.
-            # Note: The SDK doesn't support a direct 'chat' mode with the Client interface.
-            # We send the full content history with each request.
-            response = client.models.generate_content(
-                model=model_name,  # The model name needs the 'models/' prefix here
-                contents=contents,
-                config=generation_config,
-            )
+        sql_query_select_results = f"SELECT fhrsid, gemini_insights FROM `{genairesults_temp_table_full_id}` WHERE gemini_insights IS NOT NULL AND gemini_insights != ''"
+        st.info(f"Fetching results from {genairesults_temp_table_full_id}...")
+        # Ensure that pandas is imported as pd
+        results_df = client.query(sql_query_select_results).to_dataframe()
 
-            # --- CHANGED: Instead of printing, append the result to our list ---
-            results_list.append({
-                  'fhrsid': fhrs_id,
-                  'gemini_insights': response.text.strip()
-            })
+        if results_df.empty:
+            st.warning(f"No insights were generated or found in '{genairesults_temp_table_full_id}'.")
+            return pd.DataFrame(columns=['fhrsid', 'gemini_insights']) # Ensure pd is defined
 
-        else:
-            st.warning(f"No data found for fhrsid: {fhrs_id}")
+        st.success(f"Successfully fetched {len(results_df)} insights from '{genairesults_temp_table_full_id}'.")
+        return results_df
 
-        results_df = pd.DataFrame(results_list)
-
-    return results_df
+    except Exception as e:
+        st.error(f"An error occurred during BigQuery operations: {e}")
+        print(f"Error in call_gemini_with_fhrs_data: {e}") # For backend logging
+        return pd.DataFrame(columns=['fhrsid', 'gemini_insights']) # Ensure pd is defined
 
 
 # Helper function to map pandas dtypes to BigQuery types

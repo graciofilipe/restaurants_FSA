@@ -443,6 +443,10 @@ def main_ui():
     # Initialize session state variables if they don't exist
     if 'recent_restaurants_df' not in st.session_state:
         st.session_state.recent_restaurants_df = None
+    if 'current_project_id' not in st.session_state:
+        st.session_state['current_project_id'] = None
+    if 'current_dataset_id' not in st.session_state:
+        st.session_state['current_dataset_id'] = None
 
 
     app_mode = st.radio("Choose an action:", ("Fetch API Data", "Recent Restaurant Analysis"))
@@ -515,6 +519,11 @@ def main_ui():
                         )
                         # The create_recent_restaurants_temp_table function has its own st.success/st.error messages.
 
+                        # Store project_id and dataset_id in session state
+                        st.session_state['current_project_id'] = project_id
+                        st.session_state['current_dataset_id'] = dataset_id
+                        st.info(f"Project ID ({project_id}) and Dataset ID ({dataset_id}) stored in session state.")
+
                     elif fetched_df is not None and fetched_df.empty:
                         st.session_state.recent_restaurants_df = pd.DataFrame() # Store empty df
                         st.warning("No recent restaurants found for the given criteria.")
@@ -552,23 +561,30 @@ def main_ui():
                     else:
                         st.info(f"Found {len(df_needing_analysis)} restaurants for Gemini analysis.")
 
+                        project_id_for_gemini = st.session_state.get('current_project_id')
+                        dataset_id_for_gemini = st.session_state.get('current_dataset_id')
+
+                        if not project_id_for_gemini or not dataset_id_for_gemini:
+                            st.error("Project ID or Dataset ID is not set. Please fetch recent restaurants first.")
+                            return # Or st.stop()
+
                         fhrs_ids_list = df_needing_analysis['fhrsid'].astype(str).tolist() # Ensure FHRSIDs are strings
 
                         # Define Gemini Prompt (can be made configurable later)
                         gemini_prompt = (
                             "Be succint and tell me what cuisine and dishes this specific London restaurant serve. "
-                            "Do not infer from the name of the restaurant, and base your answer on what you find in your search. \n"
+                            "Do not infer from the name of the restaurant, and base your answer on what you find in your search. \n" # Ensure newline is correctly escaped for a string literal
                             "Here is the Restaurant information: "
                         )
 
                         try:
                             # Call the Gemini analysis function
-                            # Ensure df_needing_analysis has the columns expected by call_gemini_with_fhrs_data
-                            # (businessname, addressline1, etc.) - these should come from get_recent_restaurants
+                            st.info(f"Calling Gemini for {len(fhrs_ids_list)} FHRSIDs. Project: {project_id_for_gemini}, Dataset: {dataset_id_for_gemini}")
                             gemini_results_df = call_gemini_with_fhrs_data(
-                                fhrs_ids=fhrs_ids_list,
+                                project_id=project_id_for_gemini,
+                                dataset_id=dataset_id_for_gemini,
                                 gemini_prompt=gemini_prompt,
-                                df=df_needing_analysis # Pass the filtered DataFrame
+                                fhrs_ids=fhrs_ids_list
                             )
 
                             if gemini_results_df is not None and not gemini_results_df.empty:
