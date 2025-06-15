@@ -412,3 +412,98 @@ def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table
         # Also print to console for backend logging
         print(f"Error appending data to BigQuery table {table_ref_str}: {e}")
         return False
+
+def update_gemini_and_review_in_bq(project_id: str, dataset_id: str, table_id: str, df_updates: pd.DataFrame) -> bool:
+    """
+    Updates 'gemini_insights' and 'manual_review' fields in a BigQuery table
+    using a MERGE statement based on a DataFrame of updates.
+
+    Args:
+        project_id: The Google Cloud project ID.
+        dataset_id: The BigQuery dataset ID.
+        table_id: The BigQuery table ID.
+        df_updates: Pandas DataFrame with 'fhrsid', 'gemini_insights', 'manual_review'.
+                    'fhrsid' should be string type for matching with BQ.
+
+    Returns:
+        True if the update was successful, False otherwise.
+    """
+    if df_updates.empty:
+        st.warning("No updates to save to BigQuery.")
+        return True # Or False, depending on desired behavior for empty input
+
+    client = bigquery.Client(project=project_id)
+    target_table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+
+    # Ensure fhrsid is string type for the query
+    df_updates['fhrsid'] = df_updates['fhrsid'].astype(str)
+
+    # It's often easier to upload the update data to a temporary BQ table
+    # and then run a MERGE statement, especially for larger DataFrames.
+    # However, for smaller updates, constructing values directly in the query
+    # or using query parameters with an array of structs can work.
+    # Let's try with query parameters and an array of structs for manageability.
+
+    # Prepare records for the query parameter
+    # Each record should be a dict matching the struct definition in the query
+    update_records_for_query = []
+    for _, row in df_updates.iterrows():
+        update_records_for_query.append({
+            "fhrsid_val": str(row['fhrsid']),  # Ensure string type
+            "insights_val": str(row['gemini_insights']) if pd.notna(row['gemini_insights']) else None,
+            "review_val": str(row['manual_review']) if pd.notna(row['manual_review']) else None,
+        })
+
+    if not update_records_for_query:
+        st.info("No valid records formatted for BigQuery update.")
+        return False
+
+
+    # Construct the MERGE query
+    # The source data (updates) is passed as an array of structs
+    merge_query = f"""
+    MERGE `{target_table_ref_str}` AS T
+    USING UNNEST(@update_data) AS S
+    ON T.fhrsid = S.fhrsid_val
+    WHEN MATCHED THEN
+        UPDATE SET
+            T.gemini_insights = S.insights_val,
+            T.manual_review = S.review_val
+    """
+
+    # Define query parameters
+    # The @update_data parameter is an array of structs
+    # The struct fields must match those accessed in the S alias (S.fhrsid_val, S.insights_val, S.review_val)
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ArrayQueryParameter(
+                "update_data",
+                "STRUCT<fhrsid_val STRING, insights_val STRING, review_val STRING>",
+                update_records_for_query
+            )
+        ]
+    )
+
+    try:
+        st.info(f"Executing MERGE statement on {target_table_ref_str} with {len(update_records_for_query)} records...")
+        query_job = client.query(merge_query, job_config=job_config)
+        query_job.result()  # Wait for the query to complete
+
+        if query_job.errors:
+            st.error(f"BigQuery MERGE job failed with errors: {query_job.errors}")
+            print(f"BigQuery MERGE job failed with errors: {query_job.errors}") # also log to console
+            return False
+
+        # num_dml_affected_rows might be available, useful for logging
+        if query_job.num_dml_affected_rows is not None:
+            st.success(f"Successfully updated {query_job.num_dml_affected_rows} rows in BigQuery table {target_table_ref_str}.")
+            print(f"Successfully updated {query_job.num_dml_affected_rows} rows in BigQuery table {target_table_ref_str}.")
+        else:
+            st.success(f"BigQuery MERGE job completed on {target_table_ref_str}. Rows affected information not available (may require specific BQ permissions or job properties).")
+            print(f"BigQuery MERGE job completed on {target_table_ref_str}.")
+        return True
+
+    except Exception as e:
+        st.error(f"Error updating records in BigQuery table {target_table_ref_str}: {e}")
+        print(f"Error updating records in BigQuery table {target_table_ref_str}: {e}") # also log to console
+        return False
