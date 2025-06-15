@@ -552,93 +552,20 @@ def main_ui():
                 st.warning("The fetched data does not contain an 'fhrsid' column, which is required for Gemini analysis.")
             else:
                 if st.button("Run Gemini Analysis on Recent Restaurants"):
-                    df_to_analyze = st.session_state.recent_restaurants_df.copy()
+                    # Define Gemini Prompt (can be made configurable later)
+                    gemini_prompt = "Be succint and tell me what cuisine and dishes this specific London restaurant serve. \
+                        Do not infer from the name of the restaurant. Instead base your answer on what you find in Google Search. \
+                        Here is the Restaurant information: "
 
-                    # Filter for restaurants that need analysis
-                    # If 'gemini_insights' column exists, filter rows where it's null/empty
-                    if 'gemini_insights' in df_to_analyze.columns:
-                        df_needing_analysis = df_to_analyze[df_to_analyze['gemini_insights'].isnull() | (df_to_analyze['gemini_insights'] == '')]
-                    else:
-                        # If column doesn't exist, all are considered needing analysis
-                        df_needing_analysis = df_to_analyze
-
-                    if df_needing_analysis.empty:
-                        st.info("No restaurants needing Gemini analysis (either all already have insights or no restaurants fetched).")
-                    else:
-                        st.info(f"Found {len(df_needing_analysis)} restaurants for Gemini analysis.")
-
-                        project_id_for_gemini = st.session_state.get('current_project_id')
-                        dataset_id_for_gemini = st.session_state.get('current_dataset_id')
-
-                        if not project_id_for_gemini or not dataset_id_for_gemini:
-                            st.error("Project ID or Dataset ID is not set. Please fetch recent restaurants first.")
-                            return # Or st.stop()
-
-                        fhrs_ids_list = df_needing_analysis['fhrsid'].astype(str).tolist() # Ensure FHRSIDs are strings
-
-                        # Define Gemini Prompt (can be made configurable later)
-                        gemini_prompt = "Be succint and tell me what cuisine and dishes this specific London restaurant serve. \
-                             Do not infer from the name of the restaurant. Instead base your answer on what you find in Google Search. \
-                            Here is the Restaurant information: "
-
-                        try:
-                            # Call the Gemini analysis function
-                            st.info(f"Calling Gemini for {len(fhrs_ids_list)} FHRSIDs. Project: {project_id_for_gemini}, Dataset: {dataset_id_for_gemini}")
-                            gemini_results_df = call_gemini_with_fhrs_data(
-                                project_id=project_id_for_gemini,
-                                dataset_id=dataset_id_for_gemini,
-                                gemini_prompt=gemini_prompt,
-                                fhrs_ids=fhrs_ids_list
-                            )
-
-                            if gemini_results_df is not None and not gemini_results_df.empty:
-                                st.success(f"Gemini analysis completed for {len(gemini_results_df)} restaurants.")
-
-                                # Merge results back into the main session state DataFrame
-                                # Ensure 'fhrsid' in gemini_results_df is of the same type as in st.session_state.recent_restaurants_df
-                                # call_gemini_with_fhrs_data returns fhrsid as it was passed (string), so it should be fine.
-
-                                if 'gemini_insights' not in st.session_state.recent_restaurants_df.columns:
-                                    st.session_state.recent_restaurants_df['gemini_insights'] = pd.NA
-
-                                # Prepare for merge: gemini_results_df has 'fhrsid' and 'gemini_insights'
-                                # Set 'fhrsid' as index for easier update/merge
-                                gemini_results_df = gemini_results_df.set_index('fhrsid')
-
-                                # Update 'gemini_insights' in the main DataFrame
-                                for fhrsid, row in gemini_results_df.iterrows():
-                                    insights = row['gemini_insights']
-                                    # Ensure fhrsid in session state df is also string for matching
-                                    st.session_state.recent_restaurants_df['fhrsid'] = st.session_state.recent_restaurants_df['fhrsid'].astype(str)
-                                    st.session_state.recent_restaurants_df.loc[st.session_state.recent_restaurants_df['fhrsid'] == fhrsid, 'gemini_insights'] = insights
-
-                                # Also set 'manual_review' to 'rejected' for these updated rows
-                                if 'manual_review' not in st.session_state.recent_restaurants_df.columns:
-                                    st.session_state.recent_restaurants_df['manual_review'] = pd.NA # Or appropriate default like ''
-
-                                # FHRSIDs that received new insights
-                                updated_fhrsids = gemini_results_df.index.tolist()
-
-                                # Ensure fhrsid column in session state df is string for matching
-                                st.session_state.recent_restaurants_df['fhrsid'] = st.session_state.recent_restaurants_df['fhrsid'].astype(str)
-
-                                mask_updated = st.session_state.recent_restaurants_df['fhrsid'].isin(updated_fhrsids)
-                                st.session_state.recent_restaurants_df.loc[mask_updated, 'manual_review'] = "rejected"
-
-                                st.info("Default 'manual_review' status set to 'rejected' for analyzed restaurants.")
-                                # Re-display to show this change as well
-                                st.dataframe(st.session_state.recent_restaurants_df)
-
-                            elif gemini_results_df is not None and gemini_results_df.empty:
-                                st.warning("Gemini analysis ran but returned no insights.")
-                            else:
-                                st.error("Gemini analysis failed or returned unexpected data (None).")
-
-                        except Exception as e:
-                            st.error(f"An error occurred during Gemini analysis: {e}")
-
-        elif st.session_state.recent_restaurants_df is not None and st.session_state.recent_restaurants_df.empty:
-            st.info("No recent restaurants to display based on the last fetch attempt.")
+                    try:
+                        # Call the Gemini analysis function
+                        st.info(f"Calling Gemini for {len(fhrs_ids_list)} FHRSIDs. Project: {project_id_for_gemini}, Dataset: {dataset_id_for_gemini}")
+                        call_gemini_with_fhrs_data(
+                            project_id=project_id_for_gemini,
+                            dataset_id=dataset_id_for_gemini,
+                            gemini_prompt=gemini_prompt,
+                            fhrs_ids=fhrs_ids_list
+                        )
 
 
 if __name__ == "__main__":

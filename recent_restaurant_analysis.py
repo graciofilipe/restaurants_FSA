@@ -4,10 +4,8 @@ from google.cloud import bigquery
 # from bq_utils import get_recent_restaurants # Assuming this is still needed elsewhere or will be handled
 import bq_utils # Assuming this is still needed elsewhere or will be handled
 
-N_DAYS = 1
 
-
-def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: str, fhrs_ids: list = None):
+def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: str):
     """
     Uses BigQuery AI.GENERATE to get insights for restaurants from 'recent_restaurants_temp'
     and stores them in 'genairesults_temp'.
@@ -16,18 +14,11 @@ def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: 
         project_id (str): Google Cloud project ID.
         dataset_id (str): BigQuery dataset ID.
         gemini_prompt (str): The base prompt for Gemini.
-        fhrs_ids (list, optional): List of FHRSIDs. Currently not used in the BQ query
-                                   but kept for potential future use or logging.
-
-    Returns:
-        pd.DataFrame: DataFrame with 'fhrsid' and 'gemini_insights' from 'genairesults_temp',
-                      or an empty DataFrame on error or if no results.
+        
+    Returns: None
+        
     """
-    # Ensure necessary imports are at the top of the file:
-    # import streamlit as st
-    # from google.cloud import bigquery
-    # import pandas as pd
-
+    
     client = bigquery.Client(project=project_id)
 
     genairesults_temp_table_full_id = f"{project_id}.{dataset_id}.genairesults_temp"
@@ -80,20 +71,13 @@ def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: 
         sql_query_select_results = f"SELECT fhrsid, gemini_insights FROM `{genairesults_temp_table_full_id}` WHERE gemini_insights IS NOT NULL AND gemini_insights != ''"
         st.info(f"Fetching results from {genairesults_temp_table_full_id}...")
         # Ensure that pandas is imported as pd
-        results_df = client.query(sql_query_select_results).to_dataframe()
+        client.query(sql_query_select_results)
 
-        if results_df.empty:
-            st.warning(f"No insights were generated or found in '{genairesults_temp_table_full_id}'.")
-            return pd.DataFrame(columns=['fhrsid', 'gemini_insights']) # Ensure pd is defined
-
-        st.success(f"Successfully fetched {len(results_df)} insights from '{genairesults_temp_table_full_id}'.")
-        return results_df
 
     except Exception as e:
         st.error(f"An error occurred during BigQuery operations: {e}")
         print(f"Error in call_gemini_with_fhrs_data: {e}") # For backend logging
-        return pd.DataFrame(columns=['fhrsid', 'gemini_insights']) # Ensure pd is defined
-
+ 
 
 # Helper function to map pandas dtypes to BigQuery types
 def pandas_dtype_to_bq_type(dtype):
