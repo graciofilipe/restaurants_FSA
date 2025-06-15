@@ -559,7 +559,7 @@ def main_ui():
 
                     try:
                         # Call the Gemini analysis function
-                        st.info(f"Calling Gemini for {len(fhrs_ids_list)} FHRSIDs. Project: {project_id_for_gemini}, Dataset: {dataset_id_for_gemini}")
+                        st.info(f"Calling Gemini for Project: {project_id_for_gemini}, Dataset: {dataset_id_for_gemini}")
                         call_gemini_with_fhrs_data(
                             project_id=project_id_for_gemini,
                             dataset_id=dataset_id_for_gemini,
