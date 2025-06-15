@@ -3,7 +3,7 @@ from google import genai
 from google.genai import types
 import pandas as pd
 from bq_utils import get_recent_restaurants
-import bq_utils # Added import
+import bq_utils
 from google.cloud import bigquery
 
 N_DAYS = 1
