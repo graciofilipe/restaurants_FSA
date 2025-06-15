@@ -572,7 +572,7 @@ def main_ui():
 
                         # Define Gemini Prompt (can be made configurable later)
                         gemini_prompt = "Be succint and tell me what cuisine and dishes this specific London restaurant serve. \
-                             Do not infer from the name of the restaurant, and base your answer on what you find in your search. \
+                             Do not infer from the name of the restaurant. Instead base your answer on what you find in Google Search. \
                             Here is the Restaurant information: "
 
                         try:
