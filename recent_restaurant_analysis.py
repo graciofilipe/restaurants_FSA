@@ -5,18 +5,19 @@ from google.cloud import bigquery
 import bq_utils # Assuming this is still needed elsewhere or will be handled
 
 
-def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: str):
+def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: str) -> pd.DataFrame:
     """
     Uses BigQuery AI.GENERATE to get insights for restaurants from 'recent_restaurants_temp'
-    and stores them in 'genairesults_temp'.
+    and stores them in 'genairesults_temp'. Then fetches these results.
 
     Args:
         project_id (str): Google Cloud project ID.
         dataset_id (str): BigQuery dataset ID.
         gemini_prompt (str): The base prompt for Gemini.
         
-    Returns: None
-        
+    Returns:
+        pd.DataFrame: A DataFrame containing 'fhrsid' and 'gemini_insights'.
+                      Returns an empty DataFrame if no insights are found or an error occurs.
     """
     
     client = bigquery.Client(project=project_id)
@@ -62,21 +63,45 @@ def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: 
       gemini_insights IS NULL OR gemini_insights = ''
     """
 
-    st.info(f"Executing BigQuery job to generate Gemini insights into: {genairesults_temp_table_full_id}")
+    # st.info(f"Executing BigQuery job to generate Gemini insights into: {genairesults_temp_table_full_id}") # Replaced by more specific message below
+    st.info(f"Starting BigQuery job to generate Gemini insights. This may take a few moments...")
     try:
+        print(f"Executing Gemini generation SQL: {sql_query_create_results}")
         query_job_create = client.query(sql_query_create_results)
         query_job_create.result()  # Wait for the job to complete
-        st.success(f"Successfully created/updated '{genairesults_temp_table_full_id}' with Gemini insights. Affected rows: {query_job_create.num_dml_affected_rows}")
 
+        if query_job_create.num_dml_affected_rows is not None:
+            st.success(f"Gemini insights generation job complete. {query_job_create.num_dml_affected_rows} rows processed into {genairesults_temp_table_full_id}.")
+        else:
+            # Fallback message if num_dml_affected_rows is None (e.g., for CREATE OR REPLACE)
+            # Attempt to get the number of rows in the created table as an alternative.
+            try:
+                table_info = client.get_table(genairesults_temp_table_full_id)
+                st.success(f"Gemini insights generation job complete. '{genairesults_temp_table_full_id}' created/updated with {table_info.num_rows} rows.")
+            except Exception:
+                 st.success(f"Successfully created/updated '{genairesults_temp_table_full_id}' with Gemini insights.")
+
+
+        # Now, fetch the results from the newly created table
         sql_query_select_results = f"SELECT fhrsid, gemini_insights FROM `{genairesults_temp_table_full_id}` WHERE gemini_insights IS NOT NULL AND gemini_insights != ''"
-        st.info(f"Fetching results from {genairesults_temp_table_full_id}...")
-        # Ensure that pandas is imported as pd
-        client.query(sql_query_select_results)
+        st.info(f"Fetching generated insights from {genairesults_temp_table_full_id}...")
+        print(f"Executing SQL to fetch results: {sql_query_select_results}")
 
+        query_job_select = client.query(sql_query_select_results)
+        results_df = query_job_select.to_dataframe()
+        print(f"Fetched insights DataFrame shape: {results_df.shape}")
+
+        if not results_df.empty:
+            st.success(f"Successfully fetched {len(results_df)} insights from {genairesults_temp_table_full_id}.")
+        else:
+            st.warning(f"No insights were generated or found in {genairesults_temp_table_full_id}.")
+
+        return results_df
 
     except Exception as e:
-        st.error(f"An error occurred during BigQuery operations: {e}")
+        st.error(f"An error occurred during BigQuery operations or data fetching: {e}")
         print(f"Error in call_gemini_with_fhrs_data: {e}") # For backend logging
+        return pd.DataFrame() # Return empty DataFrame on error
  
 
 # Helper function to map pandas dtypes to BigQuery types
