@@ -83,7 +83,7 @@ def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: 
 
 
         # Now, fetch the results from the newly created table
-        sql_query_select_results = f"SELECT fhrsid, gemini_insights FROM `{genairesults_temp_table_full_id}` WHERE gemini_insights IS NOT NULL AND gemini_insights != ''"
+        sql_query_select_results = f"SELECT fhrsid, businessname, addressline1, addressline2, addressline3, postcode, gemini_insights FROM `{genairesults_temp_table_full_id}` WHERE gemini_insights IS NOT NULL AND gemini_insights != ''"
         st.info(f"Fetching generated insights from {genairesults_temp_table_full_id}...")
         print(f"Executing SQL to fetch results: {sql_query_select_results}")
 

@@ -569,12 +569,8 @@ def main_ui():
 
                         if insights_df is not None and not insights_df.empty:
                             print(f"Received insights DataFrame shape: {insights_df.shape}") # Print log
-                            st.info("Preparing to update the main BigQuery table with Gemini insights...")
-                            main_table_path = bq_source_table_input # Get from UI input
-
-                            if not main_table_path:
-                                st.error("Main BigQuery table path is not available. Cannot update.")
-                                return # Or st.stop() if appropriate in Streamlit context
+                            st.info("Returning the table with Gemini insights for user front end")
+                            st.dataframe(insights_df)
 
                             try:
                                 main_project_id, main_dataset_id, main_table_id = main_table_path.split('.')
@@ -591,9 +587,6 @@ def main_ui():
                             if 'gemini_insights' not in insights_df.columns:
                                 st.error("gemini_insights column is missing. Cannot update main table.")
                                 return # Or st.stop()
-
-                            if 'manual_review' not in insights_df.columns:
-                                insights_df['manual_review'] = None # Add manual_review if not present
 
                             else:
                                 st.error(f"Failed to update table '{main_table_path}' with Gemini insights. Check logs for details.")
