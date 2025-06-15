@@ -444,9 +444,9 @@ def main_ui():
     if 'recent_restaurants_df' not in st.session_state:
         st.session_state.recent_restaurants_df = None
     if 'current_project_id' not in st.session_state:
-        st.session_state.current_project_id = None
+        st.session_state['current_project_id'] = None
     if 'current_dataset_id' not in st.session_state:
-        st.session_state.current_dataset_id = None
+        st.session_state['current_dataset_id'] = None
 
 
     app_mode = st.radio("Choose an action:", ("Fetch API Data", "Recent Restaurant Analysis"))
@@ -520,8 +520,8 @@ def main_ui():
                         # The create_recent_restaurants_temp_table function has its own st.success/st.error messages.
 
                         # Store project_id and dataset_id in session state
-                        st.session_state.current_project_id = project_id
-                        st.session_state.current_dataset_id = dataset_id
+                        st.session_state['current_project_id'] = project_id
+                        st.session_state['current_dataset_id'] = dataset_id
                         st.info(f"Project ID ({project_id}) and Dataset ID ({dataset_id}) stored in session state.")
 
                     elif fetched_df is not None and fetched_df.empty:
