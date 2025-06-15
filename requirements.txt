@@ -6,6 +6,5 @@ pandas-gbq
 pytest
 db-dtypes
 google-genai
-google-genai
 google-cloud-aiplatform
 vertexai

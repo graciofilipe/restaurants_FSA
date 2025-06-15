@@ -559,7 +559,8 @@ def handle_fetch_data_action(
     # This displays the initial master_restaurant_data. If the display should reflect the appended data,
     # it would need to either re-load from BQ or combine master_restaurant_data + new_restaurants (if df versions are compatible).
     # For now, sticking to displaying initial load.
-    st.info("Displaying master data loaded from BigQuery (before current API fetch append). Refresh page or re-fetch to see appended data reflected in subsequent loads.")
+    st.info("Displaying master data loaded from BigQuery (before current API fetch append).") # Modified the info message slightly
+    display_data(master_restaurant_data) # Explicitly display the loaded master data
 
     # If new_restaurants were found, also display them for clarity in this run
     if new_restaurants:
