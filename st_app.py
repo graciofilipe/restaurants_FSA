@@ -566,6 +566,8 @@ def main_ui():
                             gemini_prompt=gemini_prompt,
                             fhrs_ids=fhrs_ids_list
                         )
+                    except:
+                        pass
 
 
 if __name__ == "__main__":
