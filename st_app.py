@@ -596,17 +596,6 @@ def main_ui():
                             if 'manual_review' not in insights_df.columns:
                                 insights_df['manual_review'] = None # Add manual_review if not present
 
-                            print(f"Preparing to update main table {main_table_path} with {len(insights_df)} insights.") # Print log
-                            st.info(f"Attempting to update main table {main_table_path}...") # Added st.info
-
-                            update_success = update_gemini_and_review_in_bq(
-                                project_id=main_project_id,
-                                dataset_id=main_dataset_id,
-                                table_id=main_table_id,
-                                df_updates=insights_df
-                            )
-                            if update_success:
-                                st.success(f"Successfully updated table '{main_table_path}' with Gemini insights.")
                             else:
                                 st.error(f"Failed to update table '{main_table_path}' with Gemini insights. Check logs for details.")
                         else:
