@@ -571,11 +571,9 @@ def main_ui():
                         fhrs_ids_list = df_needing_analysis['fhrsid'].astype(str).tolist() # Ensure FHRSIDs are strings
 
                         # Define Gemini Prompt (can be made configurable later)
-                        gemini_prompt = (
-                            "Be succint and tell me what cuisine and dishes this specific London restaurant serve. "
-                            "Do not infer from the name of the restaurant, and base your answer on what you find in your search. \n" # Ensure newline is correctly escaped for a string literal
-                            "Here is the Restaurant information: "
-                        )
+                        gemini_prompt = "Be succint and tell me what cuisine and dishes this specific London restaurant serve. \
+                             Do not infer from the name of the restaurant, and base your answer on what you find in your search. \
+                            Here is the Restaurant information: "
 
                         try:
                             # Call the Gemini analysis function
