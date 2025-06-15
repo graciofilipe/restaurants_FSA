@@ -12,6 +12,18 @@ from google.cloud import bigquery # For bigquery.SchemaField, kept `google.cloud
 # Local Modules
 from api_client import fetch_api_data
 from bq_utils import (
+    update_rows_in_bigquery, # Added for Update Fields
+    sanitize_column_name,
+    write_to_bigquery,
+    load_all_data_from_bq, # Added import
+    append_to_bigquery, # Added for new flow
+    BigQueryExecutionError,  # Added import
+    DataFrameConversionError, # Added import
+    get_recent_restaurants
+)
+from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
+from data_processing import load_data_from_csv # Added for Update Fields
+from recent_restaurant_analysis import call_gemini_with_fhrs_data, create_recent_restaurants_temp_table
     sanitize_column_name,
     write_to_bigquery,
     load_all_data_from_bq, # Added import
@@ -436,6 +448,81 @@ def handle_fetch_data_action(
     # If the expectation is to return the "complete" data after append, this would need adjustment.
     return master_restaurant_data
 
+def handle_update_fields_action(master_table_path_str: str, uploaded_csv_file: Any):
+    """
+    Placeholder for handling the CSV update functionality.
+    """
+    # 1. Parse BigQuery Path
+    try:
+        project_id, dataset_id, table_id = master_table_path_str.split('.')
+        if not all([project_id, dataset_id, table_id]): # Check for empty strings
+            st.error("Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty.")
+            return
+    except ValueError:
+        st.error(f"Invalid BigQuery Table Path format: '{master_table_path_str}'. Expected 'project.dataset.table'.")
+        return
+
+    # 2. Load CSV Data
+    # load_data_from_csv handles its own st.error messages if uploaded_csv_file is bad or fhrsid is missing
+    df = load_data_from_csv(uploaded_csv_file)
+    if df is None:
+        # Error message already displayed by load_data_from_csv
+        return
+
+    if 'fhrsid' not in df.columns:
+        # This should be caught by load_data_from_csv, but as a safeguard:
+        st.error("Critical error: 'fhrsid' column is missing from DataFrame after load_data_from_csv. This should not happen.")
+        return
+
+    # 3. Iterate and Update
+    success_count = 0
+    error_count = 0
+
+    if df.empty:
+        st.warning("The CSV file was successfully loaded, but it contains no data rows to process.")
+        return
+
+    st.info(f"Starting update process for {len(df)} row(s) from the CSV...")
+
+    for index, row in df.iterrows():
+        fhrsid = row['fhrsid'] # This is already string type from load_data_from_csv
+        update_data = row.drop('fhrsid').to_dict()
+
+        # Remove any NaN values from update_data, as they are likely not intended for update
+        # and might cause issues with type handling in update_rows_in_bigquery if not explicitly handled there.
+        # BQ `UPDATE` with `SET col = NULL` is the way to set NULL, which update_rows_in_bigquery handles if value is None.
+        # Pandas `NaN` is usually float, so direct conversion to `None` is better.
+        update_data_cleaned = {k: None if pd.isna(v) else v for k, v in update_data.items()}
+
+        if not update_data_cleaned:
+            st.warning(f"Skipping FHRSID {fhrsid}: No data to update after removing 'fhrsid' and empty values.")
+            error_count +=1 # Or perhaps a different counter for skipped rows
+            continue
+
+        st.write(f"Processing FHRSID: {fhrsid} with data: {update_data_cleaned}") # For debugging, can be removed
+
+        success = update_rows_in_bigquery(
+            project_id=project_id,
+            dataset_id=dataset_id,
+            table_id=table_id,
+            fhrsid=fhrsid, # Already a string
+            update_data=update_data_cleaned
+        )
+
+        if success:
+            success_count += 1
+        else:
+            error_count += 1
+            st.warning(f"Failed to update row in BigQuery for fhrsid: {fhrsid}. Check console logs from bq_utils for details.")
+
+    # 4. Display Summary
+    st.success(f"Update process completed. Successfully updated rows: {success_count}")
+    if error_count > 0:
+        st.error(f"Failed to update rows: {error_count}")
+    if success_count == 0 and error_count == 0 and not df.empty:
+        st.info("No rows were processed for update. This might happen if all rows had no data after removing fhrsid.")
+
+
 def main_ui():
     st.title("Food Standards Agency API Explorer")
 
@@ -450,7 +537,10 @@ def main_ui():
         st.session_state.displaying_genai_temp = False
 
 
-    app_mode = st.radio("Choose an action:", ("Fetch API Data", "Recent Restaurant Analysis"))
+    app_mode = st.radio(
+        "Choose an action:",
+        ("Fetch API Data", "Recent Restaurant Analysis", "Update Fields")
+    )
 
     if app_mode == "Fetch API Data":
         st.subheader("Fetch API Data and Update Master List")
@@ -595,6 +685,28 @@ def main_ui():
 
                     except Exception as e:
                         st.error(f"An error occurred during Gemini analysis or subsequent table update: {e}")
+
+    elif app_mode == "Update Fields":
+        st.subheader("Update Table Fields from CSV")
+
+        bq_master_table_path_update = st.text_input(
+            "Enter BigQuery master table path to update (project.dataset.table)",
+            key="bq_master_table_update"
+        )
+
+        uploaded_csv_file = st.file_uploader(
+            "Upload CSV file with 'fhrsid' and columns to update",
+            type=["csv"],
+            key="csv_updater"
+        )
+
+        if st.button("Update Table from CSV", key="update_csv_button"):
+            if not bq_master_table_path_update:
+                st.error("Please enter the BigQuery master table path.")
+            elif uploaded_csv_file is None:
+                st.warning("Please upload a CSV file.")
+            else:
+                handle_update_fields_action(bq_master_table_path_update, uploaded_csv_file)
 
 
 if __name__ == "__main__":
