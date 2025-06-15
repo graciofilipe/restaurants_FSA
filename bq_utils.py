@@ -199,120 +199,6 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
         st.error(f"Error writing data to BigQuery table {table_ref_str}: {e}")
         return False
 
-def read_from_bigquery(fhrsid_list: List[str], project_id: str, dataset_id: str, table_id: str) -> pd.DataFrame:
-    """
-    Reads data from a BigQuery table for a list of FHRSIDs (strings) using pandas-gbq.
-
-    Args:
-        fhrsid_list: A list of FHRSIDs (strings) to filter by.
-        project_id: The Google Cloud project ID.
-        dataset_id: The BigQuery dataset ID.
-        table_id: The BigQuery table ID.
-
-    Returns:
-        A Pandas DataFrame containing the data for the FHRSIDs. Returns an empty DataFrame if no data is found.
-    """
-    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
-    query = f"SELECT * FROM `{table_ref_str}` WHERE fhrsid IN UNNEST(@fhrsid_list)"
-
-    # Configuration for query parameters
-    # Note: pandas-gbq uses 'configuration' dict for job settings.
-    # Query parameters are passed within this configuration.
-    configuration = {
-        'query': {
-            'queryParameters': [
-                {
-                    'name': 'fhrsid_list',
-                    'parameterType': {'type': 'ARRAY', 'arrayType': {'type': 'STRING'}},
-                    'parameterValue': {'arrayValues': [{'value': str(f_id)} for f_id in fhrsid_list]}
-                }
-            ]
-        }
-    }
-
-    # Detailed logging before making the BigQuery call
-    print(f"Executing BigQuery query with pandas-gbq: {query}")
-    # Ensure fhrsid_list is logged as strings if they are not already
-    print(f"With FHRSID list: {[str(f_id) for f_id in fhrsid_list]}")
-    print(f"Table target: {table_ref_str}")
-
-    try:
-        # Use pandas_gbq.read_gbq
-        df = pandas_gbq.read_gbq(
-            query,
-            project_id=project_id,
-            configuration=configuration
-        )
-        # pandas_gbq.read_gbq returns an empty DataFrame if the query result is empty.
-        # No need to check for df.empty and return None.
-        if df.empty:
-                fhrsid_list_str = [str(f_id) for f_id in fhrsid_list]
-                print(f"Query executed successfully with pandas-gbq but returned no data for FHRSIDs: {', '.join(fhrsid_list_str)} from table {table_ref_str}")
-        return df
-    except Exception as e:
-        # Catching a broad exception category from pandas-gbq.
-        # Specific exceptions from pandas-gbq (e.g., related to auth, query syntax, or API errors)
-        # should be caught here and wrapped into BigQueryExecutionError.
-        # For example, pandas_gbq.gbq.GenericGBQException is a common one,
-        # but others from google-cloud-bigquery or google-auth might also occur.
-        # Ensure fhrsid_list elements are strings for the error message
-        fhrsid_list_str = [str(f_id) for f_id in fhrsid_list]
-        error_msg = f"An error occurred while querying BigQuery with pandas-gbq for FHRSIDs: {', '.join(fhrsid_list_str)} from table {table_ref_str}: {e}"
-        print(error_msg) # Keep existing print for logging
-        # Wrap unexpected errors in BigQueryExecutionError for consistency
-        # No need for DataFrameConversionError as read_gbq handles DataFrame creation.
-        raise BigQueryExecutionError(error_msg) from e
-
-def update_manual_review(fhrsid_list: List[str], manual_review_value: str, project_id: str, dataset_id: str, table_id: str) -> bool:
-    """
-    Updates the manual_review field for a list of FHRSIDs (strings) in a BigQuery table.
-
-    Args:
-        fhrsid_list: A list of FHRSIDs (strings) to update.
-        manual_review_value: The new value for the manual_review field.
-        project_id: The Google Cloud project ID.
-        dataset_id: The BigQuery dataset ID.
-        table_id: The BigQuery table ID.
-
-    Returns:
-        True if the update was successful for all FHRSIDs, False otherwise.
-    """
-    if not fhrsid_list:
-        st.warning("No FHRSIDs provided for update.")
-        return False
-
-    client = bigquery.Client(project=project_id)
-    query = f"""
-        UPDATE `{project_id}.{dataset_id}.{table_id}`
-        SET manual_review = @manual_review_value
-        WHERE fhrsid IN UNNEST(@fhrsid_list)
-    """
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("manual_review_value", "STRING", manual_review_value),
-            bigquery.ArrayQueryParameter("fhrsid_list", "STRING", [str(f_id) for f_id in fhrsid_list]),
-        ]
-    )
-
-    try:
-        query_job = client.query(query, job_config=job_config)
-        query_job.result()  # Wait for the query to complete
-        # Check if any rows were actually updated if possible, though result() doesn't directly give row count for UPDATE
-        # For simplicity, we assume success if query execution doesn't throw an error.
-        # A more robust check might involve verifying num_dml_affected_rows if the API provides it easily,
-        # or performing a SELECT COUNT(*) before and after, but that's more complex.
-        # Ensure fhrsid_list elements are strings for logging
-        fhrsid_list_str = [str(f_id) for f_id in fhrsid_list]
-        st.success(f"Successfully updated manual_review for FHRSIDs: {', '.join(fhrsid_list_str)} to '{manual_review_value}'.")
-        return True
-    except Exception as e:
-        # Ensure fhrsid_list elements are strings for logging
-        fhrsid_list_str = [str(f_id) for f_id in fhrsid_list]
-        st.error(f"Error updating manual_review for FHRSIDs: {', '.join(fhrsid_list_str)}: {e}")
-        # Also print to console for backend logging
-        print(f"Error updating manual_review for FHRSIDs: {', '.join(fhrsid_list_str)}: {e}")
-        return False
-
 def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str, bq_schema: List[bigquery.SchemaField]) -> bool:
     """
     Appends a Pandas DataFrame to an existing BigQuery table.
@@ -383,12 +269,10 @@ def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table
                 print(f"FHRSID_DEBUG: Column '{fhrsid_col_name}' dtype after pd.to_numeric: {df_subset[fhrsid_col_name].dtype}")
 
             elif fhrsid_bq_type == 'STRING':
-                # Convert to string if not already an object type (which pandas often uses for strings).
-                if current_type != 'object' and not pd.api.types.is_string_dtype(df_subset[fhrsid_col_name]):
-                    print(f"FHRSID_DEBUG: Converting column '{fhrsid_col_name}' to string for BQ type {fhrsid_bq_type}.")
-                    df_subset[fhrsid_col_name] = df_subset[fhrsid_col_name].astype(str)
-                else:
-                    print(f"FHRSID_DEBUG: Column '{fhrsid_col_name}' is already dtype {current_type}. Assuming string compatible for BQ STRING.")
+                # Always convert to string if BQ schema type is STRING to ensure all elements are strings.
+                print(f"FHRSID_DEBUG: Converting column '{fhrsid_col_name}' to string for BQ type {fhrsid_bq_type}. Current dtype: {current_type}")
+                df_subset[fhrsid_col_name] = df_subset[fhrsid_col_name].astype(str)
+                print(f"FHRSID_DEBUG: Column '{fhrsid_col_name}' dtype after .astype(str): {df_subset[fhrsid_col_name].dtype}")
             else:
                 print(f"FHRSID_DEBUG: Column '{fhrsid_col_name}' is type {fhrsid_bq_type} in BQ schema. No explicit fhrsid-specific conversion applied here.")
         else:

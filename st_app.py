@@ -14,8 +14,6 @@ from api_client import fetch_api_data
 from bq_utils import (
     sanitize_column_name,
     write_to_bigquery,
-    read_from_bigquery,
-    update_manual_review,
     load_all_data_from_bq, # Added import
     append_to_bigquery, # Added for new flow
     BigQueryExecutionError,  # Added import
@@ -56,140 +54,6 @@ def display_data(data_to_display: List[Dict[str, Any]]):
             st.json(data_to_display)
         except Exception as json_e:
             st.error(f"Could not even display master restaurant data as JSON: {json_e}")
-
-def _validate_fhrsid_inputs(fhrsid_input_str: str, bq_table_lookup_input_str: str):
-    """
-    Validates FHRSID and BigQuery table string inputs.
-    """
-    if not bq_table_lookup_input_str:
-        return None, None, None, None, "BigQuery Table Path is required."
-
-    try:
-        project_id, dataset_id, table_id = bq_table_lookup_input_str.split('.')
-        if not project_id or not dataset_id or not table_id:
-            return None, None, None, None, "Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty."
-    except ValueError:
-        return None, None, None, None, "Invalid BigQuery Table Path format. Expected 'project.dataset.table'."
-
-    if not fhrsid_input_str:
-        return None, None, None, None, "Please enter one or more FHRSIDs."
-
-    fhrsid_list_requested = [fhrsid.strip() for fhrsid in fhrsid_input_str.split(',') if fhrsid.strip()]
-    if not fhrsid_list_requested: # Handles cases like "," or ",," or empty string
-        return None, None, None, None, "Please enter valid FHRSIDs. The list is empty after stripping whitespace."
-
-    fhrsid_list_validated_strings = []
-    for f_id_str in fhrsid_list_requested:
-        try:
-            int(f_id_str)  # Validate that f_id_str is a number
-            fhrsid_list_validated_strings.append(f_id_str)  # Store the original string
-        except ValueError:
-            return None, None, None, None, f"Invalid FHRSID: '{f_id_str}' is not a valid number. Please enter numeric FHRSIDs only."
-
-    if not fhrsid_list_validated_strings: # Should be caught by previous checks, but as a safeguard
-        return None, None, None, None, "No valid FHRSIDs provided after validation."
-
-    return project_id, dataset_id, table_id, fhrsid_list_validated_strings, None
-
-
-def _fetch_and_process_fhrsid_data(fhrsid_list_validated_strings: List[str], project_id: str, dataset_id: str, table_id: str, read_from_bq_func):
-    """
-    Fetches data from BigQuery using the provided function and processes the result.
-    """
-    final_df = None
-    successful_fhrsids_from_df = []
-    error_message = None
-    warning_message = None
-
-    try:
-        final_df = read_from_bq_func(fhrsid_list_validated_strings, project_id, dataset_id, table_id)
-
-        if final_df is not None:
-            if not final_df.empty: # Only check for columns if the DataFrame is not empty
-                if 'fhrsid' not in final_df.columns:
-                    warning_message = "FHRSID column ('fhrsid') missing in returned data. Cannot determine successful lookups or proceed with updates."
-                else:
-                    successful_fhrsids_from_df = final_df['fhrsid'].astype(str).unique().tolist()
-            # If final_df is empty, successful_fhrsids_from_df remains [], and warning_message remains None from this block
-        # If final_df is None (should not happen if read_from_bq_func adheres to its contract of returning empty df or raising error)
-        # or if it's an empty DataFrame, successful_fhrsids_from_df remains empty, which is correct.
-
-    except BigQueryExecutionError as e:
-        error_message = f"BigQuery error during lookup for FHRSIDs {', '.join(fhrsid_list_validated_strings)}: {e}"
-        return None, [], error_message # Return None for df, empty list for successful_ids
-    except Exception as e:
-        error_message = f"An unexpected error occurred during BigQuery lookup: {e}"
-        return None, [], error_message # Return None for df, empty list for successful_ids
-
-    return final_df, successful_fhrsids_from_df, error_message or warning_message
-
-
-def fhrsid_lookup_logic(fhrsid_input_str: str, bq_table_lookup_input_str: str, st_object, read_from_bq_func):
-    """
-    Handles the logic for the FHRSID lookup using helper functions for validation and data fetching.
-    Args:
-        fhrsid_input_str: The string input for FHRSIDs.
-        bq_table_lookup_input_str: The string input for the BigQuery table.
-        st_object: The streamlit object (or mock) for UI calls.
-        read_from_bq_func: Function to call for reading from BigQuery.
-    """
-    # Initialize or clear session state variables at the beginning of the logic
-    st_object.session_state.fhrsid_df = pd.DataFrame()
-    st_object.session_state.successful_fhrsids = []
-
-    # Step 1: Validate inputs
-    project_id, dataset_id, table_id, fhrsid_list_validated_strings, error_msg = \
-        _validate_fhrsid_inputs(fhrsid_input_str, bq_table_lookup_input_str)
-
-    if error_msg:
-        st_object.error(error_msg)
-        return
-
-    # Keep a copy of the originally requested (and validated) FHRSIDs to determine failures later
-    # _validate_fhrsid_inputs already filters out invalid format, so this list contains numerically valid fhrsid strings
-    original_requested_fhrsids = list(fhrsid_list_validated_strings)
-
-
-    st_object.info(f"FHRSID Lookup: Attempting to retrieve data for {len(fhrsid_list_validated_strings)} FHRSID(s): {', '.join(fhrsid_list_validated_strings)} in a single batch.")
-
-    # Step 2: Fetch and process data
-    final_df, successful_fhrsids_from_df, message = \
-        _fetch_and_process_fhrsid_data(fhrsid_list_validated_strings, project_id, dataset_id, table_id, read_from_bq_func)
-
-    if message and "error" in message.lower(): # Check if the message is an error message
-        st_object.error(message)
-        # final_df might be None if a BQ error occurred, or it might be a df with missing 'fhrsid' column.
-        # Session state for df is already an empty DataFrame. successful_fhrsids is an empty list.
-        # No further processing needed if there was a critical error.
-        return
-    elif message: # This would be a warning (e.g. fhrsid column missing)
-        st_object.warning(message)
-        # If 'fhrsid' column is missing, successful_fhrsids_from_df will be empty.
-        # We might still have a df in final_df, so we update session state.
-        # It will be an empty dataframe if 'fhrsid' column is missing.
-
-    st_object.session_state.fhrsid_df = final_df if final_df is not None else pd.DataFrame()
-    st_object.session_state.successful_fhrsids = successful_fhrsids_from_df
-
-
-    # Step 3: Display messages based on results
-    if successful_fhrsids_from_df:
-        st_object.success(f"Data found for FHRSIDs: {', '.join(successful_fhrsids_from_df)}")
-
-    # Determine FHRSIDs for which no data was returned
-    # Use the original_requested_fhrsids which passed initial validation
-    failed_fhrsids = [f_id for f_id in original_requested_fhrsids if f_id not in successful_fhrsids_from_df]
-
-    if final_df is not None and final_df.empty and not successful_fhrsids_from_df and not message:
-        # This is the most specific case: query ran, returned no data for any requested ID.
-        st_object.warning(f"No data found for any of the provided FHRSIDs: {', '.join(original_requested_fhrsids)}.")
-    elif failed_fhrsids:
-        # This case handles when some FHRSIDs failed, but not all, or if 'fhrsid' column was missing (making successful_fhrsids_from_df empty).
-        st_object.warning(f"No data found for some of the provided FHRSIDs: {', '.join(failed_fhrsids)}.")
-
-    # If final_df is None and an error occurred, it was handled at the beginning of Step 3.
-    # If final_df is not None, it's stored in session_state. If it's empty, it's an empty DF.
-    # successful_fhrsids is also updated in session_state.
 
 # Helper functions for handle_fetch_data_action
 def _parse_coordinates(coordinate_pairs_str: str) -> List[tuple[float, float]]:
@@ -577,24 +441,13 @@ def main_ui():
     st.title("Food Standards Agency API Explorer")
 
     # Initialize session state variables if they don't exist
-    if 'fhrsid_df' not in st.session_state:
-        st.session_state.fhrsid_df = pd.DataFrame() # Initialize with empty DataFrame
-    if 'successful_fhrsids' not in st.session_state:
-        st.session_state.successful_fhrsids = []
-    if 'fhrsid_input_str_ui' not in st.session_state: # Persist input values
-        st.session_state.fhrsid_input_str_ui = ""
-    if 'bq_table_lookup_input_str_ui' not in st.session_state:
-        st.session_state.bq_table_lookup_input_str_ui = ""
     if 'recent_restaurants_df' not in st.session_state:
         st.session_state.recent_restaurants_df = None
 
 
-    app_mode = st.radio("Choose an action:", ("Fetch API Data", "FHRSID Lookup", "Recent Restaurant Analysis"))
+    app_mode = st.radio("Choose an action:", ("Fetch API Data", "Recent Restaurant Analysis"))
 
     if app_mode == "Fetch API Data":
-        # Reset FHRSID lookup session state if switching modes
-        st.session_state.fhrsid_df = None
-        st.session_state.successful_fhrsids = []
         st.subheader("Fetch API Data and Update Master List")
         coordinate_pairs_input = st.text_area("Enter longitude,latitude pairs (one per line):")
         # These _ui variables are used to distinguish from the parameters of handle_fetch_data_action
@@ -607,119 +460,6 @@ def main_ui():
                 max_results=max_results_input_ui,
                 bq_full_path_str=bq_full_path_ui
             )
-    elif app_mode == "FHRSID Lookup":
-        st.subheader("FHRSID Lookup")
-        # Use session state to retain input values across reruns
-        st.session_state.fhrsid_input_str_ui = st.text_input(
-            "Enter FHRSIDs (comma-separated):",
-            value=st.session_state.fhrsid_input_str_ui
-        )
-        st.session_state.bq_table_lookup_input_str_ui = st.text_input(
-            "Enter BigQuery Table Path for Lookup (project.dataset.table):",
-            value=st.session_state.bq_table_lookup_input_str_ui
-        )
-
-        if st.button("Lookup FHRSIDs"):
-            # Call the logic function which now modifies session_state
-            fhrsid_lookup_logic(
-                st.session_state.fhrsid_input_str_ui,
-                st.session_state.bq_table_lookup_input_str_ui,
-                st,
-                read_from_bigquery # Removed pd.concat
-            )
-
-        # Display data and update UI based on session_state populated by fhrsid_lookup_logic
-        if st.session_state.fhrsid_df is not None and not st.session_state.fhrsid_df.empty:
-            st.dataframe(st.session_state.fhrsid_df)
-
-            st.subheader("Update Manual Review")
-
-            selected_fhrsids_for_update = []
-            if st.session_state.successful_fhrsids:
-                # Use multiselect for selecting FHRSIDs
-                selected_fhrsids_for_update = st.multiselect(
-                    "Select FHRSID(s) to update:",
-                    options=st.session_state.successful_fhrsids,
-                    default=st.session_state.successful_fhrsids if len(st.session_state.successful_fhrsids) == 1 else [],
-                    key="fhrsid_multiselect_update"
-                )
-
-            if selected_fhrsids_for_update: # Check if list is not empty
-                # Create a unique key for the text input based on the selected FHRSIDs to avoid state issues
-                # Using a hash of the sorted list of FHRSIDs for a stable key
-                selected_ids_key_suffix = "_".join(sorted(selected_fhrsids_for_update))
-                manual_review_input_ui = st.text_input(
-                    "New Manual Review Value:",
-                    key=f"manual_review_input_{selected_ids_key_suffix}"
-                )
-
-                if st.button("Update Manual Review"):
-                    if not st.session_state.bq_table_lookup_input_str_ui:
-                        st.error("BigQuery Table Path is required for update.")
-                    elif not manual_review_input_ui.strip():
-                        st.warning("Manual Review Value cannot be empty.")
-                    else:
-                        try:
-                            project_id, dataset_id, table_id = st.session_state.bq_table_lookup_input_str_ui.split('.')
-                            if not project_id or not dataset_id or not table_id:
-                                st.error("Invalid BigQuery Table Path format for update. Each part must be non-empty.")
-                            else:
-                                # Call the updated update_manual_review function
-                                update_successful = update_manual_review(
-                                    fhrsid_list=selected_fhrsids_for_update, # Pass the list of selected FHRSIDs
-                                    manual_review_value=manual_review_input_ui,
-                                    project_id=project_id,
-                                    dataset_id=dataset_id,
-                                    table_id=table_id
-                                )
-                                if update_successful:
-                                    st.success(f"Manual review updated for FHRSIDs: {', '.join(selected_fhrsids_for_update)} in BigQuery.")
-                                    # Option A: Direct DataFrame Update
-                                    # This approach updates the DataFrame in session state directly,
-                                    # avoiding a re-query to BigQuery for a more responsive UI.
-                                    if 'manual_review' not in st.session_state.fhrsid_df.columns:
-                                        # If 'manual_review' column doesn't exist, add it with a default value (e.g., None or empty string)
-                                        # This case should ideally not happen if data is properly formed.
-                                        st.session_state.fhrsid_df['manual_review'] = pd.NA # or ""
-
-                                    # Ensure FHRSID column is string type for matching, though it should be already
-                                    st.session_state.fhrsid_df['fhrsid'] = st.session_state.fhrsid_df['fhrsid'].astype(str)
-
-                                    # Update the 'manual_review' column for the selected FHRSIDs
-                                    mask = st.session_state.fhrsid_df['fhrsid'].isin(selected_fhrsids_for_update)
-                                    st.session_state.fhrsid_df.loc[mask, 'manual_review'] = manual_review_input_ui
-
-                                    st.info("Local data view updated. Use 'Lookup FHRSIDs' again if you need to refresh from BigQuery.")
-                                    # st.rerun() might still be needed if direct assignment doesn't refresh composed widgets.
-                                    # For st.dataframe, direct modification of session_state bound data usually triggers a refresh.
-                                    # If other dependent widgets don't update, uncomment st.rerun().
-                                    # For now, we assume st.dataframe will pick up the change.
-                                    # st.rerun() # Uncomment if UI does not refresh as expected.
-                                else:
-                                    # If update_successful is False, update_manual_review in bq_utils should have already shown an error.
-                                    # No specific action here, as the error is handled by the called function.
-                                    pass
-                        except ValueError:
-                            st.error("Invalid BigQuery Table Path format for update. Expected 'project.dataset.table'.")
-                        except Exception as e:
-                            st.error(f"An unexpected error occurred during update for FHRSIDs {', '.join(selected_fhrsids_for_update)}: {e}")
-            elif st.session_state.successful_fhrsids: # successful_fhrsids exist, but none are selected for update
-                st.info("Select one or more FHRSIDs from the list above to update their manual review status.")
-
-        elif st.session_state.fhrsid_input_str_ui and not st.session_state.fhrsid_df.empty and st.button("Refresh Data from BigQuery", key="refresh_lookup"):
-            # Added a button to explicitly re-fetch if needed, using the original input string for FHRSIDs
-            st.info("Refreshing data from BigQuery...")
-            fhrsid_lookup_logic(
-                st.session_state.fhrsid_input_str_ui, # Use the original full input string
-                st.session_state.bq_table_lookup_input_str_ui,
-                st,
-                read_from_bigquery
-            )
-            st.rerun()
-        elif st.session_state.fhrsid_input_str_ui and st.session_state.fhrsid_df.empty and st.button("Retry Lookup?", key="retry_lookup"): # Existing retry
-             # This button is just an example, the main "Lookup FHRSIDs" serves this purpose
-             st.write("Click 'Lookup FHRSIDs' again to retry.")
-
     elif app_mode == "Recent Restaurant Analysis":
         st.subheader("Analyze Recently Added Restaurants")
 
