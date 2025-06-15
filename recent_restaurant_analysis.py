@@ -3,6 +3,8 @@ from google import genai
 from google.genai import types
 import pandas as pd
 from bq_utils import get_recent_restaurants
+import bq_utils # Added import
+from google.cloud import bigquery
 
 N_DAYS = 1
 
@@ -84,3 +86,65 @@ def call_gemini_with_fhrs_data(fhrs_ids, gemini_prompt, df):
         results_df = pd.DataFrame(results_list)
 
     return results_df
+
+
+# Helper function to map pandas dtypes to BigQuery types
+def pandas_dtype_to_bq_type(dtype):
+    if pd.api.types.is_integer_dtype(dtype):
+        return 'INTEGER'
+    elif pd.api.types.is_float_dtype(dtype):
+        return 'FLOAT'
+    elif pd.api.types.is_bool_dtype(dtype):
+        return 'BOOLEAN'
+    elif pd.api.types.is_datetime64_any_dtype(dtype):
+        return 'TIMESTAMP'
+    else:
+        return 'STRING'
+
+
+def create_recent_restaurants_temp_table(restaurants_df: pd.DataFrame, project_id: str, dataset_id: str):
+    """
+    Writes the provided DataFrame to a BigQuery table named "recent_restaurants_temp".
+
+    Args:
+        restaurants_df (pd.DataFrame): DataFrame containing restaurant data.
+        project_id (str): Google Cloud project ID.
+        dataset_id (str): BigQuery dataset ID.
+    """
+    if restaurants_df is None or restaurants_df.empty:
+        st.warning("No restaurant data provided to create_recent_restaurants_temp_table. Skipping table creation.")
+        return
+
+    try:
+        # Define columns_to_select (all columns from the DataFrame)
+        columns_to_select = restaurants_df.columns.tolist()
+
+        # Infer bq_schema from DataFrame dtypes
+        bq_schema = []
+        for column in restaurants_df.columns:
+            bq_schema.append(
+                bigquery.SchemaField(name=column, field_type=pandas_dtype_to_bq_type(restaurants_df[column].dtype))
+            )
+
+        st.write("Inferred BigQuery Schema for temporary table:", bq_schema) # For debugging or info
+
+        # Call write_to_bigquery
+        table_id_temp = "recent_restaurants_temp"
+
+        # bq_utils is imported at the top of the file
+        success = bq_utils.write_to_bigquery(
+            df=restaurants_df,
+            project_id=project_id,
+            dataset_id=dataset_id,
+            table_id=table_id_temp,
+            columns_to_select=columns_to_select,
+            bq_schema=bq_schema
+        )
+
+        if success:
+            st.success(f"Successfully wrote data to BigQuery temporary table: {project_id}.{dataset_id}.{table_id_temp}")
+        else:
+            st.error(f"Failed to write data to BigQuery temporary table: {project_id}.{dataset_id}.{table_id_temp}")
+
+    except Exception as e:
+        st.error(f"An error occurred during create_recent_restaurants_temp_table: {e}")
