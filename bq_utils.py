@@ -60,6 +60,18 @@ def load_all_data_from_bq(project_id: str, dataset_id: str, table_id: str) -> Li
         # If re-raising was preferred: raise BigQueryExecutionError(f"An unexpected error occurred while loading data from {table_ref_str}") from e
         return []
 
+def get_recent_restaurants(N_DAYS, project_id: str, dataset_id: str, table_id: str):
+
+    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+
+    query = f'SELECT * FROM {table_ref_str}  WHERE \
+          DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {N_DAYS}'
+
+    new_df = pd.read_gbq(query, project_id=project_id)
+
+    return new_df
+
+
 def sanitize_column_name(column_name: str) -> str:
     """
     Sanitizes a column name for BigQuery compatibility.
