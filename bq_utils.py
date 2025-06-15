@@ -326,7 +326,7 @@ def update_rows_in_bigquery(project_id: str, dataset_id: str, table_id: str, fhr
     for column, value in update_data.items():
         if isinstance(value, str):
             # Escape single quotes within the string value itself
-            sanitized_value = value.replace('\\', '\\\\').replace("'", "''")
+            sanitized_value = value.replace("'", "").replace('\\', '\\\\')
             set_clauses.append(f"`{column}` = '{sanitized_value}'")
         elif isinstance(value, bool):
             set_clauses.append(f"`{column}` = {str(value).upper()}")
@@ -337,7 +337,7 @@ def update_rows_in_bigquery(project_id: str, dataset_id: str, table_id: str, fhr
         else:
             # Fallback for other types, assuming string representation is acceptable
             # or specific handling might be needed for other types (e.g., DATE, TIMESTAMP)
-            sanitized_value = str(value).replace('\\', '\\\\').replace("'", "''")
+            sanitized_value = str(value).replace("'", "").replace('\\', '\\\\')
             print(f"Warning: Column '{column}' has an unhandled type {type(value)}. Converting to string: '{sanitized_value}'")
             set_clauses.append(f"`{column}` = '{sanitized_value}'")
 
