@@ -419,6 +419,118 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
     # test_append_to_bigquery_fhrsid_is_integer_and_coerces_invalid (remove)
     # test_append_to_bigquery_fhrsid_conversion_error_to_nan_for_int64 (remove)
 
+# --- Tests for update_rows_in_bigquery ---
+import unittest # Already imported above, but good for clarity if this section moved
+from unittest.mock import patch, MagicMock # Already imported
+from google.cloud import bigquery, exceptions as google_exceptions # Ensure exceptions is imported
+from bq_utils import update_rows_in_bigquery, FHRSID_COLNAME
+
+class TestUpdateRowsInBigQuery(unittest.TestCase):
+    @patch('bq_utils.bigquery.Client')
+    def test_successful_update(self, mock_bq_client_constructor):
+        mock_client_instance = mock_bq_client_constructor.return_value
+        mock_query_job = MagicMock()
+        mock_client_instance.query.return_value = mock_query_job
+        mock_query_job.result.return_value = None # Simulate job completion
+        mock_query_job.errors = None # Simulate no errors
+
+        project_id = 'p'
+        dataset_id = 'd'
+        table_id = 't'
+        fhrsid = '123'
+        update_data = {
+            'colA': 'new_val',
+            'colB': 100,
+            'colC': True,
+            'colD': None,
+            "colE_quote": "val'ue"
+        }
+
+        result = update_rows_in_bigquery(project_id, dataset_id, table_id, fhrsid, update_data)
+
+        self.assertTrue(result)
+        mock_client_instance.query.assert_called_once()
+
+        actual_query = mock_client_instance.query.call_args[0][0]
+        expected_query_set_clause = "SET `colA` = 'new_val', `colB` = 100, `colC` = TRUE, `colD` = NULL, `colE_quote` = 'val''ue'"
+        expected_query_where_clause = f"WHERE {FHRSID_COLNAME} = '123'"
+
+        self.assertIn(expected_query_set_clause, actual_query)
+        self.assertIn(expected_query_where_clause, actual_query)
+        # Check table name
+        self.assertIn(f"UPDATE `{project_id}.{dataset_id}.{table_id}`", actual_query)
+
+    @patch('bq_utils.bigquery.Client')
+    def test_fhrsid_with_single_quote(self, mock_bq_client_constructor):
+        mock_client_instance = mock_bq_client_constructor.return_value
+        mock_query_job = MagicMock()
+        mock_client_instance.query.return_value = mock_query_job
+        mock_query_job.result.return_value = None
+        mock_query_job.errors = None
+
+        project_id = 'p'
+        dataset_id = 'd'
+        table_id = 't'
+        fhrsid_with_quote = "test'fhrsid"
+        update_data = {'colA': 'new_val'}
+
+        result = update_rows_in_bigquery(project_id, dataset_id, table_id, fhrsid_with_quote, update_data)
+
+        self.assertTrue(result)
+        actual_query = mock_client_instance.query.call_args[0][0]
+        expected_where_clause = f"WHERE {FHRSID_COLNAME} = 'test''fhrsid'"
+        self.assertIn(expected_where_clause, actual_query)
+
+    @patch('bq_utils.bigquery.Client')
+    def test_bigquery_api_error(self, mock_bq_client_constructor):
+        mock_client_instance = mock_bq_client_constructor.return_value
+        # Simulate an error during query execution
+        mock_client_instance.query.side_effect = google_exceptions.GoogleCloudError("Simulated API error")
+
+        project_id = 'p'
+        dataset_id = 'd'
+        table_id = 't'
+        fhrsid = '123'
+        update_data = {'colA': 'new_val'}
+
+        result = update_rows_in_bigquery(project_id, dataset_id, table_id, fhrsid, update_data)
+        self.assertFalse(result)
+
+    @patch('bq_utils.bigquery.Client')
+    def test_bigquery_job_error(self, mock_bq_client_constructor):
+        mock_client_instance = mock_bq_client_constructor.return_value
+        mock_query_job = MagicMock()
+        mock_client_instance.query.return_value = mock_query_job
+        mock_query_job.result.return_value = None # Simulate job completion
+        mock_query_job.errors = [{'message': 'Job failed'}] # Simulate errors in the job
+
+        project_id = 'p'
+        dataset_id = 'd'
+        table_id = 't'
+        fhrsid = '123'
+        update_data = {'colA': 'new_val'}
+
+        result = update_rows_in_bigquery(project_id, dataset_id, table_id, fhrsid, update_data)
+        self.assertFalse(result)
+
+
+    @patch('bq_utils.bigquery.Client')
+    def test_empty_update_data(self, mock_bq_client_constructor):
+        mock_client_instance = mock_bq_client_constructor.return_value
+
+        project_id = 'p'
+        dataset_id = 'd'
+        table_id = 't'
+        fhrsid = '123'
+        update_data = {} # Empty update data
+
+        # The function `update_rows_in_bigquery` itself returns False if update_data is empty
+        # before attempting any BQ calls.
+        result = update_rows_in_bigquery(project_id, dataset_id, table_id, fhrsid, update_data)
+
+        self.assertFalse(result)
+        mock_client_instance.query.assert_not_called() # Ensure BQ query is not made
+
 
 # If __name__ == '__main__':
 #     unittest.main() # This allows running file directly if not using pytest

@@ -27,7 +27,7 @@ class TestMainUI(unittest.TestCase):
         # Check that st.radio was called with the correct options
         mock_st_global.radio.assert_called_once_with(
             "Choose an action:",
-            ("Fetch API Data", "Recent Restaurant Analysis")
+            ("Fetch API Data", "Recent Restaurant Analysis", "Update Fields")
         )
 
 @patch('st_app.st', autospec=True)

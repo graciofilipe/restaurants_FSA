@@ -552,3 +552,124 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+# --- Tests for load_data_from_csv ---
+from data_processing import load_data_from_csv # Already imported at top but good for section visibility
+import io # For io.StringIO
+
+class TestLoadDataFromCsv(unittest.TestCase):
+    @patch('data_processing.st.error') # Mock st.error from data_processing module
+    def test_successful_load(self, mock_st_error):
+        csv_content = '"fhrsid","colA"\n"1","abc"\n"2","def"'
+        simulated_file = io.StringIO(csv_content)
+
+        df = load_data_from_csv(simulated_file)
+
+        self.assertIsNotNone(df)
+        self.assertEqual(len(df), 2)
+        self.assertListEqual(list(df.columns), ['fhrsid', 'colA'])
+        pd.testing.assert_series_equal(df['fhrsid'], pd.Series(["1", "2"], name='fhrsid', dtype=str))
+        mock_st_error.assert_not_called()
+
+    @patch('data_processing.st.error')
+    def test_missing_fhrsid_column(self, mock_st_error):
+        csv_content = '"colX","colA"\n"1","abc"'
+        simulated_file = io.StringIO(csv_content)
+
+        df = load_data_from_csv(simulated_file)
+
+        self.assertIsNone(df)
+        mock_st_error.assert_called_once_with("The required 'fhrsid' column is missing in the uploaded CSV file.")
+
+    @patch('data_processing.st.error')
+    def test_empty_csv_file_content(self, mock_st_error):
+        # This simulates a file that was uploaded but its content is empty, leading to EmptyDataError
+        csv_content = ""
+        simulated_file = io.StringIO(csv_content)
+
+        df = load_data_from_csv(simulated_file)
+
+        self.assertIsNone(df)
+        mock_st_error.assert_called_once_with("The uploaded CSV file is empty or contains no data.")
+
+    @patch('data_processing.st.error')
+    def test_empty_csv_file_just_headers(self, mock_st_error):
+        # CSV with only headers, no data rows
+        csv_content = '"fhrsid","colA"'
+        simulated_file = io.StringIO(csv_content)
+
+        df = load_data_from_csv(simulated_file)
+
+        self.assertIsNotNone(df)
+        self.assertTrue(df.empty)
+        self.assertListEqual(list(df.columns), ['fhrsid', 'colA']) # Columns should still be there
+        # The function `load_data_from_csv` itself has a check for `df.empty` after read_csv
+        # and returns this empty DataFrame. It doesn't call st.error in this specific case.
+        # However, the initial implementation in the prompt for load_data_from_csv was:
+        # "if df.empty: st.error("The uploaded CSV file is empty."); return None"
+        # The implemented code for load_data_from_csv in data_processing.py is:
+        # "if df.empty: st.error("The uploaded CSV file is empty."); return None"
+        # This means this test case should expect st.error and None.
+        # Self-correction based on actual implementation of load_data_from_csv:
+        # It should return None and call st.error.
+        # Let's re-verify the implementation in `data_processing.py` for `load_data_from_csv`:
+        # try:
+        #   df = pd.read_csv(uploaded_file)
+        #   if df.empty:  <-- This is after successful read_csv
+        #     st.error("The uploaded CSV file is empty.")
+        #     return None
+        # This test should assert st.error was called and df is None.
+        self.assertIsNone(df)
+        mock_st_error.assert_called_once_with("The uploaded CSV file is empty.")
+
+
+    @patch('data_processing.st.error')
+    def test_case_insensitive_fhrsid(self, mock_st_error):
+        csv_content = '"FHRSID","colA"\n"1","abc"'
+        simulated_file = io.StringIO(csv_content)
+
+        df = load_data_from_csv(simulated_file)
+
+        self.assertIsNotNone(df)
+        self.assertIn('fhrsid', df.columns) # Should be renamed to lowercase 'fhrsid'
+        self.assertTrue(pd.api.types.is_string_dtype(df['fhrsid']))
+        self.assertEqual(df['fhrsid'].iloc[0], "1")
+        mock_st_error.assert_not_called()
+
+    @patch('data_processing.st.error')
+    def test_parser_error_malformed_csv(self, mock_st_error):
+        # Malformed CSV (e.g., inconsistent number of columns per row after header)
+        csv_content = '"fhrsid","colA"\n"1"' # Second row has only one value
+        simulated_file = io.StringIO(csv_content)
+
+        df = load_data_from_csv(simulated_file)
+
+        self.assertIsNone(df)
+        mock_st_error.assert_called_once_with("Error parsing the CSV file. Please ensure it's a valid CSV format.")
+
+    @patch('data_processing.st.error')
+    def test_fhrsid_column_present_but_empty_values(self, mock_st_error):
+        csv_content = '"fhrsid","colA"\n"","abc"\n"","def"' # fhrsid values are empty strings
+        simulated_file = io.StringIO(csv_content)
+
+        df = load_data_from_csv(simulated_file)
+
+        self.assertIsNotNone(df)
+        self.assertEqual(len(df), 2)
+        # load_data_from_csv converts fhrsid to string. Empty strings are valid strings.
+        pd.testing.assert_series_equal(df['fhrsid'], pd.Series(["", ""], name='fhrsid', dtype=str))
+        mock_st_error.assert_not_called()
+
+    @patch('data_processing.st.error')
+    def test_generic_exception_during_read(self, mock_st_error):
+        simulated_file = MagicMock()
+        simulated_file.read.side_effect = Exception("Unexpected read error")
+
+        # We need to ensure pd.read_csv gets this mock.
+        # This is tricky because pd.read_csv takes the file object directly.
+        # We'll patch pd.read_csv itself for this one case.
+        with patch('data_processing.pd.read_csv', side_effect=Exception("Simulated pandas error")):
+            df = load_data_from_csv(simulated_file)
+
+        self.assertIsNone(df)
+        mock_st_error.assert_called_once_with("An unexpected error occurred while reading the CSV file: Simulated pandas error")
