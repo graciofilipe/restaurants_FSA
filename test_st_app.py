@@ -38,5 +38,7 @@ class TestMainUIOnly(unittest.TestCase):
         mock_st_global.subheader.assert_any_call("Gemini Intelligence Analysis")
         # Verify the "Export Filtered Data" subheader was displayed
         mock_st_global.subheader.assert_any_call("Export Filtered Data")
+        # Verify the "Bulk Update Manual Reviews" subheader was displayed
+        mock_st_global.subheader.assert_any_call("Bulk Update Manual Reviews")
         
         mock_st_global.radio.assert_not_called()
