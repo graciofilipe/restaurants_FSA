@@ -19,7 +19,8 @@ from bq_utils import (
     append_to_bigquery, # Added for new flow
     execute_merge_query, # Added for MERGE operation
     BigQueryExecutionError,  # Added import
-    DataFrameConversionError # Added import
+    DataFrameConversionError, # Added import
+    execute_gemini_enrichment # Added for Gemini Analysis
 )
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
 from data_processing import load_data_from_csv # Added for Update Fields
@@ -424,6 +425,16 @@ def handle_fetch_data_action(
     # If gcs_master_output_uri_str was meant to store the *appended* state, this needs adjustment.
     # For now, sticking to the instruction to leave as is.
 
+    # Store newly identified restaurants in session state for later review
+    if new_restaurants:
+        st.session_state.new_restaurants_to_review = new_restaurants
+        st.subheader(f"Newly identified restaurants from this fetch ({len(new_restaurants)}). Please review below:")
+        # Optionally display here, but the dedicated review section will handle it more interactively.
+        # display_data(new_restaurants)
+    else:
+        st.session_state.new_restaurants_to_review = []
+        st.info("No new restaurants identified in this fetch.")
+
     # 7. Display data
     # This displays the initial master_restaurant_data. If the display should reflect the appended data,
     # it would need to either re-load from BQ or combine master_restaurant_data + new_restaurants (if df versions are compatible).
@@ -431,16 +442,43 @@ def handle_fetch_data_action(
     st.info("Displaying master data loaded from BigQuery (before current API fetch append).") # Modified the info message slightly
     display_data(master_restaurant_data) # Explicitly display the loaded master data
 
-    # If new_restaurants were found, also display them for clarity in this run
-    if new_restaurants:
-        st.subheader(f"Newly identified restaurants from this fetch ({len(new_restaurants)}):")
-        display_data(new_restaurants) # Use the same display_data function
-
     # The function is expected to return List[Dict[str, Any]].
     # Returning the initial master_data for now, as the old _write_data_to_bigquery
     # was also based on the (then modified) master_data.
     # If the expectation is to return the "complete" data after append, this would need adjustment.
     return master_restaurant_data
+
+def update_restaurant_review_status(fhrsid: str, new_status: str, bq_full_path_str: str):
+    """
+    Updates the manual_review status for a given FHRSID in BigQuery and
+    removes the restaurant from the session state list if successful.
+    """
+    if not bq_full_path_str:
+        st.error("BigQuery Table Path is missing for update operation.")
+        return
+
+    try:
+        project_id, dataset_id, table_id = bq_full_path_str.split('.')
+        if not all([project_id, dataset_id, table_id]):
+            st.error(f"Invalid BigQuery Table Path format: '{bq_full_path_str}'. Expected 'project.dataset.table' with non-empty parts.")
+            return
+    except ValueError:
+        st.error(f"Invalid BigQuery Table Path format: '{bq_full_path_str}'. Expected 'project.dataset.table'.")
+        return
+
+    update_data = {"manual_review": new_status}
+    success = update_rows_in_bigquery(project_id, dataset_id, table_id, fhrsid, update_data)
+
+    if success:
+        st.success(f"Successfully updated FHRSID {fhrsid} to '{new_status}' in BigQuery.")
+        # Remove the reviewed item from the session state list
+        st.session_state.new_restaurants_to_review = [
+            r for r in st.session_state.new_restaurants_to_review if r.get('FHRSID') != fhrsid
+        ]
+        st.rerun() # Rerun to update the display of new restaurants
+    else:
+        st.error(f"Failed to update FHRSID {fhrsid} to '{new_status}' in BigQuery.")
+
 
 def main_ui():
     st.title("Food Standards Agency API Explorer")
@@ -454,6 +492,8 @@ def main_ui():
         st.session_state['current_dataset_id'] = None
     if 'displaying_genai_temp' not in st.session_state: # Initialize new session state variable
         st.session_state.displaying_genai_temp = False
+    if 'new_restaurants_to_review' not in st.session_state: # Initialize new session state variable for new restaurants
+        st.session_state.new_restaurants_to_review = []
 
 
     st.subheader("Fetch API Data and Update Master List")
@@ -468,6 +508,41 @@ def main_ui():
             max_results=max_results_input_ui,
             bq_full_path_str=bq_full_path_ui
         )
+
+    st.divider()
+    st.subheader("Gemini Intelligence Analysis")
+    st.markdown("Run advanced analysis on recently added restaurants using Gemini.")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        connection_id_input = st.text_input("BigQuery Connection ID", value="eu.gemini", help="Region.ConnectionName (e.g. eu.gemini)")
+    with col2:
+        model_endpoint_input = st.text_input("Model Endpoint", value="gemini-2.5-pro", help="Model ID (e.g. gemini-2.5-pro)")
+
+    if st.button("Run Gemini Analysis"):
+        if not bq_full_path_ui:
+             st.error("Please enter the BigQuery Table Path above (in the Fetch Data section) to identify the master table.")
+        else:
+            try:
+                project_id, dataset_id, table_id = bq_full_path_ui.split('.')
+                if not all([project_id, dataset_id, table_id]):
+                     st.error("Invalid BigQuery Path format.")
+                else:
+                    with st.spinner("Running Gemini Analysis... Check terminal for detailed logs."):
+                        success = execute_gemini_enrichment(
+                            project_id=project_id,
+                            dataset_id=dataset_id,
+                            master_table_id=table_id,
+                            connection_id=connection_id_input,
+                            model_endpoint=model_endpoint_input
+                        )
+                        if success:
+                            st.success("Gemini Analysis completed successfully! Insights have been merged into the master table.")
+                        else:
+                            st.error("Gemini Analysis failed. Check the logs for details.")
+            except ValueError:
+                st.error("Invalid BigQuery Path format. Expected 'project.dataset.table'.")
+
 
 
 if __name__ == "__main__":

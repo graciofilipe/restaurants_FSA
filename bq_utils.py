@@ -15,6 +15,7 @@ import re
 import pandas_gbq # Added import
 from google.auth.exceptions import DefaultCredentialsError # Added import
 import logging # Added import
+from bq_scripts import SCRIPT_IDENTIFY_RECENTS, SCRIPT_GENERATE_INSIGHTS, SCRIPT_MERGE_INSIGHTS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -30,6 +31,92 @@ class DataFrameConversionError(Exception):
 
 # Module-level constant for FHRSID column name
 FHRSID_COLNAME = "fhrsid"
+
+def execute_gemini_enrichment(
+    project_id: str,
+    dataset_id: str,
+    master_table_id: str,
+    connection_id: str = 'eu.gemini',
+    model_endpoint: str = 'gemini-2.5-pro'
+) -> bool:
+    """
+    Orchestrates the Gemini enrichment process using BigQuery scripts.
+    
+    Steps:
+    1. Identify recent restaurants (SCRIPT_IDENTIFY_RECENTS).
+    2. Generate insights using Gemini (SCRIPT_GENERATE_INSIGHTS).
+    3. Merge insights back to master table (SCRIPT_MERGE_INSIGHTS).
+    
+    Args:
+        project_id: Google Cloud Project ID.
+        dataset_id: BigQuery Dataset ID.
+        master_table_id: The master table name (e.g., 'fsa_master').
+        connection_id: The BigQuery connection ID for the remote model (default: 'eu.gemini').
+        model_endpoint: The model endpoint to use (default: 'gemini-2.5-pro').
+        
+    Returns:
+        True if all steps succeed, False otherwise.
+    """
+    client = bigquery.Client(project=project_id)
+    
+    # Define intermediate table names
+    recents_table_id = "recents"
+    insights_table_id = "genairesults_temp"
+    
+    try:
+        # Step 1: Identify Recents
+        logging.info("Step 1: Identifying recent restaurants...")
+        print("Step 1: Identifying recent restaurants...")
+        query_recents = SCRIPT_IDENTIFY_RECENTS.format(
+            project_id=project_id,
+            dataset_id=dataset_id,
+            source_table=master_table_id,
+            target_table_recents=recents_table_id
+        )
+        # logging.info(f"Executing Query 1:\n{query_recents}")
+        job1 = client.query(query_recents)
+        job1.result()
+        logging.info("Step 1 Complete.")
+        print("Step 1 Complete.")
+
+        # Step 2: Generate Insights
+        logging.info("Step 2: Generating Gemini insights (this may take a while)...")
+        print("Step 2: Generating Gemini insights (this may take a while)...")
+        query_insights = SCRIPT_GENERATE_INSIGHTS.format(
+            project_id=project_id,
+            dataset_id=dataset_id,
+            source_table_recents=recents_table_id,
+            target_table_insights=insights_table_id,
+            connection_id=connection_id,
+            model_endpoint=model_endpoint
+        )
+        # logging.info(f"Executing Query 2:\n{query_insights}")
+        job2 = client.query(query_insights)
+        job2.result()
+        logging.info("Step 2 Complete.")
+        print("Step 2 Complete.")
+
+        # Step 3: Merge Insights
+        logging.info("Step 3: Merging insights back to master table...")
+        print("Step 3: Merging insights back to master table...")
+        query_merge = SCRIPT_MERGE_INSIGHTS.format(
+            project_id=project_id,
+            dataset_id=dataset_id,
+            source_table_insights=insights_table_id,
+            target_table_master=master_table_id
+        )
+        # logging.info(f"Executing Query 3:\n{query_merge}")
+        job3 = client.query(query_merge)
+        job3.result()
+        logging.info("Step 3 Complete.")
+        print("Step 3 Complete.")
+        
+        return True
+
+    except Exception as e:
+        logging.error(f"Error during Gemini enrichment process: {e}")
+        print(f"Error during Gemini enrichment process: {e}")
+        return False
 
 def load_all_data_from_bq(project_id: str, dataset_id: str, table_id: str) -> List[Dict[str, Any]]:
     """
