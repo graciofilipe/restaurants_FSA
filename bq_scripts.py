@@ -27,7 +27,7 @@ SELECT
   fhrsid, 
   AI.GENERATE( ('''Use Google Search and Google Maps to find information about this London restaurant:\n\nRestaurant Name: ''',businessname,''' \n Location: ''',address, ''' \n\nUse Google searches and Google Maps data to evaluate the restaurant based on these criteria: \n Value for Money: Affordable with generous portions for the price. \n Location: In an area with high restaurant competition and a significant native population for the cuisine the restaurant serves. \n Restaurant Type: should NOT be a fast-food, take-away-only, café, bar, pub, brunch place, coffee shop, or pastry shop. \n Cuisine: It should NOT be focused on classic European cuisine (French, Italian, Spanish, British). \n Ambiance and Style: It should be a casual place for locals, it should NOT be luxurious, high-end, fancy, or sophisticated. \n Customers: Frequented by local, middle/working-class patrons culturally aligned with the cuisine. \n Your response should be consice and always end with a justification and conclusion: "REJECTED", "Probably Rejected", "Maybe Accepted", or "ACCEPTED!". - If you cannot find enough information online just conclude "UNSURE"'''),
     connection_id => '{connection_id}',
-    endpoint => '{model_endpoint}',
+    endpoint => 'https://aiplatform.googleapis.com/v1/projects/filipegracio-ai-learning/locations/global/publishers/google/models/gemini-3-pro-preview',
     model_params => JSON '''{{ "tools": [{{"googleSearch": {{}}}}, {{"googleMaps": {{}}}}],
                               "systemInstruction": {{
                                 "parts": [
@@ -36,7 +36,7 @@ SELECT
                                   }}
                                 ]
                               }},
-                            "generationConfig": {{ "temperature": 0.2, "maxOutputTokens": 65535 , "topP": 0.5,"thinkingConfig": {{"thinkingBudget": -1}}}}
+                              "generationConfig": {  "maxOutputTokens": 65535 , "topP": 0.5,"thinkingConfig": {"thinkingLevel": "HIGH"}}}}
                             }}''').result AS gemini_insights
 FROM
 `{project_id}.{dataset_id}.{source_table_recents}`
