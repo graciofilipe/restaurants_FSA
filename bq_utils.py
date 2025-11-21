@@ -158,6 +158,65 @@ def load_all_data_from_bq(project_id: str, dataset_id: str, table_id: str) -> Li
         # If re-raising was preferred: raise BigQueryExecutionError(f"An unexpected error occurred while loading data from {table_ref_str}") from e
         return []
 
+def load_filtered_data_from_bq(
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    days_filter: int = None,
+    review_status_filter: List[str] = None,
+    excluded_locations: List[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Loads data from BigQuery with optional filters.
+
+    Args:
+        project_id: Google Cloud Project ID.
+        dataset_id: BigQuery Dataset ID.
+        table_id: BigQuery Table ID.
+        days_filter: If provided, filters for records first seen within this many days.
+        review_status_filter: If provided, filters for records with these manual_review statuses.
+        excluded_locations: If provided, excludes records from these LocalAuthorityNames.
+
+    Returns:
+        List of dictionaries representing the filtered rows.
+    """
+    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+    
+    # Start building the query
+    query = f"SELECT * FROM `{table_ref_str}` WHERE 1=1"
+    
+    # Add Date Filter
+    if days_filter is not None:
+        query += f" AND DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_filter}"
+    
+    # Add Review Status Filter
+    if review_status_filter:
+        # Format list for SQL IN clause: "('status1', 'status2')"
+        statuses_str = ", ".join([f"'{s}'" for s in review_status_filter])
+        query += f" AND manual_review IN ({statuses_str})"
+    
+    # Add Excluded Locations Filter
+    if excluded_locations:
+        # Format list for SQL NOT IN clause
+        # Escape single quotes in location names just in case
+        locs_str = ", ".join([f"'{loc.replace("'", "\\'")}'" for loc in excluded_locations])
+        query += f" AND localauthorityname NOT IN ({locs_str})"
+        
+    print(f"Executing Filtered BigQuery query: {query}")
+
+    try:
+        df = pandas_gbq.read_gbq(query, project_id=project_id)
+        if df is not None and not df.empty:
+            # Convert date columns to string or specific format if needed for JSON/Display
+            if 'first_seen' in df.columns:
+                 df['first_seen'] = df['first_seen'].astype(str)
+            return df.to_dict(orient='records')
+        else:
+            return []
+    except Exception as e:
+        print(f"Error loading filtered data from {table_ref_str}: {e}")
+        return []
+
 def sanitize_column_name(column_name: str) -> str:
     """
     Sanitizes a column name for BigQuery compatibility.

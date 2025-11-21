@@ -20,7 +20,8 @@ from bq_utils import (
     execute_merge_query, # Added for MERGE operation
     BigQueryExecutionError,  # Added import
     DataFrameConversionError, # Added import
-    execute_gemini_enrichment # Added for Gemini Analysis
+    execute_gemini_enrichment, # Added for Gemini Analysis
+    load_filtered_data_from_bq # Added for Export Section
 )
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
 from data_processing import load_data_from_csv # Added for Update Fields
@@ -543,6 +544,81 @@ def main_ui():
                             st.success("Gemini Analysis completed successfully! Insights have been merged into the master table.")
                         else:
                             st.error("Gemini Analysis failed. Check the logs for details.")
+            except ValueError:
+                st.error("Invalid BigQuery Path format. Expected 'project.dataset.table'.")
+
+    st.divider()
+    st.subheader("Export Filtered Data")
+    st.markdown("Query and export specific segments of the master data.")
+
+    # Defaults from SCRIPT1
+    default_excluded_locs = [
+        "Westminster", "City of London Corporation", "Tower Hamlets", 
+        "Kingston-Upon-Thames", "Camden", "Kensington and Chelsea", 
+        "Hackney", "Islington", "Hammersmith and Fulham"
+    ]
+    default_review_statuses = ["pending", "not reviewed"]
+
+    with st.form("export_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            export_days_input = st.number_input("Filter by 'First Seen' within last X days (0 to disable)", value=33, min_value=0)
+        with c2:
+            export_status_input = st.multiselect(
+                "Filter by Manual Review Status", 
+                options=["pending", "not reviewed", "accepted", "rejected", "unsure"],
+                default=default_review_statuses
+            )
+        
+        export_excluded_locs_input = st.multiselect(
+            "Exclude Local Authorities (Default list from analysis script)",
+            options=default_excluded_locs + ["Other..."], # Add dummy "Other" if we want to expand later, but for now just the known list is safer
+            default=default_excluded_locs
+        )
+        
+        # Allow user to add custom exclusions via text if needed? 
+        # For now, keep it simple as requested "same filters as in script1"
+        
+        submitted = st.form_submit_button("Run Query & Preview")
+
+    if submitted:
+        if not bq_full_path_ui:
+            st.error("Please enter the BigQuery Table Path in the 'Fetch Data' section above.")
+        else:
+            try:
+                project_id, dataset_id, table_id = bq_full_path_ui.split('.')
+                if not all([project_id, dataset_id, table_id]):
+                     st.error("Invalid BigQuery Path format.")
+                else:
+                    with st.spinner("Running parameterized query..."):
+                        # Handle 0 days as None (disable filter)
+                        days_param = export_days_input if export_days_input > 0 else None
+                        
+                        results = load_filtered_data_from_bq(
+                            project_id=project_id,
+                            dataset_id=dataset_id,
+                            table_id=table_id,
+                            days_filter=days_param,
+                            review_status_filter=export_status_input,
+                            excluded_locations=export_excluded_locs_input
+                        )
+                        
+                        if results:
+                            st.success(f"Found {len(results)} records.")
+                            df_results = pd.DataFrame(results)
+                            st.dataframe(df_results)
+                            
+                            # CSV Download
+                            csv = df_results.to_csv(index=False).encode('utf-8')
+                            st.download_button(
+                                label="Download results as CSV",
+                                data=csv,
+                                file_name='fsa_export_filtered.csv',
+                                mime='text/csv',
+                            )
+                        else:
+                            st.warning("No records found matching these criteria.")
+                            
             except ValueError:
                 st.error("Invalid BigQuery Path format. Expected 'project.dataset.table'.")
 

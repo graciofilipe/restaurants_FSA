@@ -24,8 +24,11 @@ class TestMainUIOnly(unittest.TestCase):
         mock_st_global.session_state.get = MagicMock(side_effect=session_state_get)
         type(mock_st_global.session_state).__contains__ = MagicMock(side_effect=session_state_contains)
 
-        # Configure st.columns to return 3 mocks to satisfy unpacking
-        mock_st_global.columns.return_value = [MagicMock(), MagicMock(), MagicMock()]
+        # Configure st.columns to return correct number of mocks based on input
+        def columns_side_effect(num_cols):
+            return [MagicMock() for _ in range(num_cols)]
+        
+        mock_st_global.columns.side_effect = columns_side_effect
 
         main_ui()
 
@@ -33,5 +36,7 @@ class TestMainUIOnly(unittest.TestCase):
         mock_st_global.subheader.assert_any_call("Fetch API Data and Update Master List")
         # Verify the "Gemini Intelligence Analysis" subheader was displayed
         mock_st_global.subheader.assert_any_call("Gemini Intelligence Analysis")
+        # Verify the "Export Filtered Data" subheader was displayed
+        mock_st_global.subheader.assert_any_call("Export Filtered Data")
         
         mock_st_global.radio.assert_not_called()
