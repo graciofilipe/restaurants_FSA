@@ -36,7 +36,7 @@ SELECT
                                   }}
                                 ]
                               }},
-                              "generationConfig": {  "maxOutputTokens": 65535 , "topP": 0.5,"thinkingConfig": {"thinkingLevel": "HIGH"}}}}
+                              "generationConfig": {{ "temperature": 0.8, "maxOutputTokens": 65535 , "topP": 0.5,"thinkingConfig": {{"thinkingLevel": "HIGH"}} }}
                             }}''').result AS gemini_insights
 FROM
 `{project_id}.{dataset_id}.{source_table_recents}`
