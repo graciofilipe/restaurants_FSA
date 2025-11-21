@@ -21,7 +21,8 @@ from bq_utils import (
     BigQueryExecutionError,  # Added import
     DataFrameConversionError, # Added import
     execute_gemini_enrichment, # Added for Gemini Analysis
-    load_filtered_data_from_bq # Added for Export Section
+    load_filtered_data_from_bq, # Added for Export Section
+    bulk_update_reviews # Added for Bulk Update Section
 )
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
 from data_processing import load_data_from_csv # Added for Update Fields
@@ -622,6 +623,54 @@ def main_ui():
             except ValueError:
                 st.error("Invalid BigQuery Path format. Expected 'project.dataset.table'.")
 
+    st.divider()
+    st.subheader("Bulk Update Manual Reviews")
+    st.markdown("Upload a CSV to bulk update the 'manual_review' status for specific restaurants.")
+    
+    uploaded_file = st.file_uploader("Upload CSV (Required columns: 'fhrsid', 'manual_review')", type=['csv'])
+    
+    if uploaded_file is not None:
+        try:
+            df_updates = pd.read_csv(uploaded_file)
+            
+            # Validate columns
+            required_cols = ['fhrsid', 'manual_review']
+            if not all(col in df_updates.columns for col in required_cols):
+                st.error(f"CSV is missing required columns. Found: {df_updates.columns.tolist()}. Expected: {required_cols}")
+            else:
+                st.info("Preview of updates:")
+                st.dataframe(df_updates.head())
+                st.write(f"Total rows to update: {len(df_updates)}")
+                
+                if st.button("Execute Bulk Update"):
+                    if not bq_full_path_ui:
+                        st.error("Please enter the BigQuery Table Path in the 'Fetch Data' section above.")
+                    else:
+                        try:
+                            project_id, dataset_id, table_id = bq_full_path_ui.split('.')
+                            if not all([project_id, dataset_id, table_id]):
+                                st.error("Invalid BigQuery Path format.")
+                            else:
+                                with st.spinner("Executing bulk update (uploading temp table -> merging -> cleaning up)..."):
+                                    # Ensure fhrsid is string for consistency
+                                    df_updates['fhrsid'] = df_updates['fhrsid'].astype(str)
+                                    
+                                    success = bulk_update_reviews(
+                                        project_id=project_id,
+                                        dataset_id=dataset_id,
+                                        target_table_id=table_id,
+                                        df_updates=df_updates
+                                    )
+                                    
+                                    if success:
+                                        st.success("Bulk update completed successfully!")
+                                    else:
+                                        st.error("Bulk update failed. Check console logs for details.")
+                        except ValueError:
+                            st.error("Invalid BigQuery Path format. Expected 'project.dataset.table'.")
+                            
+        except Exception as e:
+            st.error(f"Error reading CSV file: {e}")
 
 
 if __name__ == "__main__":

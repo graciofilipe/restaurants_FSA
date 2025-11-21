@@ -15,7 +15,12 @@ import re
 import pandas_gbq # Added import
 from google.auth.exceptions import DefaultCredentialsError # Added import
 import logging # Added import
-from bq_scripts import SCRIPT_IDENTIFY_RECENTS, SCRIPT_GENERATE_INSIGHTS, SCRIPT_MERGE_INSIGHTS
+from bq_scripts import (
+    SCRIPT_IDENTIFY_RECENTS, 
+    SCRIPT_GENERATE_INSIGHTS, 
+    SCRIPT_MERGE_INSIGHTS,
+    SCRIPT_BULK_UPDATE_MERGE
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -253,6 +258,93 @@ def sanitize_column_name(column_name: str) -> str:
         return "unnamed_column"
         
     return name
+
+def bulk_update_reviews(
+    project_id: str,
+    dataset_id: str,
+    target_table_id: str,
+    df_updates: pd.DataFrame
+) -> bool:
+    """
+    Performs a bulk update of the 'manual_review' column using a temporary table and MERGE.
+
+    Args:
+        project_id: Google Cloud Project ID.
+        dataset_id: BigQuery Dataset ID.
+        target_table_id: The master table to update.
+        df_updates: DataFrame containing at least 'fhrsid' and 'manual_review' columns.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    if df_updates.empty:
+        print("DataFrame for bulk update is empty.")
+        return False
+
+    # Ensure columns are present
+    required_cols = ['fhrsid', 'manual_review']
+    if not all(col in df_updates.columns for col in required_cols):
+        print(f"DataFrame missing required columns: {required_cols}")
+        return False
+
+    # Generate a unique temporary table name
+    timestamp_str = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    temp_table_id = f"temp_update_reviews_{timestamp_str}"
+    
+    print(f"Initiating bulk update using temp table: {temp_table_id}")
+
+    # 1. Write DataFrame to Temp Table
+    # We need a minimal schema for the update table
+    # Assuming fhrsid is string (based on previous sanitization logic) or we rely on write_to_bigquery handling
+    
+    # Define schema for temp table
+    temp_schema = [
+        bigquery.SchemaField("fhrsid", "STRING"),
+        bigquery.SchemaField("manual_review", "STRING")
+    ]
+    
+    # Use write_to_bigquery to handle upload (it handles client creation, sanitization, etc.)
+    # We just pass the subset of columns we care about
+    success_upload = write_to_bigquery(
+        df=df_updates,
+        project_id=project_id,
+        dataset_id=dataset_id,
+        table_id=temp_table_id,
+        columns_to_select=required_cols,
+        bq_schema=temp_schema
+    )
+
+    if not success_upload:
+        print("Failed to upload temporary update table. Aborting bulk update.")
+        return False
+
+    client = bigquery.Client(project=project_id)
+    
+    try:
+        # 2. Run MERGE Query
+        query = SCRIPT_BULK_UPDATE_MERGE.format(
+            project_id=project_id,
+            dataset_id=dataset_id,
+            target_table=target_table_id,
+            source_table_temp=temp_table_id
+        )
+        
+        print(f"Executing MERGE query:\n{query}")
+        query_job = client.query(query)
+        query_job.result() # Wait for completion
+        print("MERGE query completed successfully.")
+        
+        # 3. Delete Temp Table
+        table_ref_str = f"{project_id}.{dataset_id}.{temp_table_id}"
+        client.delete_table(table_ref_str, not_found_ok=True)
+        print(f"Temporary table {table_ref_str} deleted.")
+        
+        return True
+
+    except Exception as e:
+        print(f"Error during bulk update execution: {e}")
+        return False
+
 
 def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str, columns_to_select: List[str], bq_schema: List[bigquery.SchemaField]) -> bool:
     """
