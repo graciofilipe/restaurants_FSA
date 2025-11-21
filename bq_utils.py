@@ -199,7 +199,9 @@ def load_filtered_data_from_bq(
     if excluded_locations:
         # Format list for SQL NOT IN clause
         # Escape single quotes in location names just in case
-        locs_str = ", ".join([f"'{loc.replace('\'', '\\\'')}'" for loc in excluded_locations])
+        # Avoid backslash in f-string for Python < 3.12 compatibility
+        escaped_locs = [loc.replace("'", "\\'") for loc in excluded_locations]
+        locs_str = ", ".join([f"'{loc}'" for loc in escaped_locs])
         query += f" AND localauthorityname NOT IN ({locs_str})"
         
     print(f"Executing Filtered BigQuery query: {query}")
