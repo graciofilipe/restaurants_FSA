@@ -37,7 +37,8 @@ def execute_gemini_enrichment(
     dataset_id: str,
     master_table_id: str,
     connection_id: str = 'eu.gemini',
-    model_endpoint: str = 'gemini-2.5-pro'
+    model_endpoint: str = 'gemini-2.5-pro',
+    days_recent: int = 33
 ) -> bool:
     """
     Orchestrates the Gemini enrichment process using BigQuery scripts.
@@ -53,6 +54,7 @@ def execute_gemini_enrichment(
         master_table_id: The master table name (e.g., 'fsa_master').
         connection_id: The BigQuery connection ID for the remote model (default: 'eu.gemini').
         model_endpoint: The model endpoint to use (default: 'gemini-2.5-pro').
+        days_recent: Number of days to look back for recent restaurants (default: 33).
         
     Returns:
         True if all steps succeed, False otherwise.
@@ -71,7 +73,8 @@ def execute_gemini_enrichment(
             project_id=project_id,
             dataset_id=dataset_id,
             source_table=master_table_id,
-            target_table_recents=recents_table_id
+            target_table_recents=recents_table_id,
+            days_recent=days_recent
         )
         # logging.info(f"Executing Query 1:\n{query_recents}")
         job1 = client.query(query_recents)

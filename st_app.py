@@ -513,11 +513,13 @@ def main_ui():
     st.subheader("Gemini Intelligence Analysis")
     st.markdown("Run advanced analysis on recently added restaurants using Gemini.")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         connection_id_input = st.text_input("BigQuery Connection ID", value="eu.gemini", help="Region.ConnectionName (e.g. eu.gemini)")
     with col2:
         model_endpoint_input = st.text_input("Model Endpoint", value="gemini-2.5-pro", help="Model ID (e.g. gemini-2.5-pro)")
+    with col3:
+        days_recent_input = st.number_input("Days Lookback", min_value=1, value=33, help="Number of days to consider a restaurant 'recent'.")
 
     if st.button("Run Gemini Analysis"):
         if not bq_full_path_ui:
@@ -534,7 +536,8 @@ def main_ui():
                             dataset_id=dataset_id,
                             master_table_id=table_id,
                             connection_id=connection_id_input,
-                            model_endpoint=model_endpoint_input
+                            model_endpoint=model_endpoint_input,
+                            days_recent=days_recent_input
                         )
                         if success:
                             st.success("Gemini Analysis completed successfully! Insights have been merged into the master table.")
