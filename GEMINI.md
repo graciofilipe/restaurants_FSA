@@ -78,3 +78,10 @@ The application is deployed to Google Cloud Run via Cloud Build. The build steps
 3.  Build Docker image.
 4.  Push image to Google Container Registry (GCR).
 5.  Deploy to Cloud Run (`restaurants-fsa` service in `europe-west2`).
+
+## Recent Updates
+*   **Gemini 3 Integration Fixes:** Updated `bq_scripts.py` to use the correct `model_params` structure for the Vertex AI GenerateContent API.
+    *   Corrected `tools` format to `[{"googleSearch": {}}]`.
+    *   Added explicit `safetySettings` with `threshold: "OFF"`.
+    *   Adjusted `generationConfig` (temperature 0.6, topP 0.72, maxOutputTokens 65535).
+    *   Removed unsupported `thinkingConfig` to resolve API 400 errors.

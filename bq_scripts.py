@@ -28,7 +28,7 @@ SELECT
   AI.GENERATE( ('''Use Google Search and Google Maps to find information about this London restaurant:\n\nRestaurant Name: ''',businessname,''' \n Location: ''',address, ''' \n\nUse Google searches and Google Maps data to evaluate the restaurant based on these criteria: \n Value for Money: Affordable with generous portions for the price. \n Location: In an area with high restaurant competition and a significant native population for the cuisine the restaurant serves. \n Restaurant Type: should NOT be a fast-food, take-away-only, café, bar, pub, brunch place, coffee shop, or pastry shop. \n Ambiance and Style: It should be a casual place for locals, it should NOT be luxurious, high-end, fancy, or sophisticated. \n Customers: Frequented by local, middle/working-class patrons culturally aligned with the cuisine. \n Your response should be consice and always end with a justification and conclusion: "REJECTED", "Probably Rejected", "Maybe Accepted", or "ACCEPTED!". - If you cannot find enough information online just conclude "UNSURE"'''),
     connection_id => '{connection_id}',
     endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-3-pro-preview',
-    model_params => JSON '''{{ "tools": [{{"googleSearch": {{}}}}, {{"googleMaps": {{}}}}],
+    model_params => JSON '''{{
                               "systemInstruction": {{
                                 "parts": [
                                   {{
@@ -36,7 +36,20 @@ SELECT
                                   }}
                                 ]
                               }},
-                              "generationConfig": {{ "temperature": 0.8, "maxOutputTokens": 65535 , "topP": 0.5,"thinkingConfig": {{"thinkingLevel": "HIGH"}} }}
+                              "generationConfig": {{
+                                "temperature": 0.6,
+                                "maxOutputTokens": 65535,
+                                "topP": 0.72
+                              }},
+                              "safetySettings": [
+                                {{ "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" }},
+                                {{ "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" }},
+                                {{ "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" }},
+                                {{ "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" }}
+                              ],
+                              "tools": [
+                                {{ "googleSearch": {{}} }}
+                              ]
                             }}''').result AS gemini_insights
 FROM
 `{project_id}.{dataset_id}.{source_table_recents}`
