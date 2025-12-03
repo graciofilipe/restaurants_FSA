@@ -482,8 +482,35 @@ def update_restaurant_review_status(fhrsid: str, new_status: str, bq_full_path_s
         st.error(f"Failed to update FHRSID {fhrsid} to '{new_status}' in BigQuery.")
 
 
+def get_iap_user_email() -> str | None:
+    """
+    Attempts to retrieve the user's email from the IAP header.
+    Note: This uses an internal Streamlit API and might be fragile.
+    """
+    try:
+        from streamlit.web.server.websocket_headers import _get_websocket_headers
+        headers = _get_websocket_headers()
+        email = headers.get("X-Goog-Authenticated-User-Email")
+        if email:
+            # The email often comes as "accounts.google.com:user@example.com"
+            # We want to extract just "user@example.com"
+            if email.startswith("accounts.google.com:"):
+                return email.split(":", 1)[1]
+            return email
+    except Exception:
+        # Handle cases where the internal API changes or is not available
+        pass
+    return None
+
 def main_ui():
     st.title("Food Standards Agency API Explorer")
+
+    # Display authenticated user if IAP is active
+    user_email = get_iap_user_email()
+    if user_email:
+        st.sidebar.success(f"Logged in as: {user_email}")
+    else:
+        st.sidebar.warning("Not logged in (or IAP not configured).")
 
     # Initialize session state variables if they don't exist
     if 'recent_restaurants_df' not in st.session_state:
