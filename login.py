@@ -1,9 +1,7 @@
 import streamlit as st
 from auth.firebase_auth import AuthManager
 
-def login_page():
-    auth_manager = AuthManager()
-    
+def login_page(auth_manager: AuthManager):
     # Check for existing session or cookie
     auth_manager.check_auth()
     

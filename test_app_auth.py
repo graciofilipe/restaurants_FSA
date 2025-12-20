@@ -14,7 +14,7 @@ class TestAppAuthIntegration(unittest.TestCase):
         main_ui()
         
         # Should call login_page and NOT show the title
-        mock_login_page.assert_called_once()
+        mock_login_page.assert_called_once_with(mock_auth)
         mock_st.title.assert_not_called()
 
     @patch('st_app.AuthManager')

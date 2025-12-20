@@ -535,7 +535,7 @@ def main_ui():
     
     # 2. Force login if not authenticated
     if not auth_manager.is_authenticated():
-        login_page()
+        login_page(auth_manager)
         return
 
     st.title("Food Standards Agency API Explorer")
