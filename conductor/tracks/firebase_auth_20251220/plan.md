@@ -37,3 +37,9 @@
     - [x] Subtask: Verify sign-in, session persistence, and sign-out (if implemented).
     - [x] Subtask: Perform final code review and linting.
 - [x] Task: Conductor - User Manual Verification 'Phase 4: Final Verification' (Protocol in workflow.md) [checkpoint: 31f2f11]
+
+## Phase 5: Post-Implementation Fixes
+- [x] Task: Fix Project ID mismatch in token verification. 4a4f9c6
+    - [x] Subtask: Investigate `auth/firebase_auth.py` and `test_firebase_auth.py` to reproduce the issue.
+    - [x] Subtask: Update token verification logic to support Firebase Project ID validation.
+    - [x] Subtask: Verify tests pass.
