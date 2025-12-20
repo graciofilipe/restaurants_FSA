@@ -16,7 +16,7 @@
     - [ ] Subtask: Create a reproduction test case simulating edge cases (case sensitivity, whitespace differences) where "existing" restaurants are incorrectly flagged as "new".
     - [ ] Subtask: Implement robust normalization (lowercasing, stripping whitespace) in the comparison logic.
     - [ ] Subtask: Verify tests pass and false positives are eliminated.
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Robust Delta Logic' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Robust Delta Logic' (Protocol in workflow.md) [checkpoint: 30c7ca2]
 
 ## Phase 3: UI Integration
 - [ ] Task: Update Streamlit UI to Display Links.
