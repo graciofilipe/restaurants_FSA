@@ -23,4 +23,4 @@
     - [ ] Subtask: Review `st_app.py` and identify the dataframe display section.
     - [ ] Subtask: Update `st_app.py` to use `st.column_config.LinkColumn` for the 'Maps Link' column, ensuring it renders as a clickable link named "Search Maps".
     - [ ] Subtask: Verify locally that the links work and open in a new tab.
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: UI Integration' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: UI Integration' (Protocol in workflow.md) [checkpoint: 71e3380]
