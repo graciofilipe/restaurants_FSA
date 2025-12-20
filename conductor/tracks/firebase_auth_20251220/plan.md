@@ -33,7 +33,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 3: Application Integration' (Protocol in workflow.md) [checkpoint: fdd59f7]
 
 ## Phase 4: Final Verification and Cleanup
-- [ ] Task: End-to-end testing of the authentication flow.
-    - [ ] Subtask: Verify sign-in, session persistence, and sign-out (if implemented).
-    - [ ] Subtask: Perform final code review and linting.
+- [x] Task: End-to-end testing of the authentication flow.
+    - [x] Subtask: Verify sign-in, session persistence, and sign-out (if implemented).
+    - [x] Subtask: Perform final code review and linting.
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: Final Verification' (Protocol in workflow.md)
