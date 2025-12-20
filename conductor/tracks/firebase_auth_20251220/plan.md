@@ -11,15 +11,15 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Firebase Project Setup' (Protocol in workflow.md) [checkpoint: c529e18]
 
 ## Phase 2: Core Authentication Logic
-- [ ] Task: Create `auth/firebase_auth.py` and implement authentication primitives with TDD.
-    - [ ] Subtask: Write failing tests for user state detection (e.g., `is_user_authenticated`).
-    - [ ] Subtask: Implement Google Sign-In flow logic (using Firebase JS SDK via Streamlit components or a Python-friendly wrapper).
-    - [ ] Subtask: Implement session persistence logic ("Remember Me").
-    - [ ] Subtask: Verify tests pass and coverage >80%.
-- [ ] Task: Create a dedicated Login Page in Streamlit.
-    - [ ] Subtask: Write tests for the login page redirection logic.
-    - [ ] Subtask: Implement `login.py` (or a similar mechanism) to handle the Google Sign-In button and UI.
-    - [ ] Subtask: Verify tests pass.
+- [x] Task: Create `auth/firebase_auth.py` and implement authentication primitives with TDD.
+    - [x] Subtask: Write failing tests for user state detection (e.g., `is_user_authenticated`).
+    - [x] Subtask: Implement Google Sign-In flow logic (using Firebase JS SDK via Streamlit components or a Python-friendly wrapper).
+    - [x] Subtask: Implement session persistence logic ("Remember Me").
+    - [x] Subtask: Verify tests pass and coverage >80%.
+- [x] Task: Create a dedicated Login Page in Streamlit.
+    - [x] Subtask: Write tests for the login page redirection logic.
+    - [x] Subtask: Implement `login.py` (or a similar mechanism) to handle the Google Sign-In button and UI.
+    - [x] Subtask: Verify tests pass.
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Core Authentication Logic' (Protocol in workflow.md)
 
 ## Phase 3: Application Integration and Access Control
