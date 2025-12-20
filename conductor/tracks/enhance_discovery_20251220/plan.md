@@ -9,7 +9,7 @@
     - [ ] Subtask: Write failing tests for data processing enhancement (verifying the new column is added).
     - [ ] Subtask: Update `data_processing.py` to apply the function and add a 'Maps Link' column to the results DataFrame.
     - [ ] Subtask: Verify tests pass.
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Google Maps Link Generation' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Google Maps Link Generation' (Protocol in workflow.md) [checkpoint: ecc4ac6]
 
 ## Phase 2: Robust Delta Logic
 - [ ] Task: Audit and Improve Delta Logic in `data_processing.py`.
