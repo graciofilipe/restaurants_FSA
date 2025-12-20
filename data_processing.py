@@ -4,6 +4,7 @@ import streamlit as st
 from datetime import datetime
 from typing import List, Dict, Any, Callable, Tuple, Optional
 from bq_utils import ORIGINAL_COLUMNS_TO_KEEP
+from utils.url_generator import generate_maps_url
 
 def load_json_from_local_file_path(uri: str) -> Optional[Dict[str, Any]]:
     """
@@ -129,6 +130,13 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
                 if canonical_api_fhrsid not in fhrsids_processed_in_this_batch:
                     api_establishment['first_seen'] = today_date
                     api_establishment['manual_review'] = "not reviewed"
+
+                    # Generate Google Maps Link
+                    api_establishment['Maps Link'] = generate_maps_url(
+                        name=api_establishment.get('BusinessName', ''),
+                        address=api_establishment.get('AddressLine1', ''),
+                        postcode=api_establishment.get('PostCode', '')
+                    )
 
                     # Filter and prepare the establishment data using ORIGINAL_COLUMNS_TO_KEEP
                     processed_establishment = {}

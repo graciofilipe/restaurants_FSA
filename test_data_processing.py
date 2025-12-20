@@ -44,6 +44,30 @@ class TestLoadJsonFromLocalFilePath(unittest.TestCase):
 
 
 # --- Tests for load_master_data (modified) ---
+    @patch('data_processing.datetime')
+    @patch('data_processing.st')
+    def test_maps_link_added(self, mock_st, mock_datetime):
+        """
+        Test that 'Maps Link' is added to processed restaurants.
+        """
+        mock_date_str = "2023-10-27"
+        mock_datetime.now.return_value.strftime.return_value = mock_date_str
+        master_data = []
+
+        api_est = {
+            'FHRSID': 123, 'BusinessName': 'Testaurant',
+            'AddressLine1': '123 Main St', 'PostCode': 'A1 1AA',
+            'RatingValue': '5', 'LocalAuthorityName': 'LA', 'NewRatingPending': 'false'
+        }
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [api_est]}}}
+
+        new_restaurants = process_and_update_master_data(master_data, api_data)
+        self.assertEqual(len(new_restaurants), 1)
+        r_new = new_restaurants[0]
+        self.assertIn('Maps Link', r_new)
+        # Expected URL: https://www.google.com/maps/search/?api=1&query=Testaurant+123+Main+St+A1+1AA
+        self.assertEqual(r_new['Maps Link'], "https://www.google.com/maps/search/?api=1&query=Testaurant+123+Main+St+A1+1AA")
+
 class TestLoadMasterData(unittest.TestCase):
     @patch('data_processing.st')
     def test_load_master_data_success_and_manual_review_init(self, mock_st):
@@ -460,14 +484,16 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
             'FHRSID': "789", 'BusinessName': 'API Cafe New Numeric', 'RatingValue': '5',
             'NewRatingPending': 'false', 'first_seen': mock_date_str, 'manual_review': "not reviewed",
             'AddressLine1': 'Addr2', 'AddressLine2': 'Suite B', 'PostCode': 'PC2',
-            'LocalAuthorityName': 'LA2', 'gemini_insights': 'Good place'
+            'LocalAuthorityName': 'LA2', 'gemini_insights': 'Good place',
+            'Maps Link': 'https://www.google.com/maps/search/?api=1&query=API+Cafe+New+Numeric+Addr2+PC2'
         })
 
         expected_new_non_numeric = {col: None for col in ORIGINAL_COLUMNS_TO_KEEP}
         expected_new_non_numeric.update({
             'FHRSID': "XYZ", 'BusinessName': 'API Cafe New NonNumeric', 'RatingValue': '1',
             'NewRatingPending': 'true', 'first_seen': mock_date_str, 'manual_review': "not reviewed",
-            'AddressLine1': 'Addr4', 'PostCode': 'PC4', 'LocalAuthorityName': 'LA4'
+            'AddressLine1': 'Addr4', 'PostCode': 'PC4', 'LocalAuthorityName': 'LA4',
+            'Maps Link': 'https://www.google.com/maps/search/?api=1&query=API+Cafe+New+NonNumeric+Addr4+PC4'
         })
 
         for r_new in new_restaurants:
