@@ -12,7 +12,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Google Maps Link Generation' (Protocol in workflow.md) [checkpoint: ecc4ac6]
 
 ## Phase 2: Robust Delta Logic
-- [ ] Task: Audit and Improve Delta Logic in `data_processing.py`.
+- [x] Task: Audit and Improve Delta Logic in `data_processing.py`. 8a51d91
     - [ ] Subtask: Create a reproduction test case simulating edge cases (case sensitivity, whitespace differences) where "existing" restaurants are incorrectly flagged as "new".
     - [ ] Subtask: Implement robust normalization (lowercasing, stripping whitespace) in the comparison logic.
     - [ ] Subtask: Verify tests pass and false positives are eliminated.
