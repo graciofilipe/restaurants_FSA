@@ -105,8 +105,9 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
                 try:
                     canonical_fhrsid = str(int(fhrsid_val))
                 except (ValueError, TypeError):
-                    canonical_fhrsid = str(fhrsid_val)
-                    st.warning(f"FHRSID '{fhrsid_val}' from master_data could not be converted to int. Using original string value for comparison.")
+                    # Robust normalization for non-numeric IDs
+                    canonical_fhrsid = str(fhrsid_val).strip().lower()
+                    st.warning(f"FHRSID '{fhrsid_val}' from master_data could not be converted to int. Using normalized string value ('{canonical_fhrsid}') for comparison.")
                 existing_fhrsid_set.add(canonical_fhrsid)
 
     today_date = datetime.now().strftime("%Y-%m-%d")
@@ -119,8 +120,9 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
             try:
                 canonical_api_fhrsid = str(int(original_api_fhrsid))
             except ValueError:
-                canonical_api_fhrsid = str(original_api_fhrsid)
-                st.warning(f"FHRSID '{original_api_fhrsid}' from API data could not be converted to int. Using original string value.")
+                # Robust normalization for non-numeric IDs
+                canonical_api_fhrsid = str(original_api_fhrsid).strip().lower()
+                st.warning(f"FHRSID '{original_api_fhrsid}' from API data could not be converted to int. Using normalized string value ('{canonical_api_fhrsid}').")
 
             # Replace the original FHRSID with the canonical version
             api_establishment['FHRSID'] = canonical_api_fhrsid

@@ -68,6 +68,37 @@ class TestLoadJsonFromLocalFilePath(unittest.TestCase):
         # Expected URL: https://www.google.com/maps/search/?api=1&query=Testaurant+123+Main+St+A1+1AA
         self.assertEqual(r_new['Maps Link'], "https://www.google.com/maps/search/?api=1&query=Testaurant+123+Main+St+A1+1AA")
 
+    @patch('data_processing.datetime')
+    @patch('data_processing.st')
+    def test_deduplication_edge_cases_non_numeric(self, mock_st, mock_datetime):
+        """
+        Test that deduplication handles casing and whitespace differences in NON-NUMERIC FHRSID.
+        """
+        mock_date_str = "2023-10-27"
+        mock_datetime.now.return_value.strftime.return_value = mock_date_str
+        
+        # Master data has 'AbC' and ' XyZ '
+        master_data = [
+            {'FHRSID': "AbC", 'BusinessName': 'Cafe Alpha'}, 
+            {'FHRSID': " XyZ ", 'BusinessName': 'Cafe Beta'}
+        ]
+
+        # API data has 'abc' (lowercase) and 'XyZ' (stripped)
+        # Both should be identified as existing and NOT added.
+        api_est1 = {'FHRSID': "abc", 'BusinessName': 'Cafe Alpha API'} 
+        api_est2 = {'FHRSID': "XyZ", 'BusinessName': 'Cafe Beta API'}
+        
+        # Also add a genuinely new one 'NewID'
+        api_est3 = {'FHRSID': "NewID", 'BusinessName': 'Cafe Gamma'}
+
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [api_est1, api_est2, api_est3]}}}
+
+        new_restaurants = process_and_update_master_data(master_data, api_data)
+        
+        # Should only contain 'NewID' (normalized to 'newid')
+        self.assertEqual(len(new_restaurants), 1)
+        self.assertEqual(new_restaurants[0]['FHRSID'], "newid")
+
 class TestLoadMasterData(unittest.TestCase):
     @patch('data_processing.st')
     def test_load_master_data_success_and_manual_review_init(self, mock_st):
@@ -413,22 +444,23 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         self.assertEqual(len(new_restaurants), 3, "Should identify 3 new unique restaurants.")
 
+        # Check that FHRSIDs are canonicalized (string for numeric, lowercased string for non-numeric)
         added_fhrsids = sorted([r['FHRSID'] for r in new_restaurants])
-        expected_fhrsids = sorted(["789", "DEF", "A2Y"])
+        expected_fhrsids = sorted(["789", "a2y", "def"])
         self.assertEqual(added_fhrsids, expected_fhrsids, "FHRSIDs of new restaurants should be the canonical forms.")
 
-        new_def = next(r for r in new_restaurants if r['FHRSID'] == "DEF")
+        new_def = next(r for r in new_restaurants if r['FHRSID'] == "def")
         self.assertEqual(new_def['BusinessName'], 'New NonNumeric')
         self.assertEqual(new_def['first_seen'], mock_datetime_str)
         self.assertEqual(new_def['manual_review'], "not reviewed")
 
         expected_warning_calls = [
-            unittest.mock.call("FHRSID 'ABC' from master_data could not be converted to int. Using original string value for comparison."),
-            unittest.mock.call("FHRSID 'M1X' from master_data could not be converted to int. Using original string value for comparison."),
-            unittest.mock.call("FHRSID 'ABC' from API data could not be converted to int. Using original string value."),
-            unittest.mock.call("FHRSID 'M1X' from API data could not be converted to int. Using original string value."),
-            unittest.mock.call("FHRSID 'DEF' from API data could not be converted to int. Using original string value."),
-            unittest.mock.call("FHRSID 'A2Y' from API data could not be converted to int. Using original string value.")
+            unittest.mock.call("FHRSID 'ABC' from master_data could not be converted to int. Using normalized string value ('abc') for comparison."),
+            unittest.mock.call("FHRSID 'M1X' from master_data could not be converted to int. Using normalized string value ('m1x') for comparison."),
+            unittest.mock.call("FHRSID 'ABC' from API data could not be converted to int. Using normalized string value ('abc')."),
+            unittest.mock.call("FHRSID 'M1X' from API data could not be converted to int. Using normalized string value ('m1x')."),
+            unittest.mock.call("FHRSID 'DEF' from API data could not be converted to int. Using normalized string value ('def')."),
+            unittest.mock.call("FHRSID 'A2Y' from API data could not be converted to int. Using normalized string value ('a2y').")
         ]
 
         mock_st.warning.assert_has_calls(expected_warning_calls, any_order=False)
@@ -476,7 +508,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         self.assertEqual(len(new_restaurants), 2, "Should identify 2 new unique restaurants.")
 
         added_fhrsids = sorted([r['FHRSID'] for r in new_restaurants])
-        expected_fhrsids = sorted(["789", "XYZ"])
+        expected_fhrsids = sorted(["789", "xyz"])
         self.assertEqual(added_fhrsids, expected_fhrsids)
 
         expected_new_numeric = {col: None for col in ORIGINAL_COLUMNS_TO_KEEP}
@@ -490,7 +522,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         expected_new_non_numeric = {col: None for col in ORIGINAL_COLUMNS_TO_KEEP}
         expected_new_non_numeric.update({
-            'FHRSID': "XYZ", 'BusinessName': 'API Cafe New NonNumeric', 'RatingValue': '1',
+            'FHRSID': "xyz", 'BusinessName': 'API Cafe New NonNumeric', 'RatingValue': '1',
             'NewRatingPending': 'true', 'first_seen': mock_date_str, 'manual_review': "not reviewed",
             'AddressLine1': 'Addr4', 'PostCode': 'PC4', 'LocalAuthorityName': 'LA4',
             'Maps Link': 'https://www.google.com/maps/search/?api=1&query=API+Cafe+New+NonNumeric+Addr4+PC4'
@@ -499,13 +531,13 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         for r_new in new_restaurants:
             if r_new['FHRSID'] == "789":
                 self.assertEqual(r_new, expected_new_numeric)
-            elif r_new['FHRSID'] == "XYZ":
+            elif r_new['FHRSID'] == "xyz":
                 self.assertEqual(r_new, expected_new_non_numeric)
 
         expected_warning_calls = [
-            unittest.mock.call("FHRSID 'ABC' from master_data could not be converted to int. Using original string value for comparison."),
-            unittest.mock.call("FHRSID 'ABC' from API data could not be converted to int. Using original string value."),
-            unittest.mock.call("FHRSID 'XYZ' from API data could not be converted to int. Using original string value.")
+            unittest.mock.call("FHRSID 'ABC' from master_data could not be converted to int. Using normalized string value ('abc') for comparison."),
+            unittest.mock.call("FHRSID 'ABC' from API data could not be converted to int. Using normalized string value ('abc')."),
+            unittest.mock.call("FHRSID 'XYZ' from API data could not be converted to int. Using normalized string value ('xyz').")
         ]
         mock_st.warning.assert_has_calls(expected_warning_calls, any_order=False)
         self.assertEqual(mock_st.warning.call_count, 3, "Expected 3 warning calls for non-numeric FHRSIDs.")
