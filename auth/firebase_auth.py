@@ -21,7 +21,9 @@ class AuthManager:
         # Initialize Firebase Admin SDK if not already initialized
         if not firebase_admin._apps:
             try:
-                firebase_admin.initialize_app()
+                # Use explicit project ID from secrets to avoid mismatch with Cloud Run environment
+                project_id = st.secrets["firebase"]["projectId"]
+                firebase_admin.initialize_app(options={'projectId': project_id})
             except Exception:
                 pass
 
@@ -31,7 +33,7 @@ class AuthManager:
         params = st.query_params
         if 'token' in params:
             token = params['token']
-            email = params.get('email')
+            # email = params.get('email') # Trust the decoded token instead
             
             # Remove from URL
             new_params = dict(params)
@@ -43,11 +45,18 @@ class AuthManager:
                 st.query_params[k] = v
             
             if token:
-                user_data = {'email': email, 'token': token}
-                st.session_state['user'] = user_data
-                # Set cookie for persistence (1 day)
-                self.cookie_manager.set('auth_user', json.dumps(user_data), key='set_auth_cookie')
-                st.rerun()
+                try:
+                    # Verify the ID token with Firebase Admin SDK
+                    decoded_token = firebase_auth.verify_id_token(token)
+                    email = decoded_token.get('email')
+                    
+                    user_data = {'email': email, 'token': token}
+                    st.session_state['user'] = user_data
+                    # Set cookie for persistence (1 day)
+                    self.cookie_manager.set('auth_user', json.dumps(user_data), key='set_auth_cookie')
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Authentication failed: {e}")
         
         # 2. Check cookies (for returning users)
         if not st.session_state.get('user'):

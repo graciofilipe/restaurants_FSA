@@ -49,12 +49,16 @@ class TestFirebaseAuth(unittest.TestCase):
         self.assertIsNone(mock_st.session_state['user'])
         mock_cookie_manager.delete.assert_called_with('auth_user')
 
+    @patch('auth.firebase_auth.firebase_auth.verify_id_token')
     @patch('auth.firebase_auth.stx.CookieManager')
     @patch('auth.firebase_auth.st')
-    def test_check_auth_query_params(self, mock_st, mock_stx):
+    def test_check_auth_query_params(self, mock_st, mock_stx, mock_verify):
         mock_st.session_state = {}
         mock_st.query_params = {'token': 'test-token', 'email': 'test@example.com'}
         mock_cookie_manager = mock_stx.return_value
+        
+        # Mock verification success
+        mock_verify.return_value = {'email': 'test@example.com'}
         
         auth = AuthManager()
         # Mock rerun since it stops execution
