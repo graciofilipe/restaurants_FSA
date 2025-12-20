@@ -5,7 +5,7 @@
     - [ ] Subtask: Write failing tests for `generate_maps_url` (check correct formatting and encoding of names/addresses).
     - [ ] Subtask: Implement `generate_maps_url` using `urllib.parse`.
     - [ ] Subtask: Refactor and verify coverage.
-- [ ] Task: Integrate `generate_maps_url` into `data_processing.py`.
+- [x] Task: Integrate `generate_maps_url` into `data_processing.py`. 63b272b
     - [ ] Subtask: Write failing tests for data processing enhancement (verifying the new column is added).
     - [ ] Subtask: Update `data_processing.py` to apply the function and add a 'Maps Link' column to the results DataFrame.
     - [ ] Subtask: Verify tests pass.
