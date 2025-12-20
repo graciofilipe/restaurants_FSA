@@ -341,6 +341,31 @@ def _append_new_data_to_bigquery(new_restaurants: List[Dict[str, Any]], project_
         st.error(f"Failed to append new records to BigQuery table {project_id}.{dataset_id}.{table_id}.")
 
 
+def display_new_restaurants(new_restaurants: List[Dict[str, Any]]):
+    """
+    Displays the list of newly discovered restaurants using a Streamlit dataframe
+    with a configured LinkColumn for the Google Maps URL.
+    """
+    if not new_restaurants:
+        st.info("No new restaurants to display.")
+        return
+
+    st.subheader(f"Newly identified restaurants ({len(new_restaurants)})")
+    
+    df = pd.DataFrame(new_restaurants)
+    
+    # Configure the 'Maps Link' column to render as a clickable link
+    st.dataframe(
+        df,
+        column_config={
+            "Maps Link": st.column_config.LinkColumn(
+                "Research on Maps",
+                display_text="Search Maps"
+            )
+        },
+        hide_index=True,
+    )
+
 def handle_fetch_data_action(
     coordinate_pairs_str: str,
     max_results: int,
@@ -431,8 +456,6 @@ def handle_fetch_data_action(
     if new_restaurants:
         st.session_state.new_restaurants_to_review = new_restaurants
         st.subheader(f"Newly identified restaurants from this fetch ({len(new_restaurants)}). Please review below:")
-        # Optionally display here, but the dedicated review section will handle it more interactively.
-        # display_data(new_restaurants)
     else:
         st.session_state.new_restaurants_to_review = []
         st.info("No new restaurants identified in this fetch.")
@@ -537,6 +560,10 @@ def main_ui():
             max_results=max_results_input_ui,
             bq_full_path_str=bq_full_path_ui
         )
+
+    # Display newly discovered restaurants if available in session state
+    if st.session_state.get('new_restaurants_to_review'):
+        display_new_restaurants(st.session_state.new_restaurants_to_review)
 
     st.divider()
     st.subheader("Gemini Intelligence Analysis")
