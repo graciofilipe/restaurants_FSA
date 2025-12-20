@@ -19,7 +19,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Robust Delta Logic' (Protocol in workflow.md) [checkpoint: 30c7ca2]
 
 ## Phase 3: UI Integration
-- [ ] Task: Update Streamlit UI to Display Links.
+- [x] Task: Update Streamlit UI to Display Links. 6e4640d
     - [ ] Subtask: Review `st_app.py` and identify the dataframe display section.
     - [ ] Subtask: Update `st_app.py` to use `st.column_config.LinkColumn` for the 'Maps Link' column, ensuring it renders as a clickable link named "Search Maps".
     - [ ] Subtask: Verify locally that the links work and open in a new tab.
