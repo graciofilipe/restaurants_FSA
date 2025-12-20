@@ -23,13 +23,13 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Core Authentication Logic' (Protocol in workflow.md) [checkpoint: 509bba0]
 
 ## Phase 3: Application Integration and Access Control
-- [ ] Task: Implement global authentication check in `st_app.py`.
-    - [ ] Subtask: Update `st_app.py` to check authentication status at the start of `main_ui`.
-    - [ ] Subtask: Implement redirect to login page for unauthenticated users.
-    - [ ] Subtask: Update sidebar to display the authenticated user's email.
-- [ ] Task: Refactor existing IAP email logic.
-    - [ ] Subtask: Remove or conditionalize `get_iap_user_email` to prefer Firebase Authentication.
-    - [ ] Subtask: Verify that all protected subheaders (Fetch, Gemini, Export) remain inaccessible until login.
+- [x] Task: Implement global authentication check in `st_app.py`.
+    - [x] Subtask: Update `st_app.py` to check authentication status at the start of `main_ui`.
+    - [x] Subtask: Implement redirect to login page for unauthenticated users.
+    - [x] Subtask: Update sidebar to display the authenticated user's email.
+- [x] Task: Refactor existing IAP email logic.
+    - [x] Subtask: Remove or conditionalize `get_iap_user_email` to prefer Firebase Authentication.
+    - [x] Subtask: Verify that all protected subheaders (Fetch, Gemini, Export) remain inaccessible until login.
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Application Integration' (Protocol in workflow.md)
 
 ## Phase 4: Final Verification and Cleanup
