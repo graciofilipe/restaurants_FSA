@@ -1,7 +1,7 @@
 # Track Plan: Enhance Discovery Workflow
 
 ## Phase 1: Google Maps Link Generation
-- [ ] Task: Create `utils/url_generator.py` and implement `generate_maps_url` function with TDD.
+- [x] Task: Create `utils/url_generator.py` and implement `generate_maps_url` function with TDD. aa32c5b
     - [ ] Subtask: Write failing tests for `generate_maps_url` (check correct formatting and encoding of names/addresses).
     - [ ] Subtask: Implement `generate_maps_url` using `urllib.parse`.
     - [ ] Subtask: Refactor and verify coverage.
