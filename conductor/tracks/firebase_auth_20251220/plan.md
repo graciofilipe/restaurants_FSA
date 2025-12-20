@@ -30,7 +30,7 @@
 - [x] Task: Refactor existing IAP email logic.
     - [x] Subtask: Remove or conditionalize `get_iap_user_email` to prefer Firebase Authentication.
     - [x] Subtask: Verify that all protected subheaders (Fetch, Gemini, Export) remain inaccessible until login.
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Application Integration' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Application Integration' (Protocol in workflow.md) [checkpoint: fdd59f7]
 
 ## Phase 4: Final Verification and Cleanup
 - [ ] Task: End-to-end testing of the authentication flow.
