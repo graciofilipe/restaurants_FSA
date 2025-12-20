@@ -20,7 +20,7 @@
     - [x] Subtask: Write tests for the login page redirection logic.
     - [x] Subtask: Implement `login.py` (or a similar mechanism) to handle the Google Sign-In button and UI.
     - [x] Subtask: Verify tests pass.
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Core Authentication Logic' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Core Authentication Logic' (Protocol in workflow.md) [checkpoint: 509bba0]
 
 ## Phase 3: Application Integration and Access Control
 - [ ] Task: Implement global authentication check in `st_app.py`.
