@@ -8,7 +8,7 @@
 - [x] Task: Securely store Firebase configuration in Streamlit.
     - [x] Subtask: Create/Update `.streamlit/secrets.toml` with Firebase configuration keys.
     - [x] Subtask: Verify configuration is accessible from Python.
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Firebase Project Setup' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Firebase Project Setup' (Protocol in workflow.md) [checkpoint: c529e18]
 
 ## Phase 2: Core Authentication Logic
 - [ ] Task: Create `auth/firebase_auth.py` and implement authentication primitives with TDD.
