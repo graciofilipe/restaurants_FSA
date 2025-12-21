@@ -27,3 +27,18 @@ streamlit run st_app.py
 ```
 
 This will typically open the application in your default web browser.
+
+## Authentication & Setup
+
+This application uses Firebase Authentication (Google Sign-In).
+
+### Configuration
+1.  Set up a Firebase project and enable Google Sign-In.
+2.  Add your Firebase configuration to `.streamlit/secrets.toml`.
+
+### Authorized Domains
+If deploying to Cloud Run (or any other host), you must add your domain to the **Authorized Domains** list in the Firebase Console:
+1.  Go to **Authentication** > **Settings** > **Authorized Domains**.
+2.  Add your application's domain (e.g., `your-service-xyz.run.app`).
+
+*Note: If you skip this, users will see a "Configuration Error" regarding unauthorized domains when trying to log in.*

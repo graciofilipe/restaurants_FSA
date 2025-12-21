@@ -1,11 +1,12 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 from auth.firebase_auth import AuthManager
 
+@patch('auth.firebase_auth.firebase_admin')
 class TestFirebaseAuth(unittest.TestCase):
     @patch('auth.firebase_auth.stx.CookieManager')
     @patch('auth.firebase_auth.st')
-    def test_is_authenticated_false(self, mock_st, mock_stx):
+    def test_is_authenticated_false(self, mock_st, mock_stx, mock_admin):
         # Setup mock session state
         mock_st.session_state = {}
         
@@ -14,7 +15,7 @@ class TestFirebaseAuth(unittest.TestCase):
 
     @patch('auth.firebase_auth.stx.CookieManager')
     @patch('auth.firebase_auth.st')
-    def test_is_authenticated_true(self, mock_st, mock_stx):
+    def test_is_authenticated_true(self, mock_st, mock_stx, mock_admin):
         # Setup mock session state with a user
         mock_st.session_state = {'user': {'email': 'test@example.com'}}
         
@@ -23,7 +24,7 @@ class TestFirebaseAuth(unittest.TestCase):
 
     @patch('auth.firebase_auth.stx.CookieManager')
     @patch('auth.firebase_auth.st')
-    def test_get_user_email(self, mock_st, mock_stx):
+    def test_get_user_email(self, mock_st, mock_stx, mock_admin):
         mock_st.session_state = {'user': {'email': 'test@example.com'}}
         
         auth = AuthManager()
@@ -31,7 +32,7 @@ class TestFirebaseAuth(unittest.TestCase):
 
     @patch('auth.firebase_auth.stx.CookieManager')
     @patch('auth.firebase_auth.st')
-    def test_get_user_email_none(self, mock_st, mock_stx):
+    def test_get_user_email_none(self, mock_st, mock_stx, mock_admin):
         mock_st.session_state = {}
         
         auth = AuthManager()
@@ -39,7 +40,7 @@ class TestFirebaseAuth(unittest.TestCase):
 
     @patch('auth.firebase_auth.stx.CookieManager')
     @patch('auth.firebase_auth.st')
-    def test_sign_out(self, mock_st, mock_stx):
+    def test_sign_out(self, mock_st, mock_stx, mock_admin):
         mock_st.session_state = {'user': {'email': 'test@example.com'}}
         mock_cookie_manager = mock_stx.return_value
         
@@ -52,13 +53,17 @@ class TestFirebaseAuth(unittest.TestCase):
     @patch('auth.firebase_auth.firebase_auth.verify_id_token')
     @patch('auth.firebase_auth.stx.CookieManager')
     @patch('auth.firebase_auth.st')
-    def test_check_auth_query_params(self, mock_st, mock_stx, mock_verify):
+    def test_check_auth_query_params(self, mock_st, mock_stx, mock_verify, mock_admin):
         mock_st.session_state = {}
         mock_st.query_params = {'token': 'test-token', 'email': 'test@example.com'}
         mock_cookie_manager = mock_stx.return_value
         
         # Mock verification success
         mock_verify.return_value = {'email': 'test@example.com'}
+        
+        # Mock the app instance
+        mock_app = MagicMock()
+        mock_admin.get_app.return_value = mock_app
         
         auth = AuthManager()
         # Mock rerun since it stops execution
@@ -71,10 +76,13 @@ class TestFirebaseAuth(unittest.TestCase):
         
         self.assertEqual(mock_st.session_state['user'], {'email': 'test@example.com', 'token': 'test-token'})
         mock_cookie_manager.set.assert_called()
+        
+        # Verify verify_id_token was called with the app
+        mock_verify.assert_called_with('test-token', app=mock_app)
 
     @patch('auth.firebase_auth.stx.CookieManager')
     @patch('auth.firebase_auth.st')
-    def test_check_auth_cookie(self, mock_st, mock_stx):
+    def test_check_auth_cookie(self, mock_st, mock_stx, mock_admin):
         mock_st.session_state = {}
         mock_st.query_params = {}
         mock_cookie_manager = mock_stx.return_value
@@ -87,7 +95,7 @@ class TestFirebaseAuth(unittest.TestCase):
 
     @patch('auth.firebase_auth.stx.CookieManager')
     @patch('auth.firebase_auth.st')
-    def test_login_button(self, mock_st, mock_stx):
+    def test_login_button(self, mock_st, mock_stx, mock_admin):
         mock_st.secrets = {"firebase": {"apiKey": "key", "authDomain": "domain", "projectId": "id"}}
         
         auth = AuthManager()

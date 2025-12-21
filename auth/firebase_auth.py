@@ -18,14 +18,24 @@ class AuthManager:
         # Initialize Cookie Manager
         self.cookie_manager = stx.CookieManager()
         
-        # Initialize Firebase Admin SDK if not already initialized
-        if not firebase_admin._apps:
+        # Initialize Firebase Admin SDK
+        # We use a specific name to ensure we have control over the configuration
+        # and avoid conflicts with implicit default apps on Cloud Run.
+        self.app_name = "firebase_auth_app"
+        try:
+            self.app = firebase_admin.get_app(name=self.app_name)
+        except ValueError:
+            # App doesn't exist, create it
             try:
-                # Use explicit project ID from secrets to avoid mismatch with Cloud Run environment
                 project_id = st.secrets["firebase"]["projectId"]
-                firebase_admin.initialize_app(options={'projectId': project_id})
-            except Exception:
-                pass
+                self.app = firebase_admin.initialize_app(
+                    options={'projectId': project_id},
+                    name=self.app_name
+                )
+            except Exception as e:
+                # If explicit initialization fails, fallback to default (though risky for project mismatch)
+                print(f"Failed to initialize named Firebase Admin app: {e}")
+                self.app = None
 
     def check_auth(self):
         """Checks for auth token in query params or cookies."""
@@ -47,7 +57,13 @@ class AuthManager:
             if token:
                 try:
                     # Verify the ID token with Firebase Admin SDK
-                    decoded_token = firebase_auth.verify_id_token(token)
+                    # Explicitly check against the projectId from secrets
+                    if self.app:
+                        decoded_token = firebase_auth.verify_id_token(token, app=self.app)
+                    else:
+                         # Fallback to default app if named app init failed
+                        decoded_token = firebase_auth.verify_id_token(token)
+                        
                     email = decoded_token.get('email')
                     
                     user_data = {'email': email, 'token': token}
@@ -57,6 +73,7 @@ class AuthManager:
                     st.rerun()
                 except Exception as e:
                     st.error(f"Authentication failed: {e}")
+                    print(f"ERROR: Token verification failed: {e}")
         
         # 2. Check cookies (for returning users)
         if not st.session_state.get('user'):
@@ -135,7 +152,11 @@ class AuthManager:
                         }});
                     }}).catch((error) => {{
                         console.error("Auth error:", error);
-                        alert("Authentication failed: " + error.message);
+                        if (error.code === 'auth/unauthorized-domain') {{
+                            alert("Configuration Error: This domain (" + window.location.hostname + ") is not authorized in the Firebase Console. Please add it to Authentication > Settings > Authorized Domains.");
+                        }} else {{
+                            alert("Authentication failed: " + error.message);
+                        }}
                     }});
             }});
         </script>
