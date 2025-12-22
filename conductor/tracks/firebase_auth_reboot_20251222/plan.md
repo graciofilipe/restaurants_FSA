@@ -11,11 +11,11 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Project Initialization' (Protocol in workflow.md) [checkpoint: 332bc78]
 
 ## Phase 2: Authentication Primitives (TDD)
-- [~] Task: Implement Core Authentication Logic.
-    - [ ] Subtask: Write failing tests for token verification and session state.
-    - [ ] Subtask: Implement the backend logic to verify Firebase ID tokens.
-    - [ ] Subtask: Implement session persistence and logout logic.
-    - [ ] Subtask: Verify all authentication tests pass with >80% coverage.
+- [x] Task: Implement Core Authentication Logic. [d84bda2]
+    - [x] Subtask: Write failing tests for token verification and session state.
+    - [x] Subtask: Implement the backend logic to verify Firebase ID tokens.
+    - [x] Subtask: Implement session persistence and logout logic.
+    - [x] Subtask: Verify all authentication tests pass with >80% coverage.
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Authentication Primitives' (Protocol in workflow.md)
 
 ## Phase 2: Authentication Primitives (TDD)
