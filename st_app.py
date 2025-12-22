@@ -113,7 +113,7 @@ def auth_popup_handler():
     """
     Renders a dedicated page for handling the Firebase Auth Popup flow.
     """
-    st.set_page_config(page_title="Authentication", layout="centered")
+    st.set_page_config(page_title="Authenticating...", layout="centered")
     
     config = st.secrets["firebase"]
     config_json = json.dumps(dict(config))
@@ -134,9 +134,9 @@ def auth_popup_handler():
     <body>
         <div id="loading">
             <div class="spinner"></div>
-            <p>Connecting to Google...</p>
+            <p>Authenticating with Google...</p>
         </div>
-        <button id="auth-btn" class="btn" style="display:none;">Sign in with Google</button>
+        <div id="message"></div>
 
         <script type="module">
             import {{ initializeApp }} from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
@@ -147,33 +147,32 @@ def auth_popup_handler():
             const auth = getAuth(app);
             const provider = new GoogleAuthProvider();
 
-            function doAuth() {{
-                signInWithPopup(auth, provider)
-                    .then((result) => {{
-                        result.user.getIdToken().then((idToken) => {{
-                            if (window.opener) {{
-                                window.opener.postMessage({{ 
-                                    type: 'FIREBASE_AUTH_RESULT',
-                                    success: true,
-                                    data: {{ token: idToken, email: result.user.email }}
-                                }}, '*');
-                                window.close();
-                            }}
-                        }}));
-                    }}).catch((error) => {{
-                        console.error(error);
-                        document.getElementById('loading').style.display = 'none';
-                        document.getElementById('auth-btn').style.display = 'block';
-                        alert("Auth failed: " + error.message);
-                    }});
-            }}
-
-            document.getElementById('auth-btn').onclick = doAuth;
-            doAuth();
+            // Execute auth immediately
+            signInWithPopup(auth, provider)
+                .then((result) => {{
+                    result.user.getIdToken().then((idToken) => {{
+                        document.getElementById('message').innerText = "Success! Closing...";
+                        // Send token to opener (the main app)
+                        if (window.opener) {{
+                            window.opener.postMessage({{ 
+                                type: 'FIREBASE_AUTH_RESULT',
+                                success: true,
+                                data: {{ token: idToken, email: result.user.email }}
+                            }}, '*');
+                            window.close();
+                        }} else {{
+                            document.getElementById('message').innerText = "Authentication successful, but lost connection to main window. Please copy this token if needed (debug mode).";
+                        }}
+                    }})
+                }}).catch((error) => {{
+                    console.error(error);
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('message').innerText = "Authentication Failed: " + error.message;
+                }})
         </script>
     </body>
     </html>
-    """
+    ""
     components.html(html_content, height=600)
 
 def main_ui():
