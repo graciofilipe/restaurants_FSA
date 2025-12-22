@@ -122,8 +122,9 @@ def test_load_all_data_from_bq_generic_exception(mock_print, mock_read_gbq):
 # --- Tests for write_to_bigquery ---
 
 @patch('builtins.print') # Patched print
+@patch('bq_utils.st') # Added patch for st
 @patch('bq_utils.bigquery.Client')
-def test_write_to_bigquery_logic_with_fixed_schema(mock_bq_client_constructor, mock_print):
+def test_write_to_bigquery_logic_with_fixed_schema(mock_bq_client_constructor, mock_st, mock_print):
     mock_bq_client_instance = mock_bq_client_constructor.return_value
     mock_load_job = MagicMock()
     mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job
@@ -212,10 +213,11 @@ def test_write_to_bigquery_logic_with_fixed_schema(mock_bq_client_constructor, m
 # --- Tests for append_to_bigquery ---
 import unittest
 
+@patch('bq_utils.st')
 class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCase for easier class-based structure
     @patch('builtins.print') # Patched print
     @patch('bq_utils.bigquery.Client')
-    def test_append_successful(self, mock_bq_client, mock_print):
+    def test_append_successful(self, mock_bq_client, mock_print, mock_st):
         mock_job = MagicMock()
         mock_bq_client.return_value.load_table_from_dataframe.return_value = mock_job
         mock_job.result.return_value = None
@@ -279,7 +281,7 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
 
     @patch('builtins.print') # Patched print
     @patch('bq_utils.bigquery.Client')
-    def test_append_failure_on_load(self, mock_bq_client, mock_print):
+    def test_append_failure_on_load(self, mock_bq_client, mock_print, mock_st):
         mock_bq_client.return_value.load_table_from_dataframe.side_effect = Exception("BQ API error")
 
         # Prepare minimal DataFrame matching NEW_BQ_SCHEMA structure
@@ -298,7 +300,7 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
 
     @patch('builtins.print') # Patched print
     @patch('bq_utils.bigquery.Client')
-    def test_append_empty_dataframe(self, mock_bq_client, mock_print):
+    def test_append_empty_dataframe(self, mock_bq_client, mock_print, mock_st):
         sanitized_schema_names = [field.name for field in NEW_BQ_SCHEMA]
         empty_df = pd.DataFrame(columns=sanitized_schema_names)
         # Ensure dtypes for critical columns if df was not empty, important for BQ client
@@ -318,7 +320,7 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
 
     @patch('builtins.print') # Patched print
     @patch('bq_utils.bigquery.Client')
-    def test_column_subsetting_and_ordering_for_append(self, mock_bq_client, mock_print):
+    def test_column_subsetting_and_ordering_for_append(self, mock_bq_client, mock_print, mock_st):
         mock_job = MagicMock()
         mock_bq_client.return_value.load_table_from_dataframe.return_value = mock_job
         mock_job.result.return_value = None
@@ -355,7 +357,7 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
 
     @patch('builtins.print') # Patched print
     @patch('bq_utils.bigquery.Client')
-    def test_append_to_bigquery_fhrsid_string_handling(self, mock_bq_client_constructor, mock_print):
+    def test_append_to_bigquery_fhrsid_string_handling(self, mock_bq_client_constructor, mock_print, mock_st):
         mock_bq_client_instance = mock_bq_client_constructor.return_value
         mock_load_job = MagicMock()
         mock_bq_client_instance.load_table_from_dataframe.return_value = mock_load_job

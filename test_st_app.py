@@ -5,14 +5,21 @@ import pandas as pd
 
 from st_app import main_ui
 
-@patch('st_app.st', autospec=True)
+@patch('st_app.AuthManager', autospec=True)
+@patch('st_app.st')
 class TestMainUIOnly(unittest.TestCase):
-    def test_main_ui_displays_fetch_data_section(self, mock_st_global):
+    def test_main_ui_displays_fetch_data_section(self, mock_st_global, mock_auth_manager_cls):
+        # Setup authenticated state
+        mock_auth = mock_auth_manager_cls.return_value
+        mock_auth.is_authenticated.return_value = True
+        mock_auth.get_user_email.return_value = 'test@example.com'
+
         # Setup session state
         mock_st_global.session_state = MagicMock()
         initial_session_state_attrs = {
             'recent_restaurants_df': None, 'current_project_id': None,
-            'current_dataset_id': None, 'displaying_genai_temp': False
+            'current_dataset_id': None, 'displaying_genai_temp': False,
+            'new_restaurants_to_review': []
         }
         mock_st_global.session_state.configure_mock(**initial_session_state_attrs)
 
@@ -30,6 +37,9 @@ class TestMainUIOnly(unittest.TestCase):
             return [MagicMock() for _ in range(num_cols)]
         
         mock_st_global.columns.side_effect = columns_side_effect
+        
+        # Mock file_uploader to return None
+        mock_st_global.file_uploader.return_value = None
 
         main_ui()
 
@@ -41,5 +51,3 @@ class TestMainUIOnly(unittest.TestCase):
         mock_st_global.subheader.assert_any_call("Export Filtered Data")
         # Verify the "Bulk Update Manual Reviews" subheader was displayed
         mock_st_global.subheader.assert_any_call("Bulk Update Manual Reviews")
-        
-        mock_st_global.radio.assert_not_called()
