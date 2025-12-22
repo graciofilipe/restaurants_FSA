@@ -1,32 +1,32 @@
-# Track Plan: Remove Firebase Authentication
+# Track Plan: Remove Firebase Authentication [checkpoint: 1954ca6]
 
 ## Phase 1: Codebase Cleanup
-- [x] Task: Remove Firebase dependencies.
+- [x] Task: Remove Firebase dependencies. [1954ca6]
     - [x] Subtask: Remove `firebase-admin` and `extra-streamlit-components` from `requirements.txt`.
     - [x] Subtask: Update `Dockerfile` if necessary (usually just a rebuild, but check for specific install commands).
-- [x] Task: Remove Authentication Logic Modules.
+- [x] Task: Remove Authentication Logic Modules. [1954ca6]
     - [x] Subtask: Delete `auth/` directory.
     - [x] Subtask: Delete `login.py`.
-- [x] Task: Conductor - User Manual Verification (Protocol in workflow.md).
+- [x] Task: Conductor - User Manual Verification (Protocol in workflow.md). [1954ca6]
 
 ## Phase 2: Application Logic Reversion
-- [x] Task: Update `st_app.py` to remove authentication.
+- [x] Task: Update `st_app.py` to remove authentication. [1954ca6]
     - [x] Subtask: Remove imports `AuthManager` and `login_page`.
     - [x] Subtask: Remove `auth_popup_handler`.
     - [x] Subtask: Remove `main_ui` auth checks and sidebar login info.
     - [x] Subtask: Verify `main_ui` allows direct access to functionality.
-- [x] Task: Clean up Configuration.
+- [x] Task: Clean up Configuration. [1954ca6]
     - [x] Subtask: Remove `[firebase]` section from `.streamlit/secrets.toml`.
-- [x] Task: Conductor - User Manual Verification (Protocol in workflow.md).
+- [x] Task: Conductor - User Manual Verification (Protocol in workflow.md). [1954ca6]
 
 ## Phase 3: Test Cleanup and Verification
-- [x] Task: Remove Auth Tests.
+- [x] Task: Remove Auth Tests. [1954ca6]
     - [x] Subtask: Delete `test_app_auth.py`, `test_auth_fix.py`, `test_firebase_auth.py`.
     - [x] Subtask: Update `test_st_app.py` if it mocks auth.
-- [x] Task: Final Verification.
+- [x] Task: Final Verification. [1954ca6]
     - [x] Subtask: Run full test suite.
     - [x] Subtask: Run app locally to confirm no startup errors.
-- [ ] Task: Conductor - User Manual Verification (Protocol in workflow.md).
+- [x] Task: Conductor - User Manual Verification (Protocol in workflow.md). [1954ca6]
 
 ## Phase 3: Test Cleanup and Verification
 - [ ] Task: Remove Auth Tests.
