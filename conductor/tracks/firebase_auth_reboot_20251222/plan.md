@@ -1,6 +1,6 @@
 # Track Plan: Firebase Authentication from Scratch
 
-## Phase 1: Firebase & GCP Project Initialization
+## Phase 1: Firebase & GCP Project Initialization [checkpoint: 332bc78]
 - [x] Task: Interactive Setup Guide for Firebase Console. [d2f52b9]
     - [x] Subtask: Guide user to create/select a Firebase project.
     - [x] Subtask: Guide user to enable Google Sign-In as a provider.
@@ -8,7 +8,15 @@
 - [x] Task: Secure Configuration Storage. [d2f52b9]
     - [x] Subtask: Update `.streamlit/secrets.toml` with the new Firebase configuration.
     - [x] Subtask: Verify the app can read the configuration without errors.
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Project Initialization' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Project Initialization' (Protocol in workflow.md) [checkpoint: 332bc78]
+
+## Phase 2: Authentication Primitives (TDD)
+- [~] Task: Implement Core Authentication Logic.
+    - [ ] Subtask: Write failing tests for token verification and session state.
+    - [ ] Subtask: Implement the backend logic to verify Firebase ID tokens.
+    - [ ] Subtask: Implement session persistence and logout logic.
+    - [ ] Subtask: Verify all authentication tests pass with >80% coverage.
+- [ ] Task: Conductor - User Manual Verification 'Phase 2: Authentication Primitives' (Protocol in workflow.md)
 
 ## Phase 2: Authentication Primitives (TDD)
 - [ ] Task: Implement Core Authentication Logic.
