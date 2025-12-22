@@ -10,13 +10,22 @@
     - [x] Subtask: Verify the app can read the configuration without errors.
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Project Initialization' (Protocol in workflow.md) [checkpoint: 332bc78]
 
-## Phase 2: Authentication Primitives (TDD)
+## Phase 2: Authentication Primitives (TDD) [checkpoint: 17f5edb]
 - [x] Task: Implement Core Authentication Logic. [d84bda2]
     - [x] Subtask: Write failing tests for token verification and session state.
     - [x] Subtask: Implement the backend logic to verify Firebase ID tokens.
     - [x] Subtask: Implement session persistence and logout logic.
     - [x] Subtask: Verify all authentication tests pass with >80% coverage.
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Authentication Primitives' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Authentication Primitives' (Protocol in workflow.md) [checkpoint: 17f5edb]
+
+## Phase 3: UI Integration and Access Control
+- [~] Task: Implement the Login Experience.
+    - [ ] Subtask: Create a dedicated login page with a "Sign in with Google" button.
+    - [ ] Subtask: Integrate the Firebase JS SDK for the frontend authentication flow.
+- [~] Task: Enforce Global Access Control.
+    - [ ] Subtask: Update `st_app.py` to redirect unauthenticated users to the login page.
+    - [ ] Subtask: Update the sidebar to display the user's email and a "Sign Out" button.
+- [ ] Task: Conductor - User Manual Verification 'Phase 3: UI Integration' (Protocol in workflow.md)
 
 ## Phase 2: Authentication Primitives (TDD)
 - [ ] Task: Implement Core Authentication Logic.
