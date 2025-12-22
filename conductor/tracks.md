@@ -5,6 +5,3 @@ This file tracks all major tracks for the project. Each track has its own detail
 
 ## [x] Track: Remove Firebase Authentication
 *Link: [./conductor/tracks/remove_firebase_auth_20251222/](./conductor/tracks/remove_firebase_auth_20251222/)*
-
-## [~] Track: Firebase Authentication Integration
-*Link: [./conductor/tracks/firebase_auth_20251220/](./conductor/tracks/firebase_auth_20251220/)*
