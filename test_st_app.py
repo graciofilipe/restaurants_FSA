@@ -5,15 +5,10 @@ import pandas as pd
 
 from st_app import main_ui
 
-@patch('st_app.AuthManager', autospec=True)
 @patch('st_app.st', autospec=True)
 class TestMainUIOnly(unittest.TestCase):
-    def test_main_ui_displays_fetch_data_section(self, mock_st_global, mock_auth_manager_cls):
-        # Setup authenticated state
-        mock_auth = mock_auth_manager_cls.return_value
-        mock_auth.is_authenticated.return_value = True
-        mock_auth.get_user_email.return_value = 'test@example.com'
-
+    def test_main_ui_displays_fetch_data_section(self, mock_st_global):
+        # Setup session state
         mock_st_global.session_state = MagicMock()
         initial_session_state_attrs = {
             'recent_restaurants_df': None, 'current_project_id': None,

@@ -26,8 +26,6 @@ from bq_utils import (
 )
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
 from data_processing import load_data_from_csv # Added for Update Fields
-from auth.firebase_auth import AuthManager
-from login import login_page
 
 def display_data(data_to_display: List[Dict[str, Any]]):
     """
@@ -528,32 +526,12 @@ def get_iap_user_email() -> str | None:
     return None
 
 def main_ui():
-    auth_manager = AuthManager()
-    
-    # 1. Check for auth token in query params or cookies
-    auth_manager.check_auth()
-    
-    # 2. Force login if not authenticated
-    if not auth_manager.is_authenticated():
-        login_page(auth_manager)
-        return
-
     st.title("Food Standards Agency API Explorer")
 
-    # Display authenticated user
-    user_email = auth_manager.get_user_email()
-    if user_email:
-        st.sidebar.success(f"Logged in as: {user_email}")
-        if st.sidebar.button("Sign Out"):
-            auth_manager.sign_out()
-            st.rerun()
-    else:
-        # Fallback to IAP if configured but not logged in via Firebase
-        iap_email = get_iap_user_email()
-        if iap_email:
-            st.sidebar.success(f"Logged in via IAP as: {iap_email}")
-        else:
-            st.sidebar.warning("Not logged in.")
+    # Fallback to IAP if configured
+    iap_email = get_iap_user_email()
+    if iap_email:
+        st.sidebar.success(f"Logged in via IAP as: {iap_email}")
 
     # Initialize session state variables if they don't exist
     if 'recent_restaurants_df' not in st.session_state:

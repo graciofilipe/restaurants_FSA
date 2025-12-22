@@ -1,0 +1,7 @@
+{
+  "id": "remove_firebase_auth_20251222",
+  "name": "Remove Firebase Authentication",
+  "description": "Completely remove all Firebase authentication components, dependencies, and configurations to revert the application to an unauthenticated state.",
+  "status": "IN_PROGRESS",
+  "start_date": "2025-12-22"
+}

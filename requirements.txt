@@ -8,5 +8,3 @@ db-dtypes
 google-genai
 google-cloud-aiplatform
 vertexai
-firebase-admin
-extra-streamlit-components
