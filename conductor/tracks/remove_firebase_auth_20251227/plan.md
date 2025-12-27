@@ -9,8 +9,8 @@ This plan outlines the steps to decouple Firebase Authentication from the FSA AP
 
 ## Phase 2: Backend Logic Decoupling
 - [x] Task: Conductor - Remove `@login_required` decorators and auth-gating logic in `st_app.py` 262db86
-- [ ] Task: Conductor - Remove auth verification logic and session state management related to Firebase
-- [ ] Task: Conductor - Delete or deprecate the `auth/` directory and `login.py`
+- [~] Task: Conductor - Remove auth verification logic and session state management related to Firebase
+- [~] Task: Conductor - Delete or deprecate the `auth/` directory and `login.py`
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Backend Logic Decoupling' (Protocol in workflow.md)
 
 ## Phase 3: UI Transformation
