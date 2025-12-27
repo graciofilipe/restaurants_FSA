@@ -4,7 +4,7 @@ This plan outlines the steps to decouple Firebase Authentication from the FSA AP
 
 ## Phase 1: Preparation and Environment Cleanup
 - [x] Task: Conductor - Remove authentication dependencies from `requirements.txt` d5cbb6c
-- [ ] Task: Conductor - Clean up environment variables in `envs.sh` and `.streamlit/secrets.toml`
+- [x] Task: Conductor - Clean up environment variables in `envs.sh` and `.streamlit/secrets.toml` 24c1379
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Preparation and Environment Cleanup' (Protocol in workflow.md)
 
 ## Phase 2: Backend Logic Decoupling
