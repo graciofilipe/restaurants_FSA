@@ -20,7 +20,7 @@ This plan outlines the steps to decouple Firebase Authentication from the FSA AP
 - [x] Task: Conductor - User Manual Verification 'Phase 3: UI Transformation' (Protocol in workflow.md) 62ebf4f
 
 ## Phase 4: Verification and Finalization
-- [ ] Task: Conductor - Run full test suite to ensure core functionality (data fetching, BQ) is intact
-- [ ] Task: Conductor - Verify local run without Firebase credentials
-- [ ] Task: Conductor - Verify `cloudbuild.yaml` and `Dockerfile` successfully build
+- [x] Task: Conductor - Run full test suite to ensure core functionality (data fetching, BQ) is intact ad2ae2e
+- [x] Task: Conductor - Verify local run without Firebase credentials ad2ae2e
+- [x] Task: Conductor - Verify `cloudbuild.yaml` and `Dockerfile` successfully build 77bd8a0
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: Verification and Finalization' (Protocol in workflow.md)
