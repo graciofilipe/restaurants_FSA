@@ -13,11 +13,11 @@ This plan outlines the steps to decouple Firebase Authentication from the FSA AP
 - [x] Task: Conductor - Delete or deprecate the `auth/` directory and `login.py` ad2ae2e
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Backend Logic Decoupling' (Protocol in workflow.md) c82f7d4
 
-## Phase 3: UI Transformation
-- [ ] Task: Conductor - Modify landing page to replace "Login" with "Enter App" button
-- [ ] Task: Conductor - Implement state transition from landing page to main dashboard via "Enter App"
-- [ ] Task: Conductor - Remove "Sign Out" and user profile elements from the UI
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: UI Transformation' (Protocol in workflow.md)
+## Phase 3: UI Transformation [checkpoint: 62ebf4f]
+- [x] Task: Conductor - Modify landing page to replace "Login" with "Enter App" button 262db86
+- [x] Task: Conductor - Implement state transition from landing page to main dashboard via "Enter App" 262db86
+- [x] Task: Conductor - Remove "Sign Out" and user profile elements from the UI 262db86
+- [x] Task: Conductor - User Manual Verification 'Phase 3: UI Transformation' (Protocol in workflow.md) 62ebf4f
 
 ## Phase 4: Verification and Finalization
 - [ ] Task: Conductor - Run full test suite to ensure core functionality (data fetching, BQ) is intact
