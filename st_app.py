@@ -1,8 +1,14 @@
 # Standard Library
 import json
 import time
+import os
+import mimetypes
 from datetime import datetime
 from typing import List, Dict, Any
+
+# Ensure .html is served as text/html even if system mime.types is missing
+mimetypes.add_type('text/html', '.html')
+mimetypes.add_type('application/javascript', '.js')
 
 # Third-party
 import pandas as pd
@@ -27,8 +33,6 @@ from bq_utils import (
 )
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
 from data_processing import load_data_from_csv
-from auth.firebase_auth import AuthManager
-from login import login_page
 
 def display_data(data_to_display: List[Dict[str, Any]]):
     """
@@ -109,96 +113,20 @@ def handle_fetch_data_action(coordinate_pairs_str: str, max_results: int, bq_ful
     display_data(master_restaurant_data)
     return master_restaurant_data
 
-def auth_popup_handler():
-    """
-    Renders a dedicated page for handling the Firebase Auth Popup flow.
-    """
-    st.set_page_config(page_title="Authenticating...", layout="centered")
-    
-    config = st.secrets["firebase"]
-    config_json = json.dumps(dict(config))
-
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>Authenticating...</title>
-        <style>
-            body {{ font-family: sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f0f2f6; }}
-            .spinner {{ border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 20px; }}
-            @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
-            .btn {{ background-color: #4285F4; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 16px; }}
-        </style>
-    </head>
-    <body>
-        <div id="loading">
-            <div class="spinner"></div>
-            <p>Authenticating with Google...</p>
-        </div>
-        <div id="message"></div>
-
-        <script type="module">
-            import {{ initializeApp }} from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
-            import {{ getAuth, signInWithPopup, GoogleAuthProvider }} from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
-
-            const firebaseConfig = {config_json};
-            const app = initializeApp(firebaseConfig);
-            const auth = getAuth(app);
-            const provider = new GoogleAuthProvider();
-
-            // Execute auth immediately
-            signInWithPopup(auth, provider)
-                .then((result) => {{
-                    result.user.getIdToken().then((idToken) => {{
-                        document.getElementById('message').innerText = "Success! Closing...";
-                        // Send token to opener (the main app)
-                        if (window.opener) {{
-                            window.opener.postMessage({{ 
-                                type: 'FIREBASE_AUTH_RESULT',
-                                success: true,
-                                data: {{ token: idToken, email: result.user.email }}
-                            }}, '*');
-                            window.close();
-                        }} else {{
-                            document.getElementById('message').innerText = "Authentication successful, but lost connection to main window. Please copy this token if needed (debug mode).";
-                        }}
-                    }})
-                }}).catch((error) => {{
-                    console.error(error);
-                    document.getElementById('loading').style.display = 'none';
-                    document.getElementById('message').innerText = "Authentication Failed: " + error.message;
-                }})
-        </script>
-    </body>
-    </html>
-    ""
-    components.html(html_content, height=600)
-
 def main_ui():
-    auth_manager = AuthManager()
-    
-    if st.query_params.get("mode") == "auth":
-        auth_popup_handler()
-        return
+    # Initialize session state variables
+    if 'app_entered' not in st.session_state:
+        st.session_state.app_entered = False
 
-    token = st.query_params.get("token")
-    if token:
-        if auth_manager.verify_token(token):
-            st.query_params.clear()
+    if not st.session_state.app_entered:
+        st.title("FSA API Explorer")
+        st.write("Welcome to the Food Standards Agency API Explorer. Explore and analyze food hygiene ratings.")
+        if st.button("Enter App"):
+            st.session_state.app_entered = True
             st.rerun()
-
-    if not auth_manager.is_authenticated():
-        login_page(auth_manager)
         return
 
     st.title("Food Standards Agency API Explorer")
-
-    user_email = auth_manager.get_user_email()
-    st.sidebar.success(f"Logged in as: {user_email}")
-    if st.sidebar.button("Sign Out"):
-        auth_manager.sign_out()
-        st.rerun()
 
     # Initialize session state variables
     if 'new_restaurants_to_review' not in st.session_state:
