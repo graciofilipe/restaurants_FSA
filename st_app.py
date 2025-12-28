@@ -86,7 +86,7 @@ def display_new_restaurants(new_restaurants: List[Dict[str, Any]]):
     if not new_restaurants: return
     st.subheader(f"Newly identified restaurants ({len(new_restaurants)})")
     df = pd.DataFrame(new_restaurants)
-    st.dataframe(df, column_config={"Maps Link": st.column_config.LinkColumn("Research on Maps", display_text="Search Maps")}, hide_index=True)
+    st.dataframe(df, hide_index=True)
 
 def handle_fetch_data_action(coordinate_pairs_str: str, max_results: int, bq_full_path_str: str) -> List[Dict[str, Any]]:
     valid_coords = _parse_coordinates(coordinate_pairs_str)
