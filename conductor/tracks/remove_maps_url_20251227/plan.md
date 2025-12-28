@@ -2,7 +2,7 @@
 
 This plan outlines the steps to remove the Google Maps URL generation logic and UI components from the FSA API Explorer.
 
-## Phase 1: Logic Removal and Code Cleanup
+## Phase 1: Logic Removal and Code Cleanup [checkpoint: 40b5f96]
 - [x] Task: Conductor - Remove `generate_maps_url` usage in `data_processing.py` 22912d7
 - [x] Task: Conductor - Delete `utils/url_generator.py` and its directory if empty ae75d52
 - [x] Task: Conductor - Delete `test_url_generator.py` ae75d52
