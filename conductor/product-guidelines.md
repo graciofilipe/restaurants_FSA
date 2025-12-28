@@ -11,4 +11,4 @@
 ## Data Presentation Strategy
 - **New Establishment Focus (Default):** The primary view must filter results to show *only* new discoveries. This minimizes noise and highlights the "discovery" goal.
 - **On-Demand Context:** Provide toggles or separate tabs to view the broader "master list" or updated records for existing establishments only when requested.
-- **Action-Oriented Rows:** Each restaurant entry should prioritize the data points most useful for manual research (Name, Address, Rating, Link to Research).
+- **Action-Oriented Rows:** Each restaurant entry should prioritize the data points most useful for manual research (Name, Address, Rating).
