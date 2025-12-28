@@ -278,20 +278,21 @@ def bulk_update_reviews(
         True if successful, False otherwise.
     """
     if df_updates.empty:
-        print("DataFrame for bulk update is empty.")
+        print("DEBUG: DataFrame for bulk update is empty.")
         return False
 
     # Ensure columns are present
+    print(f"DEBUG: df_updates columns: {df_updates.columns.tolist()}")
     required_cols = ['fhrsid', 'manual_review']
     if not all(col in df_updates.columns for col in required_cols):
-        print(f"DataFrame missing required columns: {required_cols}")
+        print(f"DEBUG: DataFrame missing required columns: {required_cols}. Found: {df_updates.columns.tolist()}")
         return False
 
     # Generate a unique temporary table name
     timestamp_str = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
     temp_table_id = f"temp_update_reviews_{timestamp_str}"
     
-    print(f"Initiating bulk update using temp table: {temp_table_id}")
+    print(f"DEBUG: Initiating bulk update using temp table: {temp_table_id}")
 
     # 1. Write DataFrame to Temp Table
     # We need a minimal schema for the update table
@@ -305,6 +306,7 @@ def bulk_update_reviews(
     
     # Use write_to_bigquery to handle upload (it handles client creation, sanitization, etc.)
     # We just pass the subset of columns we care about
+    print(f"DEBUG: Uploading to temp table {temp_table_id}...")
     success_upload = write_to_bigquery(
         df=df_updates,
         project_id=project_id,
@@ -315,7 +317,7 @@ def bulk_update_reviews(
     )
 
     if not success_upload:
-        print("Failed to upload temporary update table. Aborting bulk update.")
+        print(f"DEBUG: Failed to upload temporary update table {temp_table_id}. Aborting bulk update.")
         return False
 
     client = bigquery.Client(project=project_id)
@@ -329,20 +331,20 @@ def bulk_update_reviews(
             source_table_temp=temp_table_id
         )
         
-        print(f"Executing MERGE query:\n{query}")
+        print(f"DEBUG: Executing MERGE query:\n{query}")
         query_job = client.query(query)
         query_job.result() # Wait for completion
-        print("MERGE query completed successfully.")
+        print(f"DEBUG: MERGE query completed. Rows affected: {query_job.num_dml_affected_rows}")
         
         # 3. Delete Temp Table
         table_ref_str = f"{project_id}.{dataset_id}.{temp_table_id}"
         client.delete_table(table_ref_str, not_found_ok=True)
-        print(f"Temporary table {table_ref_str} deleted.")
+        print(f"DEBUG: Temporary table {table_ref_str} deleted.")
         
         return True
 
     except Exception as e:
-        print(f"Error during bulk update execution: {e}")
+        print(f"DEBUG: Error during bulk update execution: {e}")
         return False
 
 
