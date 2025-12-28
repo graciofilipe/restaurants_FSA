@@ -13,7 +13,7 @@ This plan outlines the steps to remove the Google Maps URL generation logic and 
 - [x] Task: Conductor - Remove "Maps Link" from any display logic in `st_app.py` 29debff
 - [x] Task: Conductor - User Manual Verification 'Phase 2: UI Transformation' (Protocol in workflow.md) 29debff
 
-## Phase 3: Verification and Finalization
+## Phase 3: Verification and Finalization [checkpoint: af48436]
 - [x] Task: Conductor - Run full test suite to ensure no regressions 4e103b5
 - [x] Task: Conductor - Verify application starts and fetches data locally 4e103b5
 - [x] Task: Conductor - User Manual Verification 'Phase 3: Verification and Finalization' (Protocol in workflow.md) 4e103b5
