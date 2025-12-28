@@ -19,11 +19,11 @@ This plan outlines the steps to diagnose and fix the bulk update feature, ensuri
 - [x] Task: Conductor - Update `st_app.py` to display a success message with the count of updated rows. 994ac2b
 - [x] Task: Conductor - User Manual Verification 'Phase 3: UI Enhancement and Reporting' (Protocol in workflow.md) 994ac2b
 
-## Phase 5: Post-Deployment Troubleshooting & Fix
-- [x] Task: Conductor - Investigate Cloud Run logs and identify root cause (missing logs, unbuffered output needed).
-- [x] Task: Conductor - Update `Dockerfile` to enable unbuffered output.
-- [x] Task: Conductor - Refactor `bulk_update_reviews` to return explicit success/error messages (Tuple).
-- [x] Task: Conductor - Update `st_app.py` to handle the new return type and display errors.
-- [x] Task: Conductor - Update `st_app.py` to show error if BigQuery path is missing during bulk update.
-- [~] Task: Conductor - Redeploy and Verify on Cloud Run.
-- [ ] Task: Conductor - User Manual Verification 'Phase 5: Post-Deployment Troubleshooting & Fix' (Protocol in workflow.md)
+## Phase 5: Post-Deployment Troubleshooting & Fix [checkpoint: f1cb2d8]
+- [x] Task: Conductor - Investigate Cloud Run logs and identify root cause (missing logs, unbuffered output needed). f1cb2d8
+- [x] Task: Conductor - Update `Dockerfile` to enable unbuffered output. f1cb2d8
+- [x] Task: Conductor - Refactor `bulk_update_reviews` to return explicit success/error messages (Tuple). f1cb2d8
+- [x] Task: Conductor - Update `st_app.py` to handle the new return type and display errors. f1cb2d8
+- [x] Task: Conductor - Update `st_app.py` to show error if BigQuery path is missing during bulk update. f1cb2d8
+- [x] Task: Conductor - Redeploy and Verify on Cloud Run. f1cb2d8
+- [x] Task: Conductor - User Manual Verification 'Phase 5: Post-Deployment Troubleshooting & Fix' (Protocol in workflow.md) f1cb2d8
