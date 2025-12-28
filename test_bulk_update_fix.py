@@ -20,7 +20,7 @@ def test_bulk_update_reviews_exact_match(mock_bq_client, mock_write_to_bq):
     })
     
     result = bulk_update_reviews('proj', 'dataset', 'table', df)
-    assert result is 1
+    assert result == (True, "1 rows updated.")
     mock_write_to_bq.assert_called_once()
 
 @patch('bq_utils.write_to_bigquery')
@@ -45,7 +45,7 @@ def test_bulk_update_reviews_case_insensitive_match(mock_bq_client, mock_write_t
     
     # We expect this to return the row count (1) after the fix
     result = bulk_update_reviews('proj', 'dataset', 'table', df)
-    assert result is 1
+    assert result == (True, "1 rows updated.")
     
     # Also verify that the DataFrame passed to write_to_bigquery has normalized columns
     passed_df = mock_write_to_bq.call_args.kwargs['df']

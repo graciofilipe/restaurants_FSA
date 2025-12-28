@@ -10,7 +10,7 @@ ORIGINAL_COLUMNS_TO_KEEP = [
 
 from google.cloud import bigquery, exceptions as google_cloud_exceptions # Added google_cloud_exceptions
 from google.cloud.bigquery.client import Client # Explicit import for type hinting if needed elsewhere
-from typing import List, Dict, Any, Optional # Removed Optional, Added Dict, Any
+from typing import List, Dict, Any, Optional, Tuple # Removed Optional, Added Dict, Any
 import re
 import pandas_gbq # Added import
 from google.auth.exceptions import DefaultCredentialsError # Added import
@@ -264,7 +264,7 @@ def bulk_update_reviews(
     dataset_id: str,
     target_table_id: str,
     df_updates: pd.DataFrame
-) -> Optional[int]:
+) -> Tuple[bool, str]:
     """
     Performs a bulk update of the 'manual_review' column using a temporary table and MERGE.
 
@@ -275,11 +275,11 @@ def bulk_update_reviews(
         df_updates: DataFrame containing at least 'fhrsid' and 'manual_review' columns.
 
     Returns:
-        The number of rows affected if successful, None otherwise.
+        A tuple: (Success Boolean, Message String).
     """
     if df_updates.empty:
         print("DEBUG: DataFrame for bulk update is empty.")
-        return None
+        return False, "DataFrame is empty."
 
     # Normalize columns to lowercase to handle variations like 'FHRSID'
     df_updates = df_updates.copy()
@@ -290,7 +290,7 @@ def bulk_update_reviews(
     required_cols = ['fhrsid', 'manual_review']
     if not all(col in df_updates.columns for col in required_cols):
         print(f"DEBUG: DataFrame missing required columns: {required_cols}. Found: {df_updates.columns.tolist()}")
-        return None
+        return False, f"Missing columns. Required: {required_cols}, Found: {df_updates.columns.tolist()}"
 
     # Generate a unique temporary table name
     timestamp_str = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
@@ -322,7 +322,7 @@ def bulk_update_reviews(
 
     if not success_upload:
         print(f"DEBUG: Failed to upload temporary update table {temp_table_id}. Aborting bulk update.")
-        return None
+        return False, "Failed to upload temporary table to BigQuery."
 
     client = bigquery.Client(project=project_id)
     
@@ -346,11 +346,11 @@ def bulk_update_reviews(
         client.delete_table(table_ref_str, not_found_ok=True)
         print(f"DEBUG: Temporary table {table_ref_str} deleted.")
         
-        return affected_rows
+        return True, f"{affected_rows} rows updated."
 
     except Exception as e:
         print(f"DEBUG: Error during bulk update execution: {e}")
-        return None
+        return False, f"Error executing update: {str(e)}"
 
 
 def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str, columns_to_select: List[str], bq_schema: List[bigquery.SchemaField]) -> bool:
