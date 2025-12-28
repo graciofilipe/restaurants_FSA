@@ -5,7 +5,7 @@ import pandas as pd
 ORIGINAL_COLUMNS_TO_KEEP = [
     'FHRSID', 'BusinessName', 'AddressLine1', 'AddressLine2', 'AddressLine3',
     'PostCode', 'LocalAuthorityName', 'RatingValue', 'NewRatingPending',
-    'first_seen', 'manual_review', 'gemini_insights', 'Maps Link'
+    'first_seen', 'manual_review', 'gemini_insights'
 ]
 
 from google.cloud import bigquery, exceptions as google_cloud_exceptions # Added google_cloud_exceptions
