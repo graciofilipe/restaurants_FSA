@@ -14,10 +14,10 @@ This plan outlines the steps to diagnose and fix the bulk update feature, ensuri
 - [x] Task: Conductor - Verify the fix by running the new tests and ensuring they pass (green). 3f8971d
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Backend Logic Fix' (Protocol in workflow.md) 3f8971d
 
-## Phase 3: UI Enhancement and Reporting
-- [x] Task: Conductor - Modify `bulk_update_reviews` to return the number of affected rows (if available) or a success boolean.
-- [x] Task: Conductor - Update `st_app.py` to display a success message with the count of updated rows.
-- [x] Task: Conductor - User Manual Verification 'Phase 3: UI Enhancement and Reporting' (Protocol in workflow.md)
+## Phase 3: UI Enhancement and Reporting [checkpoint: 994ac2b]
+- [x] Task: Conductor - Modify `bulk_update_reviews` to return the number of affected rows (if available) or a success boolean. 994ac2b
+- [x] Task: Conductor - Update `st_app.py` to display a success message with the count of updated rows. 994ac2b
+- [x] Task: Conductor - User Manual Verification 'Phase 3: UI Enhancement and Reporting' (Protocol in workflow.md) 994ac2b
 
 ## Phase 4: Final Verification and Deployment
 - [ ] Task: Conductor - Run the full automated test suite to ensure no regressions.
