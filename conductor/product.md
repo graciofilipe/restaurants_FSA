@@ -6,6 +6,7 @@ A personal Streamlit application designed to automate the discovery of newly ope
 ## Target Users
 - **Primary User:** A food enthusiast and developer (personal use) seeking to find new restaurants.
 - **Goal:** To identify and research new establishments as soon as they appear in official records.
+- **Access:** Open-access application with no mandatory authentication.
 
 ## Core Value Proposition
 - **Automated Discovery:** Eliminates manual searching by automatically fetching and comparing new FSA data against a historical baseline.
