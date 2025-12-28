@@ -197,6 +197,8 @@ def main_ui():
                     else:
                         st.error(f"Bulk update failed: {message}")
                 except ValueError: st.error("Invalid path.")
+            else:
+                st.error("Please enter a BigQuery Table Path.")
 
 if __name__ == "__main__":
     main_ui()

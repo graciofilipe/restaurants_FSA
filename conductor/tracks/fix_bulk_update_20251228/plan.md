@@ -24,5 +24,6 @@ This plan outlines the steps to diagnose and fix the bulk update feature, ensuri
 - [x] Task: Conductor - Update `Dockerfile` to enable unbuffered output.
 - [x] Task: Conductor - Refactor `bulk_update_reviews` to return explicit success/error messages (Tuple).
 - [x] Task: Conductor - Update `st_app.py` to handle the new return type and display errors.
+- [x] Task: Conductor - Update `st_app.py` to show error if BigQuery path is missing during bulk update.
 - [~] Task: Conductor - Redeploy and Verify on Cloud Run.
 - [ ] Task: Conductor - User Manual Verification 'Phase 5: Post-Deployment Troubleshooting & Fix' (Protocol in workflow.md)
