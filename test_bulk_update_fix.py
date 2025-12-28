@@ -12,6 +12,7 @@ def test_bulk_update_reviews_exact_match(mock_bq_client, mock_write_to_bq):
     mock_bq_client.return_value.query.return_value = mock_query_job
     mock_query_job.result.return_value = None
     mock_query_job.errors = None
+    mock_query_job.num_dml_affected_rows = 1
 
     df = pd.DataFrame({
         'fhrsid': ['123'],
@@ -19,7 +20,7 @@ def test_bulk_update_reviews_exact_match(mock_bq_client, mock_write_to_bq):
     })
     
     result = bulk_update_reviews('proj', 'dataset', 'table', df)
-    assert result is True
+    assert result is 1
     mock_write_to_bq.assert_called_once()
 
 @patch('bq_utils.write_to_bigquery')
@@ -34,6 +35,7 @@ def test_bulk_update_reviews_case_insensitive_match(mock_bq_client, mock_write_t
     mock_bq_client.return_value.query.return_value = mock_query_job
     mock_query_job.result.return_value = None
     mock_query_job.errors = None
+    mock_query_job.num_dml_affected_rows = 1
 
     # Common CSV variations
     df = pd.DataFrame({
@@ -41,10 +43,9 @@ def test_bulk_update_reviews_case_insensitive_match(mock_bq_client, mock_write_t
         'Manual_Review': ['rejected']
     })
     
-    # We expect this to return True after the fix (it will normalize names)
-    # BEFORE THE FIX, it returns False because it can't find 'fhrsid' and 'manual_review'
+    # We expect this to return the row count (1) after the fix
     result = bulk_update_reviews('proj', 'dataset', 'table', df)
-    assert result is True
+    assert result is 1
     
     # Also verify that the DataFrame passed to write_to_bigquery has normalized columns
     passed_df = mock_write_to_bq.call_args.kwargs['df']

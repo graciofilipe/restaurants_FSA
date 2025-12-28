@@ -191,8 +191,11 @@ def main_ui():
             if bq_full_path_ui:
                 try:
                     p, d, t = bq_full_path_ui.split('.')
-                    if bulk_update_reviews(p, d, t, df_updates):
-                        st.success("Bulk update successful!")
+                    affected_rows = bulk_update_reviews(p, d, t, df_updates)
+                    if affected_rows is not None:
+                        st.success(f"Bulk update successful! {affected_rows} rows updated.")
+                    else:
+                        st.error("Bulk update failed. Check logs for details.")
                 except ValueError: st.error("Invalid path.")
 
 if __name__ == "__main__":
