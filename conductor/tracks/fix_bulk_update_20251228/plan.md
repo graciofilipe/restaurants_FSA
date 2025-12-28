@@ -9,10 +9,10 @@ This plan outlines the steps to diagnose and fix the bulk update feature, ensuri
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Investigation and Root Cause Analysis' (Protocol in workflow.md) f6a5a99
 
 ## Phase 2: Backend Logic Fix
-- [ ] Task: Conductor - Write failing (red) tests for `bulk_update_reviews` covering the identified root cause.
-- [ ] Task: Conductor - Implement the fix in `bq_utils.py` to ensure the `MERGE` operation succeeds.
-- [ ] Task: Conductor - Verify the fix by running the new tests and ensuring they pass (green).
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Backend Logic Fix' (Protocol in workflow.md)
+- [x] Task: Conductor - Write failing (red) tests for `bulk_update_reviews` covering the identified root cause.
+- [x] Task: Conductor - Implement the fix in `bq_utils.py` to ensure the `MERGE` operation succeeds.
+- [x] Task: Conductor - Verify the fix by running the new tests and ensuring they pass (green).
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Backend Logic Fix' (Protocol in workflow.md)
 
 ## Phase 3: UI Enhancement and Reporting
 - [ ] Task: Conductor - Modify `bulk_update_reviews` to return the number of affected rows (if available) or a success boolean.

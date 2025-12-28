@@ -281,8 +281,12 @@ def bulk_update_reviews(
         print("DEBUG: DataFrame for bulk update is empty.")
         return False
 
+    # Normalize columns to lowercase to handle variations like 'FHRSID'
+    df_updates = df_updates.copy()
+    df_updates.columns = [col.lower() for col in df_updates.columns]
+
     # Ensure columns are present
-    print(f"DEBUG: df_updates columns: {df_updates.columns.tolist()}")
+    print(f"DEBUG: df_updates normalized columns: {df_updates.columns.tolist()}")
     required_cols = ['fhrsid', 'manual_review']
     if not all(col in df_updates.columns for col in required_cols):
         print(f"DEBUG: DataFrame missing required columns: {required_cols}. Found: {df_updates.columns.tolist()}")
