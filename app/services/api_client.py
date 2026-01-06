@@ -18,7 +18,7 @@ def fetch_api_data(longitude: float, latitude: float, max_results: int, page: in
     Returns:
         A dictionary containing the JSON response from the API, or None if an error occurs.
     """
-    api_url = f"https://api1-ratings.food.gov.uk/enhanced-search/en-GB/%5e/%5e/DISTANCE/1/Englad/{longitude}/{latitude}/{page}/{max_results}/json"
+    api_url = f"https://api1-ratings.food.gov.uk/enhanced-search/en-GB/%5e/%5e/DISTANCE/1/England/{longitude}/{latitude}/{page}/{max_results}/json"
     try:
         response = requests.get(api_url)
         if response.status_code == 200:

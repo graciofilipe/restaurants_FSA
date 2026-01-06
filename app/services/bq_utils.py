@@ -146,7 +146,8 @@ def load_filtered_data_from_bq(
         query += f" AND manual_review IN ({statuses_str})"
     
     if excluded_locations:
-        escaped_locs = [loc.replace("'", "\'\'") for loc in excluded_locations]
+        # Escape single quotes in location names just in case
+        escaped_locs = [loc.replace("'", "''") for loc in excluded_locations]
         locs_str = ", ".join([f"'{loc}'" for loc in escaped_locs])
         query += f" AND localauthorityname NOT IN ({locs_str})"
         
@@ -446,3 +447,18 @@ def execute_merge_query(merge_query: str, project_id: str) -> bool:
     except Exception as e:
         logger.error(f"An unexpected error occurred during MERGE query execution: {e}")
         return False
+
+MASTER_BQ_SCHEMA = [
+    bigquery.SchemaField('fhrsid', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('businessname', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('addressline1', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('addressline2', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('addressline3', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('postcode', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('localauthorityname', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('ratingvalue', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('newratingpending', 'BOOLEAN', mode='NULLABLE'),
+    bigquery.SchemaField('first_seen', 'DATE', mode='NULLABLE'),
+    bigquery.SchemaField('manual_review', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('gemini_insights', 'STRING', mode='NULLABLE'),
+]
