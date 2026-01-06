@@ -15,16 +15,16 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Configuration & Backend Setup' (Protocol in workflow.md) [checkpoint: 1d8c18f]
 
 ## Phase 2: Frontend Re-architecture (Streamlit) [checkpoint: ]
-- [ ] Task: Refactor `st_app.py` Layout.
-    - [ ] Remove "Fetch Data" inputs and button.
-    - [ ] Create "Configure Review" section (Sidebar or Top).
-    - [ ] Implement `st.date_input` for "First Seen After".
-    - [ ] Implement `st.multiselect` for "Review Status".
-    - [ ] Implement `st.multiselect` for "Exclude Local Authorities" (Query BQ for distinct values).
-- [ ] Task: Implement "Load Data" Logic.
-    - [ ] Update `load_filtered_data_from_bq` (or create new) to accept `excluded_authorities` list.
-    - [ ] Wire "Load Data" button to fetch and store in `st.session_state['review_data']`.
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Frontend Re-architecture' (Protocol in workflow.md)
+- [x] Task: Refactor `st_app.py` Layout.
+    - [x] Remove "Fetch Data" inputs and button.
+    - [x] Create "Configure Review" section (Sidebar or Top).
+    - [x] Implement `st.date_input` for "First Seen After".
+    - [x] Implement `st.multiselect` for "Review Status".
+    - [x] Implement `st.multiselect` for "Exclude Local Authorities" (Query BQ for distinct values).
+- [x] Task: Implement "Load Data" Logic.
+    - [x] Update `load_filtered_data_from_bq` (or create new) to accept `excluded_authorities` list.
+    - [x] Wire "Load Data" button to fetch and store in `st.session_state['review_data']`.
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Frontend Re-architecture' (Protocol in workflow.md) [checkpoint: ]
 
 ## Phase 3: Integration & Cleanup [checkpoint: ]
 - [ ] Task: Wire Actions to Session Data.

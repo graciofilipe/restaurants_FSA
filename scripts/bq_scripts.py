@@ -14,8 +14,8 @@ FROM
   `{project_id}.{dataset_id}.{source_table}`
 WHERE
   DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent}
-  AND (manual_review = "pending" OR manual_review = "not reviewed")
-  AND localauthorityname NOT IN ( "Westminster",  "City of London Corporation",  "Tower Hamlets", "Kingston-Upon-Thames","Camden", "Kensington and Chelsea", "Hackney", "Islington", "Hammersmith and Fulham")
+  AND manual_review IN ({status_list_str})
+  {exclusion_clause}
 """
 
 # SCRIPT 2: Generate Gemini Insights

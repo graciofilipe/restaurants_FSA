@@ -42,7 +42,9 @@ def execute_gemini_enrichment(
     master_table_id: str,
     connection_id: str = 'eu.gemini',
     model_endpoint: str = 'gemini-2.5-pro',
-    days_recent: int = 33
+    days_recent: int = 33,
+    review_status_filter: List[str] = None,
+    excluded_locations: List[str] = None
 ) -> bool:
     """
     Orchestrates the Gemini enrichment process using BigQuery scripts.
@@ -54,14 +56,30 @@ def execute_gemini_enrichment(
     insights_table_id = "genairesults_temp"
     
     try:
+        # Build status list string
+        if review_status_filter:
+            status_list_str = ", ".join([f"'{s}'" for s in review_status_filter])
+        else:
+            status_list_str = "'pending', 'not reviewed'"
+
         # Step 1: Identify Recents
         logger.info("Step 1: Identifying recent restaurants...")
+        
+        # Build exclusion clause
+        exclusion_clause = ""
+        if excluded_locations:
+            escaped_locs = [loc.replace("'", "''") for loc in excluded_locations]
+            locs_str = ", ".join([f"'{loc}'" for loc in escaped_locs])
+            exclusion_clause = f"AND localauthorityname NOT IN ({locs_str})"
+
         query_recents = SCRIPT_IDENTIFY_RECENTS.format(
             project_id=project_id,
             dataset_id=dataset_id,
             source_table=master_table_id,
             target_table_recents=recents_table_id,
-            days_recent=days_recent
+            days_recent=days_recent,
+            status_list_str=status_list_str,
+            exclusion_clause=exclusion_clause
         )
         job1 = client.query(query_recents)
         job1.result()
@@ -447,6 +465,23 @@ def execute_merge_query(merge_query: str, project_id: str) -> bool:
     except Exception as e:
         logger.error(f"An unexpected error occurred during MERGE query execution: {e}")
         return False
+
+def get_distinct_local_authorities(project_id: str, dataset_id: str, table_id: str) -> List[str]:
+    """
+    Fetches a list of distinct LocalAuthorityName values from the master table.
+    """
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+    query = f"SELECT DISTINCT localauthorityname FROM `{table_ref}` WHERE localauthorityname IS NOT NULL ORDER BY localauthorityname"
+    
+    logger.info(f"Fetching distinct Local Authorities from {table_ref}")
+    try:
+        df = pandas_gbq.read_gbq(query, project_id=project_id)
+        if df is not None and not df.empty:
+            return df['localauthorityname'].tolist()
+        return []
+    except Exception as e:
+        logger.error(f"Error fetching distinct local authorities: {e}")
+        return []
 
 MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('fhrsid', 'STRING', mode='NULLABLE'),
