@@ -12,7 +12,7 @@
     - [x] Ensure `first_seen` is set correctly.
 - [x] Task: Verify Fetch Script.
     - [x] Run `python -m app.cron.fetch_weekly` locally and verify BigQuery updates.
-- [x] Task: Conductor - User Manual Verification 'Phase 1: Configuration & Backend Setup' (Protocol in workflow.md) [checkpoint: ]
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Configuration & Backend Setup' (Protocol in workflow.md) [checkpoint: 1d8c18f]
 
 ## Phase 2: Frontend Re-architecture (Streamlit) [checkpoint: ]
 - [ ] Task: Refactor `st_app.py` Layout.
