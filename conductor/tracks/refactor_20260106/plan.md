@@ -28,10 +28,10 @@
     - [x] Identify business logic mixed in UI code.
     - [x] Extract logic to functions in `app/core/data_processing.py` or new modules in `app/core/`.
     - [x] Ensure `st_app.py` primarily handles Streamlit calls.
-- [ ] Task: Refactor `app/services/api_client.py` and `app/services/bq_utils.py`.
-    - [ ] Review for modularity improvements.
-    - [ ] Apply Google Python Style Guide recommendations (docstrings, naming).
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Component Refactoring' (Protocol in workflow.md)
+- [x] Task: Refactor `app/services/api_client.py` and `app/services/bq_utils.py`. 1aaafed
+    - [x] Review for modularity improvements.
+    - [x] Apply Google Python Style Guide recommendations (docstrings, naming).
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Component Refactoring' (Protocol in workflow.md) [checkpoint: ]
 
 ## Phase 4: Final Verification & Cleanup
 - [ ] Task: Final Code Style Check.
