@@ -9,19 +9,19 @@
     - [x] Add `__init__.py` files to new python packages.
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Preparation & Verification' (Protocol in workflow.md)
 
-## Phase 2: Structural Migration
-- [ ] Task: Move script files.
-    - [ ] Move `bq_scripts.py`, `bigQuery_scripts.txt`, `envs.sh` to `scripts/`.
-- [ ] Task: Move service modules.
-    - [ ] Move `api_client.py` and `bq_utils.py` to `app/services/`.
-- [ ] Task: Move core logic.
-    - [ ] Move `data_processing.py` to `app/core/`.
-- [ ] Task: Move UI logic.
-    - [ ] Move `st_app.py` to `app/ui/`.
-- [ ] Task: Update import statements.
-    - [ ] Refactor imports in all moved files to reflect new paths (e.g., `from app.services import bq_utils`).
-    - [ ] Verify `Dockerfile` and `cloudbuild.yaml` point to the new app entry point if necessary.
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Structural Migration' (Protocol in workflow.md)
+## Phase 2: Structural Migration [checkpoint: d0901e7]
+- [x] Task: Move script files.
+    - [x] Move `bq_scripts.py`, `bigQuery_scripts.txt`, `envs.sh` to `scripts/`.
+- [x] Task: Move service modules.
+    - [x] Move `api_client.py` and `bq_utils.py` to `app/services/`.
+- [x] Task: Move core logic.
+    - [x] Move `data_processing.py` to `app/core/`.
+- [x] Task: Move UI logic.
+    - [x] Move `st_app.py` to `app/ui/`.
+- [x] Task: Update import statements.
+    - [x] Refactor imports in all moved files to reflect new paths (e.g., `from app.services import bq_utils`).
+    - [x] Verify `Dockerfile` and `cloudbuild.yaml` point to the new app entry point if necessary.
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Structural Migration' (Protocol in workflow.md)
 
 ## Phase 3: Component Refactoring (UI & Logic Separation)
 - [ ] Task: Refactor `st_app.py` (now in `app/ui/`).
