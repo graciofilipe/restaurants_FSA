@@ -35,12 +35,12 @@
     - [x] Document the command for creating the Cloud Run Job: `gcloud run jobs create ... --command "python -m app.cron.fetch_weekly"`.
 - [x] Task: Conductor - User Manual Verification 'Phase 3: Integration & Cleanup' (Protocol in workflow.md) [checkpoint: ab55fda]
 
-## Phase 4: Final Verification [checkpoint: ]
-- [ ] Task: Run full test suite.
-- [ ] Task: Deployment.
-    - [ ] Deploy Streamlit App to Cloud Run Service.
-    - [ ] (Optional) Create/Update Cloud Run Job for automation.
-- [ ] Task: Verify.
-    - [ ] Verify UI flows on deployed app.
-    - [ ] Verify Job execution (manual trigger via console/CLI).
-- [ ] Task: Conductor - User Manual Verification 'Phase 4: Final Verification' (Protocol in workflow.md)
+## Phase 4: Final Verification [checkpoint: b108d2a]
+- [x] Task: Run full test suite.
+- [x] Task: Deployment.
+    - [x] Deploy Streamlit App to Cloud Run Service.
+    - [x] (Optional) Create/Update Cloud Run Job for automation. (Artifacts provided)
+- [x] Task: Verify.
+    - [x] Verify UI flows on deployed app.
+    - [x] Verify Job execution (manual trigger via console/CLI).
+- [x] Task: Conductor - User Manual Verification 'Phase 4: Final Verification' (Protocol in workflow.md) [checkpoint: ]
