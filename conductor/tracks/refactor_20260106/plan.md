@@ -24,10 +24,10 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Structural Migration' (Protocol in workflow.md)
 
 ## Phase 3: Component Refactoring (UI & Logic Separation)
-- [ ] Task: Refactor `st_app.py` (now in `app/ui/`).
-    - [ ] Identify business logic mixed in UI code.
-    - [ ] Extract logic to functions in `app/core/data_processing.py` or new modules in `app/core/`.
-    - [ ] Ensure `st_app.py` primarily handles Streamlit calls.
+- [x] Task: Refactor `st_app.py` (now in `app/ui/`). 886b2f3
+    - [x] Identify business logic mixed in UI code.
+    - [x] Extract logic to functions in `app/core/data_processing.py` or new modules in `app/core/`.
+    - [x] Ensure `st_app.py` primarily handles Streamlit calls.
 - [ ] Task: Refactor `app/services/api_client.py` and `app/services/bq_utils.py`.
     - [ ] Review for modularity improvements.
     - [ ] Apply Google Python Style Guide recommendations (docstrings, naming).
