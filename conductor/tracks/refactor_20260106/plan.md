@@ -1,13 +1,13 @@
 # Implementation Plan - Codebase Refactor and Simplification
 
-## Phase 1: Preparation & Verification
-- [ ] Task: Verify current environment and run existing tests.
-    - [ ] Run `pytest` to establish a baseline.
-    - [ ] Create a temporary backup or ensure git status is clean.
-- [ ] Task: Create new directory structure.
-    - [ ] Create `app/`, `app/ui/`, `app/services/`, `app/core/`, `scripts/`.
-    - [ ] Add `__init__.py` files to new python packages.
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Preparation & Verification' (Protocol in workflow.md)
+## Phase 1: Preparation & Verification [checkpoint: b891e2f]
+- [x] Task: Verify current environment and run existing tests.
+    - [x] Run `pytest` to establish a baseline.
+    - [x] Create a temporary backup or ensure git status is clean.
+- [x] Task: Create new directory structure.
+    - [x] Create `app/`, `app/ui/`, `app/services/`, `app/core/`, `scripts/`.
+    - [x] Add `__init__.py` files to new python packages.
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Preparation & Verification' (Protocol in workflow.md)
 
 ## Phase 2: Structural Migration
 - [ ] Task: Move script files.
