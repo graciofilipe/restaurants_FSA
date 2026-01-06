@@ -176,7 +176,6 @@ def main_ui():
     if uploaded_file is not None:
         try:
             df_updates = load_data_from_csv(uploaded_file)
-            print(f"DEBUG: Uploaded CSV columns: {df_updates.columns.tolist()}")
             st.dataframe(df_updates.head())
             
             if st.button("Execute Bulk Update"):
