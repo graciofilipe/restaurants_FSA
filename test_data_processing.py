@@ -1,7 +1,7 @@
 import unittest # Changed from pytest to unittest for consistency with TestAppendToBigQuery
 from unittest.mock import MagicMock, patch
-from data_processing import load_master_data, process_and_update_master_data, load_json_from_local_file_path # Added load_json_from_local_file_path
-from bq_utils import ORIGINAL_COLUMNS_TO_KEEP # Import ORIGINAL_COLUMNS_TO_KEEP
+from app.core.data_processing import load_master_data, process_and_update_master_data, load_json_from_local_file_path # Added load_json_from_local_file_path
+from app.services.bq_utils import ORIGINAL_COLUMNS_TO_KEEP # Import ORIGINAL_COLUMNS_TO_KEEP
 from datetime import datetime
 import pandas as pd # Added for potential pd.NA usage if needed by tested functions directly
 import json # For load_json_from_local_file_path tests
@@ -9,9 +9,9 @@ import io
 
 # --- Tests for load_json_from_local_file_path ---
 class TestLoadJsonFromLocalFilePath(unittest.TestCase):
-    @patch('data_processing.open', new_callable=unittest.mock.mock_open, read_data='{"key": "value"}')
-    @patch('data_processing.json.load')
-    @patch('data_processing.st') # Mock streamlit
+    @patch('app.core.data_processing.open', new_callable=unittest.mock.mock_open, read_data='{"key": "value"}')
+    @patch('app.core.data_processing.json.load')
+    @patch('app.core.data_processing.st') # Mock streamlit
     def test_load_json_success(self, mock_st, mock_json_load, mock_file_open):
         mock_json_load.return_value = {"key": "value"}
         result = load_json_from_local_file_path("dummy_path.json")
@@ -20,23 +20,23 @@ class TestLoadJsonFromLocalFilePath(unittest.TestCase):
         mock_json_load.assert_called_once()
         mock_st.error.assert_not_called()
 
-    @patch('data_processing.open', side_effect=FileNotFoundError("File not found"))
-    @patch('data_processing.st') # Mock streamlit
+    @patch('app.core.data_processing.open', side_effect=FileNotFoundError("File not found"))
+    @patch('app.core.data_processing.st') # Mock streamlit
     def test_load_json_file_not_found(self, mock_st, mock_file_open):
         result = load_json_from_local_file_path("non_existent.json")
         self.assertIsNone(result)
         mock_st.error.assert_called_once_with("Error: Local file not found at non_existent.json")
 
-    @patch('data_processing.open', new_callable=unittest.mock.mock_open, read_data='invalid json')
-    @patch('data_processing.json.load', side_effect=json.JSONDecodeError("Error decoding", "doc", 0))
-    @patch('data_processing.st') # Mock streamlit
+    @patch('app.core.data_processing.open', new_callable=unittest.mock.mock_open, read_data='invalid json')
+    @patch('app.core.data_processing.json.load', side_effect=json.JSONDecodeError("Error decoding", "doc", 0))
+    @patch('app.core.data_processing.st') # Mock streamlit
     def test_load_json_decode_error(self, mock_st, mock_json_load, mock_file_open):
         result = load_json_from_local_file_path("invalid_format.json")
         self.assertIsNone(result)
         mock_st.error.assert_called_once() # Error message format can be checked more specifically if needed
 
-    @patch('data_processing.open', side_effect=Exception("Some other error"))
-    @patch('data_processing.st') # Mock streamlit
+    @patch('app.core.data_processing.open', side_effect=Exception("Some other error"))
+    @patch('app.core.data_processing.st') # Mock streamlit
     def test_load_json_other_exception(self, mock_st, mock_file_open):
         result = load_json_from_local_file_path("other_error.json")
         self.assertIsNone(result)
@@ -44,8 +44,8 @@ class TestLoadJsonFromLocalFilePath(unittest.TestCase):
 
 
 # --- Tests for load_master_data (modified) ---
-    @patch('data_processing.datetime')
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.datetime')
+    @patch('app.core.data_processing.st')
     def test_maps_link_not_added(self, mock_st, mock_datetime):
         """
         Test that 'Maps Link' is NOT added to processed restaurants.
@@ -66,8 +66,8 @@ class TestLoadJsonFromLocalFilePath(unittest.TestCase):
         r_new = new_restaurants[0]
         self.assertNotIn('Maps Link', r_new)
 
-    @patch('data_processing.datetime')
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.datetime')
+    @patch('app.core.data_processing.st')
     def test_deduplication_edge_cases_non_numeric(self, mock_st, mock_datetime):
         """
         Test that deduplication handles casing and whitespace differences in NON-NUMERIC FHRSID.
@@ -98,7 +98,7 @@ class TestLoadJsonFromLocalFilePath(unittest.TestCase):
         self.assertEqual(new_restaurants[0]['FHRSID'], "newid")
 
 class TestLoadMasterData(unittest.TestCase):
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.st')
     def test_load_master_data_success_and_manual_review_init(self, mock_st):
         # Mock for the load_bq_func argument
         mock_bq_loader = MagicMock(return_value=[
@@ -118,28 +118,28 @@ class TestLoadMasterData(unittest.TestCase):
         self.assertEqual(result[1]['manual_review'], 'already_reviewed') # Preserved
         mock_st.success.assert_called_once() # Assuming success is logged
 
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.st')
     def test_load_master_data_empty_from_bq(self, mock_st):
         mock_bq_loader = MagicMock(return_value=[])
         result = load_master_data("p", "d", "t", mock_bq_loader)
         self.assertEqual(result, [])
         mock_st.info.assert_any_call("Master restaurant data loaded from BigQuery table p.d.t, but the table is empty or returned no data.")
 
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.st')
     def test_load_master_data_bq_func_returns_none(self, mock_st):
         mock_bq_loader = MagicMock(return_value=None) # Simulate BQ function returning None
         result = load_master_data("p", "d", "t", mock_bq_loader)
         self.assertEqual(result, [])
         mock_st.warning.assert_called_once_with("Failed to load master restaurant data from BigQuery table p.d.t (function returned None). Proceeding with empty master restaurant data.")
 
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.st')
     def test_load_master_data_bq_func_raises_exception(self, mock_st):
         mock_bq_loader = MagicMock(side_effect=Exception("BigQuery Load Error"))
         result = load_master_data("p", "d", "t", mock_bq_loader)
         self.assertEqual(result, [])
         mock_st.error.assert_called_once_with("An error occurred while calling load_bq_func for p.d.t: BigQuery Load Error")
 
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.st')
     def test_load_master_data_non_list_from_bq(self, mock_st):
         mock_bq_loader = MagicMock(return_value={"data": "not a list"}) # Simulate BQ function returning non-list
         result = load_master_data("p", "d", "t", mock_bq_loader)
@@ -149,7 +149,7 @@ class TestLoadMasterData(unittest.TestCase):
 
 # --- Tests for process_and_update_master_data (modified) ---
 class TestProcessAndUpdateMasterData(unittest.TestCase):
-    @patch('data_processing.st') # Mock streamlit
+    @patch('app.core.data_processing.st') # Mock streamlit
     def test_no_new_restaurants(self, mock_st):
         master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [{'FHRSID': "1", 'name': 'A'}]}}} # FHRSID is string
@@ -157,8 +157,8 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         self.assertEqual(len(new_restaurants), 0)
         mock_st.info.assert_called_once_with("Processed API response. No new restaurant records identified (or all were duplicates within the batch or already in BigQuery).")
 
-    @patch('data_processing.datetime') # Mock datetime for predictable first_seen
-    @patch('data_processing.st') # Mock streamlit
+    @patch('app.core.data_processing.datetime') # Mock datetime for predictable first_seen
+    @patch('app.core.data_processing.st') # Mock streamlit
     def test_add_new_restaurants_and_fields_initialization(self, mock_st, mock_datetime):
         # Setup mock for datetime.now().strftime()
         mock_datetime_str = "2023-10-26"
@@ -228,7 +228,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         mock_st.success.assert_called_once_with("Processed API response. Identified 2 unique new restaurant records to be added.")
 
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.st')
     def test_empty_master_data_all_api_items_are_new(self, mock_st):
         master_data = []
         # API data can have more fields than ORIGINAL_COLUMNS_TO_KEEP
@@ -241,7 +241,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [api_restaurant]}}}
 
         mock_date_str = "mock_date_value"
-        with patch('data_processing.datetime') as mock_dt:
+        with patch('app.core.data_processing.datetime') as mock_dt:
             mock_dt.now.return_value.strftime.return_value = mock_date_str
             new_restaurants = process_and_update_master_data(master_data, api_data)
 
@@ -265,7 +265,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         self.assertNotIn('ExtraField', r_new) # Check that extra field is dropped
 
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.st')
     def test_empty_api_data_detail(self, mock_st):
         master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': []}}}
@@ -274,7 +274,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         mock_st.info.assert_any_call("API response contained no establishments in 'EstablishmentDetail'.")
 
 
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.st')
     def test_api_data_establishment_detail_is_none(self, mock_st):
         master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': None}}}
@@ -282,7 +282,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         self.assertEqual(len(new_restaurants), 0)
         mock_st.warning.assert_called_once_with("No 'EstablishmentDetail' found in API response or it was None. No new establishments from API to process.")
 
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.st')
     def test_api_data_missing_establishment_collection(self, mock_st):
         master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {'FHRSEstablishment': {}} # EstablishmentCollection is missing
@@ -291,7 +291,7 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         mock_st.info.assert_any_call("API response contained no establishments in 'EstablishmentDetail'.")
 
 
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.st')
     def test_api_data_missing_fhrestablishment_key(self, mock_st):
         master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {} # FHRSEstablishment key is missing
@@ -299,8 +299,8 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         self.assertEqual(len(new_restaurants), 0)
         mock_st.info.assert_any_call("API response contained no establishments in 'EstablishmentDetail'.")
 
-    @patch('data_processing.datetime')
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.datetime')
+    @patch('app.core.data_processing.st')
     def test_fhrsid_is_string_after_processing_and_schema_adherence(self, mock_st, mock_datetime):
         """
         Test FHRSID is string after processing, and output adheres to ORIGINAL_COLUMNS_TO_KEEP.
@@ -355,8 +355,8 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
                 self.assertIsNone(r_new.get('AddressLine2'))
                 self.assertIsNone(r_new.get('AddressLine3'))
 
-    @patch('data_processing.datetime')
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.datetime')
+    @patch('app.core.data_processing.st')
     def test_duplicate_fhrsid_in_api_data_is_added_once(self, mock_st, mock_datetime):
         mock_datetime_str = "2023-10-28"
         mock_datetime.now.return_value.strftime.return_value = mock_datetime_str
@@ -408,8 +408,8 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         mock_st.success.assert_called_once_with("Processed API response. Identified 2 unique new restaurant records to be added.")
 
-    @patch('data_processing.datetime')
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.datetime')
+    @patch('app.core.data_processing.st')
     def test_canonical_fhrsid_deduplication_and_non_numeric(self, mock_st, mock_datetime):
         mock_datetime_str = "2023-11-15"
         mock_datetime.now.return_value.strftime.return_value = mock_datetime_str
@@ -466,8 +466,8 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         mock_st.success.assert_called_once_with("Processed API response. Identified 3 unique new restaurant records to be added.")
 
-    @patch('data_processing.datetime')
-    @patch('data_processing.st')
+    @patch('app.core.data_processing.datetime')
+    @patch('app.core.data_processing.st')
     def test_deduplication_with_corrected_fhrsid_key(self, mock_st, mock_datetime):
         mock_date_str = "2024-01-01"
         mock_datetime.now.return_value.strftime.return_value = mock_date_str
@@ -545,11 +545,11 @@ if __name__ == '__main__':
     unittest.main()
 
 # --- Tests for load_data_from_csv ---
-from data_processing import load_data_from_csv
+from app.core.data_processing import load_data_from_csv
 import io
 
 class TestLoadDataFromCsv(unittest.TestCase):
-    @patch('data_processing.st.error')
+    @patch('app.core.data_processing.st.error')
     def test_successful_load(self, mock_st_error):
         csv_content = '"fhrsid","colA"\n"1","abc"\n"2","def"'
         simulated_file = io.StringIO(csv_content)
@@ -562,7 +562,7 @@ class TestLoadDataFromCsv(unittest.TestCase):
         pd.testing.assert_series_equal(df['fhrsid'], pd.Series(["1", "2"], name='fhrsid', dtype=str))
         mock_st_error.assert_not_called()
 
-    @patch('data_processing.st.error')
+    @patch('app.core.data_processing.st.error')
     def test_missing_fhrsid_column(self, mock_st_error):
         csv_content = '"colX","colA"\n"1","abc"'
         simulated_file = io.StringIO(csv_content)
@@ -572,7 +572,7 @@ class TestLoadDataFromCsv(unittest.TestCase):
         self.assertIsNone(df)
         mock_st_error.assert_called_once_with("The required 'fhrsid' column is missing in the uploaded CSV file.")
 
-    @patch('data_processing.st.error')
+    @patch('app.core.data_processing.st.error')
     def test_empty_csv_file_content(self, mock_st_error):
         csv_content = ""
         simulated_file = io.StringIO(csv_content)
@@ -582,7 +582,7 @@ class TestLoadDataFromCsv(unittest.TestCase):
         self.assertIsNone(df)
         mock_st_error.assert_called_once_with("The uploaded CSV file is empty or contains no data.")
 
-    @patch('data_processing.st.error')
+    @patch('app.core.data_processing.st.error')
     def test_empty_csv_file_just_headers(self, mock_st_error):
         csv_content = '"fhrsid","colA"'
         simulated_file = io.StringIO(csv_content)
@@ -593,7 +593,7 @@ class TestLoadDataFromCsv(unittest.TestCase):
         mock_st_error.assert_called_once_with("The uploaded CSV file is empty.")
 
 
-    @patch('data_processing.st.error')
+    @patch('app.core.data_processing.st.error')
     def test_case_insensitive_fhrsid(self, mock_st_error):
         csv_content = '"FHRSID","colA"\n"1","abc"'
         simulated_file = io.StringIO(csv_content)
@@ -606,7 +606,7 @@ class TestLoadDataFromCsv(unittest.TestCase):
         self.assertEqual(df['fhrsid'].iloc[0], "1")
         mock_st_error.assert_not_called()
 
-    @patch('data_processing.st.error')
+    @patch('app.core.data_processing.st.error')
     def test_parser_error_malformed_csv(self, mock_st_error):
         csv_content = '"fhrsid","colA"\n"1"'
         simulated_file = io.StringIO(csv_content)
@@ -617,7 +617,7 @@ class TestLoadDataFromCsv(unittest.TestCase):
         self.assertIsNone(df)
         mock_st_error.assert_called_once_with("Error parsing the CSV file. Please ensure it's a valid CSV format.")
 
-    @patch('data_processing.st.error')
+    @patch('app.core.data_processing.st.error')
     def test_fhrsid_column_present_but_empty_values(self, mock_st_error):
         csv_content = '"fhrsid","colA"\n"","abc"\n"","def"'
         simulated_file = io.StringIO(csv_content)
@@ -629,12 +629,12 @@ class TestLoadDataFromCsv(unittest.TestCase):
         pd.testing.assert_series_equal(df['fhrsid'], pd.Series(["", ""], name='fhrsid', dtype=str))
         mock_st_error.assert_not_called()
 
-    @patch('data_processing.st.error')
+    @patch('app.core.data_processing.st.error')
     def test_generic_exception_during_read(self, mock_st_error):
         simulated_file = MagicMock()
         simulated_file.read.side_effect = Exception("Unexpected read error")
 
-        with patch('data_processing.pd.read_csv', side_effect=Exception("Simulated pandas error")):
+        with patch('app.core.data_processing.pd.read_csv', side_effect=Exception("Simulated pandas error")):
             df = load_data_from_csv(simulated_file)
 
         self.assertIsNone(df)

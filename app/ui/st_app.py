@@ -17,8 +17,8 @@ from google.cloud import bigquery
 import streamlit.components.v1 as components
 
 # Local Modules
-from api_client import fetch_api_data
-from bq_utils import (
+from app.services.api_client import fetch_api_data
+from app.services.bq_utils import (
     update_rows_in_bigquery,
     sanitize_column_name,
     write_to_bigquery,
@@ -31,8 +31,8 @@ from bq_utils import (
     load_filtered_data_from_bq,
     bulk_update_reviews
 )
-from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
-from data_processing import load_data_from_csv
+from app.core.data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
+from app.core.data_processing import load_data_from_csv
 
 def display_data(data_to_display: List[Dict[str, Any]]):
     """

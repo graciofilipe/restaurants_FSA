@@ -15,7 +15,7 @@ import re
 import pandas_gbq # Added import
 from google.auth.exceptions import DefaultCredentialsError # Added import
 import logging # Added import
-from bq_scripts import (
+from scripts.bq_scripts import (
     SCRIPT_IDENTIFY_RECENTS, 
     SCRIPT_GENERATE_INSIGHTS, 
     SCRIPT_MERGE_INSIGHTS,

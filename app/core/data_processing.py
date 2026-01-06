@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 from typing import List, Dict, Any, Callable, Tuple, Optional
-from bq_utils import ORIGINAL_COLUMNS_TO_KEEP
+from app.services.bq_utils import ORIGINAL_COLUMNS_TO_KEEP
 
 def load_json_from_local_file_path(uri: str) -> Optional[Dict[str, Any]]:
     """

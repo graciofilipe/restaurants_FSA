@@ -10,7 +10,7 @@ def test_no_firebase_in_secrets():
         assert 'authDomain' not in content, "Secrets file should not contain authDomain"
 
 def test_no_firebase_in_envs():
-    envs_path = 'envs.sh'
+    envs_path = 'scripts/envs.sh'
     if os.path.exists(envs_path):
         with open(envs_path, 'r') as f:
             content = f.read()
