@@ -1,20 +1,11 @@
-import streamlit as st
 import pandas as pd
-
-# Definition of columns to keep for processing new establishments
-ORIGINAL_COLUMNS_TO_KEEP = [
-    'FHRSID', 'BusinessName', 'AddressLine1', 'AddressLine2', 'AddressLine3',
-    'PostCode', 'LocalAuthorityName', 'RatingValue', 'NewRatingPending',
-    'first_seen', 'manual_review', 'gemini_insights'
-]
-
-from google.cloud import bigquery, exceptions as google_cloud_exceptions # Added google_cloud_exceptions
-from google.cloud.bigquery.client import Client # Explicit import for type hinting if needed elsewhere
-from typing import List, Dict, Any, Optional, Tuple # Removed Optional, Added Dict, Any
+from google.cloud import bigquery, exceptions as google_cloud_exceptions
+from google.cloud.bigquery.client import Client
+from typing import List, Dict, Any, Optional, Tuple
 import re
-import pandas_gbq # Added import
-from google.auth.exceptions import DefaultCredentialsError # Added import
-import logging # Added import
+import pandas_gbq
+from google.auth.exceptions import DefaultCredentialsError
+import logging
 from scripts.bq_scripts import (
     SCRIPT_IDENTIFY_RECENTS, 
     SCRIPT_GENERATE_INSIGHTS, 
@@ -23,7 +14,15 @@ from scripts.bq_scripts import (
 )
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# In a library/service module, it's better to use getLogger and let the app configure the handlers
+logger = logging.getLogger(__name__)
+
+# Definition of columns to keep for processing new establishments
+ORIGINAL_COLUMNS_TO_KEEP = [
+    'FHRSID', 'BusinessName', 'AddressLine1', 'AddressLine2', 'AddressLine3',
+    'PostCode', 'LocalAuthorityName', 'RatingValue', 'NewRatingPending',
+    'first_seen', 'manual_review', 'gemini_insights'
+]
 
 # Custom Exceptions
 class BigQueryExecutionError(Exception):
@@ -47,22 +46,6 @@ def execute_gemini_enrichment(
 ) -> bool:
     """
     Orchestrates the Gemini enrichment process using BigQuery scripts.
-    
-    Steps:
-    1. Identify recent restaurants (SCRIPT_IDENTIFY_RECENTS).
-    2. Generate insights using Gemini (SCRIPT_GENERATE_INSIGHTS).
-    3. Merge insights back to master table (SCRIPT_MERGE_INSIGHTS).
-    
-    Args:
-        project_id: Google Cloud Project ID.
-        dataset_id: BigQuery Dataset ID.
-        master_table_id: The master table name (e.g., 'fsa_master').
-        connection_id: The BigQuery connection ID for the remote model (default: 'eu.gemini').
-        model_endpoint: The model endpoint to use (default: 'gemini-2.5-pro').
-        days_recent: Number of days to look back for recent restaurants (default: 33).
-        
-    Returns:
-        True if all steps succeed, False otherwise.
     """
     client = bigquery.Client(project=project_id)
     
@@ -72,8 +55,7 @@ def execute_gemini_enrichment(
     
     try:
         # Step 1: Identify Recents
-        logging.info("Step 1: Identifying recent restaurants...")
-        print("Step 1: Identifying recent restaurants...")
+        logger.info("Step 1: Identifying recent restaurants...")
         query_recents = SCRIPT_IDENTIFY_RECENTS.format(
             project_id=project_id,
             dataset_id=dataset_id,
@@ -81,15 +63,12 @@ def execute_gemini_enrichment(
             target_table_recents=recents_table_id,
             days_recent=days_recent
         )
-        # logging.info(f"Executing Query 1:\n{query_recents}")
         job1 = client.query(query_recents)
         job1.result()
-        logging.info("Step 1 Complete.")
-        print("Step 1 Complete.")
+        logger.info("Step 1 Complete.")
 
         # Step 2: Generate Insights
-        logging.info("Step 2: Generating Gemini insights (this may take a while)...")
-        print("Step 2: Generating Gemini insights (this may take a while)...")
+        logger.info("Step 2: Generating Gemini insights (this may take a while)...")
         query_insights = SCRIPT_GENERATE_INSIGHTS.format(
             project_id=project_id,
             dataset_id=dataset_id,
@@ -98,50 +77,35 @@ def execute_gemini_enrichment(
             connection_id=connection_id,
             model_endpoint=model_endpoint
         )
-        # logging.info(f"Executing Query 2:\n{query_insights}")
         job2 = client.query(query_insights)
         job2.result()
-        logging.info("Step 2 Complete.")
-        print("Step 2 Complete.")
+        logger.info("Step 2 Complete.")
 
         # Step 3: Merge Insights
-        logging.info("Step 3: Merging insights back to master table...")
-        print("Step 3: Merging insights back to master table...")
+        logger.info("Step 3: Merging insights back to master table...")
         query_merge = SCRIPT_MERGE_INSIGHTS.format(
             project_id=project_id,
             dataset_id=dataset_id,
             source_table_insights=insights_table_id,
             target_table_master=master_table_id
         )
-        # logging.info(f"Executing Query 3:\n{query_merge}")
         job3 = client.query(query_merge)
         job3.result()
-        logging.info("Step 3 Complete.")
-        print("Step 3 Complete.")
+        logger.info("Step 3 Complete.")
         
         return True
 
     except Exception as e:
-        logging.error(f"Error during Gemini enrichment process: {e}")
-        print(f"Error during Gemini enrichment process: {e}")
+        logger.error(f"Error during Gemini enrichment process: {e}")
         return False
 
 def load_all_data_from_bq(project_id: str, dataset_id: str, table_id: str) -> List[Dict[str, Any]]:
     """
     Loads all data from a specified BigQuery table.
-
-    Args:
-        project_id: The Google Cloud project ID.
-        dataset_id: The BigQuery dataset ID.
-        table_id: The BigQuery table ID.
-
-    Returns:
-        A list of dictionaries, where each dictionary represents a row from the table.
-        Returns an empty list if the table is empty or if an error occurs during the process.
     """
     table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
     query = f"SELECT * FROM `{table_ref_str}`"
-    print(f"Executing BigQuery query: {query}")
+    logger.info(f"Executing BigQuery query: {query}")
 
     try:
         df = pandas_gbq.read_gbq(query, project_id=project_id)
@@ -150,17 +114,13 @@ def load_all_data_from_bq(project_id: str, dataset_id: str, table_id: str) -> Li
         else:
             return []
     except (pandas_gbq.gbq.GenericGBQException, DefaultCredentialsError) as e:
-        print(f"Error loading data from BigQuery table {table_ref_str}: {e}")
-        # As per plan, return an empty list in case of failure.
-        # If re-raising was preferred: raise BigQueryExecutionError(f"Failed to load data from {table_ref_str}") from e
+        logger.error(f"Error loading data from BigQuery table {table_ref_str}: {e}")
         return []
-    except AttributeError as e: # Handles case where df might be None and .empty or .to_dict is called
-        print(f"AttributeError during DataFrame processing for {table_ref_str}: {e}. This might indicate an issue with read_gbq's return value.")
+    except AttributeError as e:
+        logger.error(f"AttributeError during DataFrame processing for {table_ref_str}: {e}")
         return []
     except Exception as e:
-        print(f"An unexpected error occurred while loading data from BigQuery table {table_ref_str}: {e}")
-        # As per plan, return an empty list for other unexpected errors.
-        # If re-raising was preferred: raise BigQueryExecutionError(f"An unexpected error occurred while loading data from {table_ref_str}") from e
+        logger.error(f"An unexpected error occurred while loading data from BigQuery table {table_ref_str}: {e}")
         return []
 
 def load_filtered_data_from_bq(
@@ -173,87 +133,54 @@ def load_filtered_data_from_bq(
 ) -> List[Dict[str, Any]]:
     """
     Loads data from BigQuery with optional filters.
-
-    Args:
-        project_id: Google Cloud Project ID.
-        dataset_id: BigQuery Dataset ID.
-        table_id: BigQuery Table ID.
-        days_filter: If provided, filters for records first seen within this many days.
-        review_status_filter: If provided, filters for records with these manual_review statuses.
-        excluded_locations: If provided, excludes records from these LocalAuthorityNames.
-
-    Returns:
-        List of dictionaries representing the filtered rows.
     """
     table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
     
-    # Start building the query
     query = f"SELECT * FROM `{table_ref_str}` WHERE 1=1"
     
-    # Add Date Filter
     if days_filter is not None:
         query += f" AND DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_filter}"
     
-    # Add Review Status Filter
     if review_status_filter:
-        # Format list for SQL IN clause: "('status1', 'status2')"
         statuses_str = ", ".join([f"'{s}'" for s in review_status_filter])
         query += f" AND manual_review IN ({statuses_str})"
     
-    # Add Excluded Locations Filter
     if excluded_locations:
-        # Format list for SQL NOT IN clause
-        # Escape single quotes in location names just in case
-        # Avoid backslash in f-string for Python < 3.12 compatibility
-        escaped_locs = [loc.replace("'", "\\'") for loc in excluded_locations]
+        escaped_locs = [loc.replace("'", "\'\'") for loc in excluded_locations]
         locs_str = ", ".join([f"'{loc}'" for loc in escaped_locs])
         query += f" AND localauthorityname NOT IN ({locs_str})"
         
-    print(f"Executing Filtered BigQuery query: {query}")
+    logger.info(f"Executing Filtered BigQuery query: {query}")
 
     try:
         df = pandas_gbq.read_gbq(query, project_id=project_id)
         if df is not None and not df.empty:
-            # Convert date columns to string or specific format if needed for JSON/Display
             if 'first_seen' in df.columns:
                  df['first_seen'] = df['first_seen'].astype(str)
             return df.to_dict(orient='records')
         else:
             return []
     except Exception as e:
-        print(f"Error loading filtered data from {table_ref_str}: {e}")
+        logger.error(f"Error loading filtered data from {table_ref_str}: {e}")
         return []
 
 def sanitize_column_name(column_name: str) -> str:
     """
     Sanitizes a column name for BigQuery compatibility.
-    - Removes spaces, periods, '@' signs, and dashes.
-    - Converts to lowercase.
-    - Replaces sequences of non-alphanumeric characters (excluding underscores) with a single underscore.
-    - Ensures the name doesn't start or end with an underscore.
-    - Handles potential leading characters like '?' or '@' from json_normalize.
     """
-    # Replace problematic characters with underscore or remove them
-    # Order matters: handle specific removals before general non-alphanumeric replacement
     name = column_name.replace(' ', '_')
-    name = name.replace('.', '')  # Remove periods
-    name = name.replace('@', '')  # Remove @
-    name = name.replace('-', '_') # Replace dash with underscore
+    name = name.replace('.', '')
+    name = name.replace('@', '')
+    name = name.replace('-', '_')
     
     name = name.lower()
     
-    # Remove any leading characters that are not alphanumeric or underscore
-    # This helps with characters like '?' often added by json_normalize
     if name and not name[0].isalnum() and name[0] != '_':
         name = name[1:]
 
-    # Replace any remaining sequence of non-alphanumeric characters (except underscore) with a single underscore
     name = re.sub(r'[^a-z0-9_]+', '_', name)
-    
-    # Ensure it doesn't start or end with an underscore
     name = name.strip('_')
     
-    # If the name becomes empty after stripping (e.g. was "___"), provide a default
     if not name:
         return "unnamed_column"
         
@@ -267,50 +194,30 @@ def bulk_update_reviews(
 ) -> Tuple[bool, str]:
     """
     Performs a bulk update of the 'manual_review' column using a temporary table and MERGE.
-
-    Args:
-        project_id: Google Cloud Project ID.
-        dataset_id: BigQuery Dataset ID.
-        target_table_id: The master table to update.
-        df_updates: DataFrame containing at least 'fhrsid' and 'manual_review' columns.
-
-    Returns:
-        A tuple: (Success Boolean, Message String).
     """
     if df_updates.empty:
-        print("DEBUG: DataFrame for bulk update is empty.")
+        logger.warning("DataFrame for bulk update is empty.")
         return False, "DataFrame is empty."
 
-    # Normalize columns to lowercase to handle variations like 'FHRSID'
     df_updates = df_updates.copy()
     df_updates.columns = [col.lower() for col in df_updates.columns]
 
-    # Ensure columns are present
-    print(f"DEBUG: df_updates normalized columns: {df_updates.columns.tolist()}")
+    logger.debug(f"df_updates normalized columns: {df_updates.columns.tolist()}")
     required_cols = ['fhrsid', 'manual_review']
     if not all(col in df_updates.columns for col in required_cols):
-        print(f"DEBUG: DataFrame missing required columns: {required_cols}. Found: {df_updates.columns.tolist()}")
+        logger.error(f"DataFrame missing required columns: {required_cols}. Found: {df_updates.columns.tolist()}")
         return False, f"Missing columns. Required: {required_cols}, Found: {df_updates.columns.tolist()}"
 
-    # Generate a unique temporary table name
     timestamp_str = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
     temp_table_id = f"temp_update_reviews_{timestamp_str}"
     
-    print(f"DEBUG: Initiating bulk update using temp table: {temp_table_id}")
+    logger.info(f"Initiating bulk update using temp table: {temp_table_id}")
 
-    # 1. Write DataFrame to Temp Table
-    # We need a minimal schema for the update table
-    # Assuming fhrsid is string (based on previous sanitization logic) or we rely on write_to_bigquery handling
-    
-    # Define schema for temp table
     temp_schema = [
         bigquery.SchemaField("fhrsid", "STRING"),
         bigquery.SchemaField("manual_review", "STRING")
     ]
     
-    # Use write_to_bigquery to handle upload (it handles client creation, sanitization, etc.)
-    # We just pass the subset of columns we care about
-    print(f"DEBUG: Uploading to temp table {temp_table_id}...")
     success_upload = write_to_bigquery(
         df=df_updates,
         project_id=project_id,
@@ -321,13 +228,12 @@ def bulk_update_reviews(
     )
 
     if not success_upload:
-        print(f"DEBUG: Failed to upload temporary update table {temp_table_id}. Aborting bulk update.")
+        logger.error(f"Failed to upload temporary update table {temp_table_id}. Aborting bulk update.")
         return False, "Failed to upload temporary table to BigQuery."
 
     client = bigquery.Client(project=project_id)
     
     try:
-        # 2. Run MERGE Query
         query = SCRIPT_BULK_UPDATE_MERGE.format(
             project_id=project_id,
             dataset_id=dataset_id,
@@ -335,78 +241,47 @@ def bulk_update_reviews(
             source_table_temp=temp_table_id
         )
         
-        print(f"DEBUG: Executing MERGE query:\n{query}")
+        logger.debug(f"Executing MERGE query:\n{query}")
         query_job = client.query(query)
-        query_job.result() # Wait for completion
+        query_job.result()
         affected_rows = query_job.num_dml_affected_rows
-        print(f"DEBUG: MERGE query completed. Rows affected: {affected_rows}")
+        logger.info(f"MERGE query completed. Rows affected: {affected_rows}")
         
-        # 3. Delete Temp Table
         table_ref_str = f"{project_id}.{dataset_id}.{temp_table_id}"
         client.delete_table(table_ref_str, not_found_ok=True)
-        print(f"DEBUG: Temporary table {table_ref_str} deleted.")
+        logger.info(f"Temporary table {table_ref_str} deleted.")
         
         return True, f"{affected_rows} rows updated."
 
     except Exception as e:
-        print(f"DEBUG: Error during bulk update execution: {e}")
+        logger.error(f"Error during bulk update execution: {e}")
         return False, f"Error executing update: {str(e)}"
 
 
 def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str, columns_to_select: List[str], bq_schema: List[bigquery.SchemaField]) -> bool:
     """
-    Writes a Pandas DataFrame to a BigQuery table, with column selection and schema definition.
-
-    Args:
-        df: The DataFrame to write.
-        project_id: The Google Cloud project ID.
-        dataset_id: The BigQuery dataset ID.
-        table_id: The BigQuery table ID.
-        columns_to_select: A list of column names to select from the DataFrame.
-        bq_schema: A list of bigquery.SchemaField objects for the BigQuery table.
-
-    Returns:
-        True if the write operation was successful, False otherwise.
+    Writes a Pandas DataFrame to a BigQuery table.
     """
-    # Subset the DataFrame to include only the selected columns
-    df_subset = df[columns_to_select].copy() # Use .copy() to avoid SettingWithCopyWarning
+    df_subset = df[columns_to_select].copy()
 
-    # Convert Geocode columns to numeric, coercing errors to NaN
     if 'Geocode.Latitude' in df_subset.columns:
         df_subset['Geocode.Latitude'] = pd.to_numeric(df_subset['Geocode.Latitude'], errors='coerce')
     if 'Geocode.Longitude' in df_subset.columns:
         df_subset['Geocode.Longitude'] = pd.to_numeric(df_subset['Geocode.Longitude'], errors='coerce')
 
-    # Sanitize column names for the subset
     original_columns = df_subset.columns.tolist()
     sanitized_columns = [sanitize_column_name(col) for col in original_columns]
-    
     df_subset.columns = sanitized_columns
     
-    # --- BEGIN MODIFICATIONS ---
-
-    # Determine the sanitized column name for 'NewRatingPending'
-    # Assuming 'NewRatingPending' is the original name and sanitize_column_name handles it correctly.
-    original_new_rating_pending_col = 'NewRatingPending' # Original name before sanitization
+    original_new_rating_pending_col = 'NewRatingPending'
     sanitized_new_rating_pending_col = sanitize_column_name(original_new_rating_pending_col)
 
-    # Log unique values before conversion if the column exists
     if sanitized_new_rating_pending_col in df_subset.columns:
-        print(f"Unique values in {sanitized_new_rating_pending_col} before conversion: {df_subset[sanitized_new_rating_pending_col].unique()}")
-
-        # Convert 'NewRatingPending' (sanitized version) to Boolean
-        # Define the mapping for string to boolean
-        mapping = {
-            'true': True,
-            'false': False
-        }
-
-        # Apply the mapping
-        # Ensure that the column is treated as string type before applying .str.lower()
+        logger.debug(f"Unique values in {sanitized_new_rating_pending_col} before conversion: {df_subset[sanitized_new_rating_pending_col].unique()}")
+        mapping = {'true': True, 'false': False}
         df_subset[sanitized_new_rating_pending_col] = df_subset[sanitized_new_rating_pending_col].astype(str).str.lower().map(mapping).fillna(pd.NA)
     else:
-        print(f"Column {sanitized_new_rating_pending_col} (sanitized from {original_new_rating_pending_col}) not found in df_subset.columns: {df_subset.columns}")
-
+        logger.warning(f"Column {sanitized_new_rating_pending_col} not found in df_subset.")
 
     client = bigquery.Client(project=project_id)
     table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
@@ -417,61 +292,38 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
         column_name_character_map="V2",
     )
 
-    # Detailed Logging before BQ load
-    print(f"BigQuery job_config.schema: {job_config.schema}")
-    print(f"DataFrame dtypes before BQ load: \n{df_subset.dtypes}")
-    print(f"Sample data for BQ load (first 5 rows): \n{df_subset.head().to_string()}")
-    if sanitized_new_rating_pending_col in df_subset.columns:
-        print(f"Unique values in {sanitized_new_rating_pending_col} after conversion: {df_subset[sanitized_new_rating_pending_col].unique()}")
-        print(f"Data type of {sanitized_new_rating_pending_col} after conversion: {df_subset[sanitized_new_rating_pending_col].dtype}")
+    # Detailed logging for debugging
+    # logger.debug(f"BigQuery job_config.schema: {job_config.schema}")
     
-    # --- END MODIFICATIONS ---
-
-    # Ensure fhrsid is string.
-    sanitized_fhrsid_col = 'fhrsid' # Based on sanitize_column_name('fhrsid')
+    sanitized_fhrsid_col = 'fhrsid'
     if sanitized_fhrsid_col in df_subset.columns:
-        if df_subset[sanitized_fhrsid_col].dtype != 'object': # Check if it's not a string type
+        if df_subset[sanitized_fhrsid_col].dtype != 'object':
             df_subset[sanitized_fhrsid_col] = df_subset[sanitized_fhrsid_col].astype(str)
     else:
-        # This case should ideally not happen if fhrsid is expected
-        print(f"Warning: Column '{sanitized_fhrsid_col}' not found in DataFrame during write operation.")
+        logger.warning(f"Column '{sanitized_fhrsid_col}' not found in DataFrame during write operation.")
 
     try:
         job = client.load_table_from_dataframe(df_subset, table_ref_str, job_config=job_config)
         job.result()
-        st.success(f"Successfully wrote data to BigQuery table {table_ref_str} with schema and sanitized column names. Overwritten if table existed.")
+        logger.info(f"Successfully wrote data to BigQuery table {table_ref_str}.")
         return True
     except Exception as e:
-        st.error(f"Error writing data to BigQuery table {table_ref_str}: {e}")
+        logger.error(f"Error writing data to BigQuery table {table_ref_str}: {e}")
         return False
 
 def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str, bq_schema: List[bigquery.SchemaField]) -> bool:
     """
     Appends a Pandas DataFrame to an existing BigQuery table.
-
-    Args:
-        df: The DataFrame to append. Assumes column names are already sanitized.
-        project_id: The Google Cloud project ID.
-        dataset_id: The BigQuery dataset ID.
-        table_id: The BigQuery table ID.
-        bq_schema: A list of bigquery.SchemaField objects for the BigQuery table.
-
-    Returns:
-        True if the append operation was successful, False otherwise.
     """
     client = bigquery.Client(project=project_id)
     table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
 
-    # Assume df columns are already sanitized as per requirements.
-    # Select only columns defined in bq_schema
     schema_columns = [field.name for field in bq_schema]
     df_subset = df[schema_columns].copy()
 
-    # Convert specific columns, assuming sanitized names
-    # Example sanitized names used here, adjust if actual sanitization differs
-    geocode_latitude_col = 'geocode_latitude' # Sanitized from 'Geocode.Latitude'
-    geocode_longitude_col = 'geocode_longitude' # Sanitized from 'Geocode.Longitude'
-    new_rating_pending_col = 'newratingpending' # Sanitized from 'NewRatingPending'
+    geocode_latitude_col = 'geocode_latitude'
+    geocode_longitude_col = 'geocode_longitude'
+    new_rating_pending_col = 'newratingpending'
 
     if geocode_latitude_col in df_subset.columns:
         df_subset[geocode_latitude_col] = pd.to_numeric(df_subset[geocode_latitude_col], errors='coerce')
@@ -479,21 +331,11 @@ def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table
         df_subset[geocode_longitude_col] = pd.to_numeric(df_subset[geocode_longitude_col], errors='coerce')
 
     if new_rating_pending_col in df_subset.columns:
-        # Convert 'NewRatingPending' (sanitized version) to Boolean
         mapping = {'true': True, 'false': False, 'TRUE': True, 'FALSE': False}
-        # Ensure column is string before .lower() or .map()
         df_subset[new_rating_pending_col] = df_subset[new_rating_pending_col].astype(str).str.lower().map(mapping)
-        # Convert to pandas Boolean type to handle NA properly if needed, though BQ might handle True/False/None directly
         df_subset[new_rating_pending_col] = df_subset[new_rating_pending_col].astype('boolean')
 
-    # Dynamically handle fhrsid data type based on BigQuery schema for append operations.
-    # Record of previous attempts/fixes:
-    # - Originally, fhrsid was often cast to string by default in write/append functions.
-    # - This caused "Could not convert 'value' with type str: tried to convert to int64"
-    #   errors when appending to tables like 'fsa_master' where 'fhrsid' is INT64.
-    # - This fix inspects the bq_schema to apply appropriate type conversion for 'fhrsid'.
-    fhrsid_col_name = 'fhrsid' # Assuming 'fhrsid' is the sanitized column name in bq_schema and df_subset
-
+    fhrsid_col_name = 'fhrsid'
     if fhrsid_col_name in df_subset.columns:
         fhrsid_bq_type = None
         for field in bq_schema:
@@ -502,63 +344,36 @@ def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table
                 break
 
         if fhrsid_bq_type:
-            current_type = df_subset[fhrsid_col_name].dtype
-            print(f"FHRSID_DEBUG: Column '{fhrsid_col_name}' current initial dtype: {current_type}, Target BQ schema type: {fhrsid_bq_type}")
-
             if fhrsid_bq_type in ['INTEGER', 'INT64', 'NUMERIC']:
-                # Convert to numeric. pd.to_numeric handles various input types including strings.
-                # errors='coerce' will turn unparseable strings into NaN.
-                print(f"FHRSID_DEBUG: Converting column '{fhrsid_col_name}' to numeric for BQ type {fhrsid_bq_type}.")
                 df_subset[fhrsid_col_name] = pd.to_numeric(df_subset[fhrsid_col_name], errors='coerce')
-                # Note: If FHRSID is a primary key or non-nullable INT64, NaNs (from coercion errors) could be an issue.
-                # This matches behavior of Geocode coordinate coercion.
-                print(f"FHRSID_DEBUG: Column '{fhrsid_col_name}' dtype after pd.to_numeric: {df_subset[fhrsid_col_name].dtype}")
-
             elif fhrsid_bq_type == 'STRING':
-                # Always convert to string if BQ schema type is STRING to ensure all elements are strings.
-                print(f"FHRSID_DEBUG: Converting column '{fhrsid_col_name}' to string for BQ type {fhrsid_bq_type}. Current dtype: {current_type}")
                 df_subset[fhrsid_col_name] = df_subset[fhrsid_col_name].astype(str)
-                print(f"FHRSID_DEBUG: Column '{fhrsid_col_name}' dtype after .astype(str): {df_subset[fhrsid_col_name].dtype}")
-            else:
-                print(f"FHRSID_DEBUG: Column '{fhrsid_col_name}' is type {fhrsid_bq_type} in BQ schema. No explicit fhrsid-specific conversion applied here.")
         else:
-            print(f"Warning: Column '{fhrsid_col_name}' (for FHRSID) not found in bq_schema. No fhrsid-specific type conversion applied.")
+            logger.warning(f"Column '{fhrsid_col_name}' (for FHRSID) not found in bq_schema.")
     else:
-        print(f"Warning: Column '{fhrsid_col_name}' (for FHRSID) not found in DataFrame for append_to_bigquery.")
+        logger.warning(f"Column '{fhrsid_col_name}' (for FHRSID) not found in DataFrame for append_to_bigquery.")
 
     job_config = bigquery.LoadJobConfig(
         schema=bq_schema,
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-        column_name_character_map="V2", # As in write_to_bigquery
+        column_name_character_map="V2",
     )
 
     try:
         job = client.load_table_from_dataframe(df_subset, table_ref_str, job_config=job_config)
         job.result()  # Wait for the job to complete
-        st.success(f"Successfully appended data to BigQuery table {table_ref_str}.")
+        logger.info(f"Successfully appended data to BigQuery table {table_ref_str}.")
         return True
     except Exception as e:
-        st.error(f"Error appending data to BigQuery table {table_ref_str}: {e}")
-        # Also print to console for backend logging
-        print(f"Error appending data to BigQuery table {table_ref_str}: {e}")
+        logger.error(f"Error appending data to BigQuery table {table_ref_str}: {e}")
         return False
 
 def update_rows_in_bigquery(project_id: str, dataset_id: str, table_id: str, fhrsid: str, update_data: Dict[str, Any]) -> bool:
     """
     Updates specific rows in a BigQuery table based on FHRSID.
-
-    Args:
-        project_id: The Google Cloud project ID.
-        dataset_id: The BigQuery dataset ID.
-        table_id: The BigQuery table ID.
-        fhrsid: The FHRSID value to identify the rows to update.
-        update_data: A dictionary where keys are column names and values are the new values.
-
-    Returns:
-        True if the update was successful, False otherwise.
     """
     if not update_data:
-        print("No data provided for update.")
+        logger.warning("No data provided for update.")
         return False
 
     client = bigquery.Client(project=project_id)
@@ -567,7 +382,6 @@ def update_rows_in_bigquery(project_id: str, dataset_id: str, table_id: str, fhr
     set_clauses = []
     for column, value in update_data.items():
         if isinstance(value, str):
-            # Escape single quotes within the string value itself
             sanitized_value = value.replace("'", "''").replace('\\', '\\\\')
             set_clauses.append(f"`{column}` = '{sanitized_value}'")
         elif isinstance(value, bool):
@@ -577,86 +391,58 @@ def update_rows_in_bigquery(project_id: str, dataset_id: str, table_id: str, fhr
         elif value is None:
             set_clauses.append(f"`{column}` = NULL")
         else:
-            # Fallback for other types, assuming string representation is acceptable
-            # or specific handling might be needed for other types (e.g., DATE, TIMESTAMP)
             sanitized_value = str(value).replace("'", "''").replace('\\', '\\\\')
-            print(f"Warning: Column '{column}' has an unhandled type {type(value)}. Converting to string: '{sanitized_value}'")
+            logger.warning(f"Column '{column}' has an unhandled type {type(value)}. Converting to string: '{sanitized_value}'")
             set_clauses.append(f"`{column}` = '{sanitized_value}'")
 
 
     if not set_clauses:
-        print("No valid SET clauses generated from update_data.")
+        logger.warning("No valid SET clauses generated from update_data.")
         return False
 
     set_statement = ", ".join(set_clauses)
-
-    # FHRSID_COLNAME is used here. fhrsid value is already a string.
-    # Ensure fhrsid value itself is escaped for single quotes if it can contain them,
-    # though FHRSIDs are typically numeric strings and less likely to have quotes.
     escaped_fhrsid_value = fhrsid.replace("'", "''")
     query = f"UPDATE `{table_ref_str}` SET {set_statement} WHERE {FHRSID_COLNAME} = '{escaped_fhrsid_value}'"
 
-    print(f"Executing BigQuery UPDATE query: {query}")
+    logger.info(f"Executing BigQuery UPDATE query: {query}")
 
     try:
         query_job = client.query(query)
-        query_job.result()  # Wait for the query to complete
+        query_job.result()
         if query_job.errors:
-            print(f"BigQuery UPDATE failed with errors: {query_job.errors}")
-            # st.error(f"BigQuery UPDATE failed: {query_job.errors}") # Use st.error if in Streamlit context
+            logger.error(f"BigQuery UPDATE failed with errors: {query_job.errors}")
             return False
-        # Check if any rows were actually updated, if possible and relevant.
-        # num_dml_affected_rows is not available for UPDATE in all cases or might need specific API versions.
-        # For now, success is defined by no errors during execution.
-        print(f"Successfully updated rows in {table_ref_str} for {FHRSID_COLNAME} = '{escaped_fhrsid_value}'.")
-        # st.success(f"Successfully updated rows in {table_ref_str} for {FHRSID_COLNAME} = '{fhrsid}'.")
+        logger.info(f"Successfully updated rows in {table_ref_str} for {FHRSID_COLNAME} = '{escaped_fhrsid_value}'.")
         return True
     except DefaultCredentialsError as e:
-        print(f"BigQuery authentication error: {e}. Ensure your environment is configured correctly for ADC.")
-        # st.error(f"BigQuery authentication error: {e}")
+        logger.error(f"BigQuery authentication error: {e}. Ensure your environment is configured correctly for ADC.")
         return False
     except Exception as e:
-        print(f"An error occurred during BigQuery UPDATE: {e}")
-        # st.error(f"An error occurred during BigQuery UPDATE: {e}")
+        logger.error(f"An error occurred during BigQuery UPDATE: {e}")
         return False
 
 def execute_merge_query(merge_query: str, project_id: str) -> bool:
     """
     Executes a MERGE SQL query in BigQuery.
-
-    Args:
-        merge_query: The MERGE SQL query string.
-        project_id: The Google Cloud project ID where the query will be run.
-
-    Returns:
-        True if the query executes successfully, False otherwise.
     """
-    logging.info(f"Attempting to execute MERGE query in project '{project_id}':\n{merge_query}")
+    logger.info(f"Attempting to execute MERGE query in project '{project_id}':\n{merge_query}")
     try:
         client = bigquery.Client(project=project_id)
         query_job = client.query(merge_query)
-        query_job.result()  # Wait for the job to complete
+        query_job.result()
 
         if query_job.errors:
-            logging.error(f"MERGE query failed with errors: {query_job.errors}")
-            # Optionally, include errors in Streamlit if this function is called directly from UI context
-            # st.error(f"BigQuery MERGE query failed: {query_job.errors}")
+            logger.error(f"MERGE query failed with errors: {query_job.errors}")
             return False
 
-        logging.info("MERGE query executed successfully.")
-        # num_affected_rows might be available depending on the query and BQ API version
-        # For example: if query_job.num_dml_affected_rows is not None:
-        # logging.info(f"Number of rows affected by MERGE query: {query_job.num_dml_affected_rows}")
+        logger.info("MERGE query executed successfully.")
         return True
     except DefaultCredentialsError as e:
-        logging.error(f"BigQuery authentication error during MERGE query execution: {e}. Ensure ADC is configured.")
-        # st.error(f"BigQuery authentication error: {e}")
+        logger.error(f"BigQuery authentication error during MERGE query execution: {e}. Ensure ADC is configured.")
         return False
-    except google_cloud_exceptions.GoogleCloudError as e: # More specific Google Cloud exceptions
-        logging.error(f"A Google Cloud error occurred during MERGE query execution: {e}")
-        # st.error(f"A Google Cloud error occurred: {e}")
+    except google_cloud_exceptions.GoogleCloudError as e:
+        logger.error(f"A Google Cloud error occurred during MERGE query execution: {e}")
         return False
     except Exception as e:
-        logging.error(f"An unexpected error occurred during MERGE query execution: {e}")
-        # st.error(f"An unexpected error occurred: {e}")
+        logger.error(f"An unexpected error occurred during MERGE query execution: {e}")
         return False

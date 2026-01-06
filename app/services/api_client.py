@@ -1,6 +1,9 @@
 import requests
-import streamlit as st
+import logging
 from typing import Optional, Dict, Any
+
+# Configure logging (if not already configured by app)
+logger = logging.getLogger(__name__)
 
 def fetch_api_data(longitude: float, latitude: float, max_results: int, page: int = 1) -> Optional[Dict[str, Any]]:
     """
@@ -21,8 +24,8 @@ def fetch_api_data(longitude: float, latitude: float, max_results: int, page: in
         if response.status_code == 200:
             return response.json()
         else:
-            st.error(f"Error: Could not fetch data from the API. Status Code: {response.status_code}")
+            logger.error(f"Error: Could not fetch data from the API. Status Code: {response.status_code}")
             return None
     except requests.exceptions.RequestException as e:
-        st.error(f"Error: An exception occurred while making the API request: {e}")
+        logger.error(f"Error: An exception occurred while making the API request: {e}")
         return None
