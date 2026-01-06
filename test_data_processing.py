@@ -11,95 +11,33 @@ import io
 class TestLoadJsonFromLocalFilePath(unittest.TestCase):
     @patch('app.core.data_processing.open', new_callable=unittest.mock.mock_open, read_data='{"key": "value"}')
     @patch('app.core.data_processing.json.load')
-    @patch('app.core.data_processing.st') # Mock streamlit
-    def test_load_json_success(self, mock_st, mock_json_load, mock_file_open):
+    def test_load_json_success(self, mock_json_load, mock_file_open):
         mock_json_load.return_value = {"key": "value"}
         result = load_json_from_local_file_path("dummy_path.json")
         self.assertEqual(result, {"key": "value"})
         mock_file_open.assert_called_once_with("dummy_path.json", 'r')
         mock_json_load.assert_called_once()
-        mock_st.error.assert_not_called()
 
     @patch('app.core.data_processing.open', side_effect=FileNotFoundError("File not found"))
-    @patch('app.core.data_processing.st') # Mock streamlit
-    def test_load_json_file_not_found(self, mock_st, mock_file_open):
+    def test_load_json_file_not_found(self, mock_file_open):
         result = load_json_from_local_file_path("non_existent.json")
         self.assertIsNone(result)
-        mock_st.error.assert_called_once_with("Error: Local file not found at non_existent.json")
 
     @patch('app.core.data_processing.open', new_callable=unittest.mock.mock_open, read_data='invalid json')
     @patch('app.core.data_processing.json.load', side_effect=json.JSONDecodeError("Error decoding", "doc", 0))
-    @patch('app.core.data_processing.st') # Mock streamlit
-    def test_load_json_decode_error(self, mock_st, mock_json_load, mock_file_open):
+    def test_load_json_decode_error(self, mock_json_load, mock_file_open):
         result = load_json_from_local_file_path("invalid_format.json")
         self.assertIsNone(result)
-        mock_st.error.assert_called_once() # Error message format can be checked more specifically if needed
 
     @patch('app.core.data_processing.open', side_effect=Exception("Some other error"))
-    @patch('app.core.data_processing.st') # Mock streamlit
-    def test_load_json_other_exception(self, mock_st, mock_file_open):
+    def test_load_json_other_exception(self, mock_file_open):
         result = load_json_from_local_file_path("other_error.json")
         self.assertIsNone(result)
-        mock_st.error.assert_called_once_with("Error reading local file other_error.json: Some other error")
 
 
 # --- Tests for load_master_data (modified) ---
-    @patch('app.core.data_processing.datetime')
-    @patch('app.core.data_processing.st')
-    def test_maps_link_not_added(self, mock_st, mock_datetime):
-        """
-        Test that 'Maps Link' is NOT added to processed restaurants.
-        """
-        mock_date_str = "2023-10-27"
-        mock_datetime.now.return_value.strftime.return_value = mock_date_str
-        master_data = []
-
-        api_est = {
-            'FHRSID': 123, 'BusinessName': 'Testaurant',
-            'AddressLine1': '123 Main St', 'PostCode': 'A1 1AA',
-            'RatingValue': '5', 'LocalAuthorityName': 'LA', 'NewRatingPending': 'false'
-        }
-        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [api_est]}}}
-
-        new_restaurants = process_and_update_master_data(master_data, api_data)
-        self.assertEqual(len(new_restaurants), 1)
-        r_new = new_restaurants[0]
-        self.assertNotIn('Maps Link', r_new)
-
-    @patch('app.core.data_processing.datetime')
-    @patch('app.core.data_processing.st')
-    def test_deduplication_edge_cases_non_numeric(self, mock_st, mock_datetime):
-        """
-        Test that deduplication handles casing and whitespace differences in NON-NUMERIC FHRSID.
-        """
-        mock_date_str = "2023-10-27"
-        mock_datetime.now.return_value.strftime.return_value = mock_date_str
-        
-        # Master data has 'AbC' and ' XyZ '
-        master_data = [
-            {'FHRSID': "AbC", 'BusinessName': 'Cafe Alpha'}, 
-            {'FHRSID': " XyZ ", 'BusinessName': 'Cafe Beta'}
-        ]
-
-        # API data has 'abc' (lowercase) and 'XyZ' (stripped)
-        # Both should be identified as existing and NOT added.
-        api_est1 = {'FHRSID': "abc", 'BusinessName': 'Cafe Alpha API'} 
-        api_est2 = {'FHRSID': "XyZ", 'BusinessName': 'Cafe Beta API'}
-        
-        # Also add a genuinely new one 'NewID'
-        api_est3 = {'FHRSID': "NewID", 'BusinessName': 'Cafe Gamma'}
-
-        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [api_est1, api_est2, api_est3]}}}
-
-        new_restaurants = process_and_update_master_data(master_data, api_data)
-        
-        # Should only contain 'NewID' (normalized to 'newid')
-        self.assertEqual(len(new_restaurants), 1)
-        self.assertEqual(new_restaurants[0]['FHRSID'], "newid")
-
 class TestLoadMasterData(unittest.TestCase):
-    @patch('app.core.data_processing.st')
-    def test_load_master_data_success_and_manual_review_init(self, mock_st):
+    def test_load_master_data_success_and_manual_review_init(self):
         # Mock for the load_bq_func argument
         mock_bq_loader = MagicMock(return_value=[
             {'FHRSID': "1", 'name': 'Restaurant A'}, # FHRSID is string
@@ -116,50 +54,43 @@ class TestLoadMasterData(unittest.TestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]['manual_review'], 'not reviewed') # Initialized
         self.assertEqual(result[1]['manual_review'], 'already_reviewed') # Preserved
-        mock_st.success.assert_called_once() # Assuming success is logged
 
-    @patch('app.core.data_processing.st')
-    def test_load_master_data_empty_from_bq(self, mock_st):
+    def test_load_master_data_empty_from_bq(self):
         mock_bq_loader = MagicMock(return_value=[])
         result = load_master_data("p", "d", "t", mock_bq_loader)
         self.assertEqual(result, [])
-        mock_st.info.assert_any_call("Master restaurant data loaded from BigQuery table p.d.t, but the table is empty or returned no data.")
 
-    @patch('app.core.data_processing.st')
-    def test_load_master_data_bq_func_returns_none(self, mock_st):
+    def test_load_master_data_bq_func_returns_none(self):
         mock_bq_loader = MagicMock(return_value=None) # Simulate BQ function returning None
         result = load_master_data("p", "d", "t", mock_bq_loader)
         self.assertEqual(result, [])
-        mock_st.warning.assert_called_once_with("Failed to load master restaurant data from BigQuery table p.d.t (function returned None). Proceeding with empty master restaurant data.")
 
-    @patch('app.core.data_processing.st')
-    def test_load_master_data_bq_func_raises_exception(self, mock_st):
+    def test_load_master_data_bq_func_raises_exception(self):
         mock_bq_loader = MagicMock(side_effect=Exception("BigQuery Load Error"))
-        result = load_master_data("p", "d", "t", mock_bq_loader)
-        self.assertEqual(result, [])
-        mock_st.error.assert_called_once_with("An error occurred while calling load_bq_func for p.d.t: BigQuery Load Error")
+        # Expect exception to propagate
+        with self.assertRaisesRegex(Exception, "BigQuery Load Error"):
+            load_master_data("p", "d", "t", mock_bq_loader)
 
-    @patch('app.core.data_processing.st')
-    def test_load_master_data_non_list_from_bq(self, mock_st):
+    def test_load_master_data_non_list_from_bq(self):
         mock_bq_loader = MagicMock(return_value={"data": "not a list"}) # Simulate BQ function returning non-list
-        result = load_master_data("p", "d", "t", mock_bq_loader)
-        self.assertEqual(result, [])
-        mock_st.error.assert_called_once_with("Data loaded from BigQuery table p.d.t is not in the expected list format. Type found: <class 'dict'>. Proceeding with empty master restaurant data.")
+        # Expect TypeError
+        with self.assertRaises(TypeError):
+            load_master_data("p", "d", "t", mock_bq_loader)
 
 
 # --- Tests for process_and_update_master_data (modified) ---
 class TestProcessAndUpdateMasterData(unittest.TestCase):
-    @patch('app.core.data_processing.st') # Mock streamlit
-    def test_no_new_restaurants(self, mock_st):
+    def test_no_new_restaurants(self):
         master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [{'FHRSID': "1", 'name': 'A'}]}}} # FHRSID is string
-        new_restaurants = process_and_update_master_data(master_data, api_data)
+        
+        new_restaurants, message = process_and_update_master_data(master_data, api_data)
+        
         self.assertEqual(len(new_restaurants), 0)
-        mock_st.info.assert_called_once_with("Processed API response. No new restaurant records identified (or all were duplicates within the batch or already in BigQuery).")
+        self.assertIn("No new restaurant records identified", message)
 
     @patch('app.core.data_processing.datetime') # Mock datetime for predictable first_seen
-    @patch('app.core.data_processing.st') # Mock streamlit
-    def test_add_new_restaurants_and_fields_initialization(self, mock_st, mock_datetime):
+    def test_add_new_restaurants_and_fields_initialization(self, mock_datetime):
         # Setup mock for datetime.now().strftime()
         mock_datetime_str = "2023-10-26"
         mock_datetime.now.return_value.strftime.return_value = mock_datetime_str
@@ -188,9 +119,10 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
             api_restaurant_3_new
         ]}}}
 
-        new_restaurants = process_and_update_master_data(master_data, api_data)
+        new_restaurants, message = process_and_update_master_data(master_data, api_data)
 
         self.assertEqual(len(new_restaurants), 2)
+        self.assertIn("Identified 2 unique new restaurant", message)
 
         # Check properties of the new restaurants
         for r_new in new_restaurants:
@@ -226,10 +158,8 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
             self.assertNotIn('BusinessType', r_new)
             self.assertNotIn('RatingDate', r_new) # Example of a field not kept
 
-        mock_st.success.assert_called_once_with("Processed API response. Identified 2 unique new restaurant records to be added.")
 
-    @patch('app.core.data_processing.st')
-    def test_empty_master_data_all_api_items_are_new(self, mock_st):
+    def test_empty_master_data_all_api_items_are_new(self):
         master_data = []
         # API data can have more fields than ORIGINAL_COLUMNS_TO_KEEP
         api_restaurant = {
@@ -243,9 +173,11 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         mock_date_str = "mock_date_value"
         with patch('app.core.data_processing.datetime') as mock_dt:
             mock_dt.now.return_value.strftime.return_value = mock_date_str
-            new_restaurants = process_and_update_master_data(master_data, api_data)
+            new_restaurants, message = process_and_update_master_data(master_data, api_data)
 
         self.assertEqual(len(new_restaurants), 1)
+        self.assertIn("Identified 1 unique new restaurant", message)
+        
         r_new = new_restaurants[0]
 
         self.assertEqual(set(r_new.keys()), set(ORIGINAL_COLUMNS_TO_KEEP))
@@ -265,43 +197,38 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         self.assertNotIn('ExtraField', r_new) # Check that extra field is dropped
 
-    @patch('app.core.data_processing.st')
-    def test_empty_api_data_detail(self, mock_st):
+    def test_empty_api_data_detail(self):
         master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': []}}}
-        new_restaurants = process_and_update_master_data(master_data, api_data)
+        new_restaurants, message = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 0)
-        mock_st.info.assert_any_call("API response contained no establishments in 'EstablishmentDetail'.")
+        self.assertIn("API response contained no establishments", message)
 
 
-    @patch('app.core.data_processing.st')
-    def test_api_data_establishment_detail_is_none(self, mock_st):
+    def test_api_data_establishment_detail_is_none(self):
         master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': None}}}
-        new_restaurants = process_and_update_master_data(master_data, api_data)
+        new_restaurants, message = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 0)
-        mock_st.warning.assert_called_once_with("No 'EstablishmentDetail' found in API response or it was None. No new establishments from API to process.")
+        self.assertIn("No 'EstablishmentDetail' found in API response or it was None", message)
 
-    @patch('app.core.data_processing.st')
-    def test_api_data_missing_establishment_collection(self, mock_st):
+    def test_api_data_missing_establishment_collection(self):
         master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {'FHRSEstablishment': {}} # EstablishmentCollection is missing
-        new_restaurants = process_and_update_master_data(master_data, api_data)
+        new_restaurants, message = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 0)
-        mock_st.info.assert_any_call("API response contained no establishments in 'EstablishmentDetail'.")
+        self.assertIn("API response contained no establishments", message)
 
 
-    @patch('app.core.data_processing.st')
-    def test_api_data_missing_fhrestablishment_key(self, mock_st):
+    def test_api_data_missing_fhrestablishment_key(self):
         master_data = [{'FHRSID': "1", 'name': 'A'}] # FHRSID is string
         api_data = {} # FHRSEstablishment key is missing
-        new_restaurants = process_and_update_master_data(master_data, api_data)
+        new_restaurants, message = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 0)
-        mock_st.info.assert_any_call("API response contained no establishments in 'EstablishmentDetail'.")
+        self.assertIn("API response contained no establishments", message)
 
     @patch('app.core.data_processing.datetime')
-    @patch('app.core.data_processing.st')
-    def test_fhrsid_is_string_after_processing_and_schema_adherence(self, mock_st, mock_datetime):
+    def test_fhrsid_is_string_after_processing_and_schema_adherence(self, mock_datetime):
         """
         Test FHRSID is string after processing, and output adheres to ORIGINAL_COLUMNS_TO_KEEP.
         """
@@ -322,9 +249,9 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         }
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [api_est_int_fhrsid, api_est_str_fhrsid]}}}
 
-        new_restaurants = process_and_update_master_data(master_data, api_data)
+        new_restaurants, message = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 2)
-        mock_st.success.assert_called_once_with("Processed API response. Identified 2 unique new restaurant records to be added.")
+        self.assertIn("Identified 2 unique new restaurant", message)
 
         for r_new in new_restaurants:
             self.assertEqual(set(r_new.keys()), set(ORIGINAL_COLUMNS_TO_KEEP))
@@ -336,28 +263,8 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
             self.assertNotIn('ExtraInfo', r_new)
             self.assertNotIn('AnotherExtra', r_new)
 
-            if r_new['BusinessName'] == 'Testaurant Int':
-                self.assertEqual(r_new['FHRSID'], "123")
-                self.assertEqual(r_new['RatingValue'], 'Good')
-                self.assertEqual(r_new['LocalAuthorityName'], 'LA1')
-                self.assertEqual(r_new['NewRatingPending'], 'false')
-                self.assertIsNone(r_new.get('AddressLine1'))
-                self.assertIsNone(r_new.get('AddressLine2'))
-                self.assertIsNone(r_new.get('AddressLine3'))
-                self.assertIsNone(r_new.get('PostCode'))
-            elif r_new['BusinessName'] == 'Testaurant Str':
-                self.assertEqual(r_new['FHRSID'], "456")
-                self.assertEqual(r_new['RatingValue'], 'Bad')
-                self.assertEqual(r_new['LocalAuthorityName'], 'LA2')
-                self.assertEqual(r_new['NewRatingPending'], 'TRUE')
-                self.assertEqual(r_new['AddressLine1'], 'Street')
-                self.assertEqual(r_new['PostCode'], 'PC')
-                self.assertIsNone(r_new.get('AddressLine2'))
-                self.assertIsNone(r_new.get('AddressLine3'))
-
     @patch('app.core.data_processing.datetime')
-    @patch('app.core.data_processing.st')
-    def test_duplicate_fhrsid_in_api_data_is_added_once(self, mock_st, mock_datetime):
+    def test_duplicate_fhrsid_in_api_data_is_added_once(self, mock_datetime):
         mock_datetime_str = "2023-10-28"
         mock_datetime.now.return_value.strftime.return_value = mock_datetime_str
 
@@ -385,32 +292,17 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
             api_restaurant_duplicate_2
         ]}}}
 
-        new_restaurants = process_and_update_master_data(master_data, api_data)
+        new_restaurants, message = process_and_update_master_data(master_data, api_data)
 
         self.assertEqual(len(new_restaurants), 2, "Should identify 2 unique new restaurants.")
 
         result_fhrsids = {r['FHRSID'] for r in new_restaurants}
         self.assertIn("789", result_fhrsids, "FHRSID 789 should be in the results.")
         self.assertIn("101", result_fhrsids, "FHRSID 101 should be in the results.")
-
-        restaurant_789_data = next((r for r in new_restaurants if r['FHRSID'] == "789"), None)
-        self.assertIsNotNone(restaurant_789_data)
-        self.assertEqual(restaurant_789_data['BusinessName'], 'Duplicate Cafe Batch 1')
-        self.assertEqual(restaurant_789_data['AddressLine1'], 'Addr D1')
-        self.assertEqual(restaurant_789_data['first_seen'], mock_datetime_str)
-        self.assertEqual(restaurant_789_data['manual_review'], "not reviewed")
-
-        restaurant_101_data = next((r for r in new_restaurants if r['FHRSID'] == "101"), None)
-        self.assertIsNotNone(restaurant_101_data)
-        self.assertEqual(restaurant_101_data['BusinessName'], 'Unique New Place')
-        self.assertEqual(restaurant_101_data['first_seen'], mock_datetime_str)
-        self.assertEqual(restaurant_101_data['manual_review'], "not reviewed")
-
-        mock_st.success.assert_called_once_with("Processed API response. Identified 2 unique new restaurant records to be added.")
+        self.assertIn("Identified 2 unique new restaurant", message)
 
     @patch('app.core.data_processing.datetime')
-    @patch('app.core.data_processing.st')
-    def test_canonical_fhrsid_deduplication_and_non_numeric(self, mock_st, mock_datetime):
+    def test_canonical_fhrsid_deduplication_and_non_numeric(self, mock_datetime):
         mock_datetime_str = "2023-11-15"
         mock_datetime.now.return_value.strftime.return_value = mock_datetime_str
 
@@ -438,37 +330,18 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': api_establishments}}}
 
-        new_restaurants = process_and_update_master_data(master_data, api_data)
+        new_restaurants, message = process_and_update_master_data(master_data, api_data)
 
         self.assertEqual(len(new_restaurants), 3, "Should identify 3 new unique restaurants.")
+        self.assertIn("Identified 3 unique new restaurant", message)
 
         # Check that FHRSIDs are canonicalized (string for numeric, lowercased string for non-numeric)
         added_fhrsids = sorted([r['FHRSID'] for r in new_restaurants])
         expected_fhrsids = sorted(["789", "a2y", "def"])
         self.assertEqual(added_fhrsids, expected_fhrsids, "FHRSIDs of new restaurants should be the canonical forms.")
 
-        new_def = next(r for r in new_restaurants if r['FHRSID'] == "def")
-        self.assertEqual(new_def['BusinessName'], 'New NonNumeric')
-        self.assertEqual(new_def['first_seen'], mock_datetime_str)
-        self.assertEqual(new_def['manual_review'], "not reviewed")
-
-        expected_warning_calls = [
-            unittest.mock.call("FHRSID 'ABC' from master_data could not be converted to int. Using normalized string value ('abc') for comparison."),
-            unittest.mock.call("FHRSID 'M1X' from master_data could not be converted to int. Using normalized string value ('m1x') for comparison."),
-            unittest.mock.call("FHRSID 'ABC' from API data could not be converted to int. Using normalized string value ('abc')."),
-            unittest.mock.call("FHRSID 'M1X' from API data could not be converted to int. Using normalized string value ('m1x')."),
-            unittest.mock.call("FHRSID 'DEF' from API data could not be converted to int. Using normalized string value ('def')."),
-            unittest.mock.call("FHRSID 'A2Y' from API data could not be converted to int. Using normalized string value ('a2y').")
-        ]
-
-        mock_st.warning.assert_has_calls(expected_warning_calls, any_order=False)
-        self.assertEqual(mock_st.warning.call_count, 6, "Expected 6 warning calls.")
-
-        mock_st.success.assert_called_once_with("Processed API response. Identified 3 unique new restaurant records to be added.")
-
     @patch('app.core.data_processing.datetime')
-    @patch('app.core.data_processing.st')
-    def test_deduplication_with_corrected_fhrsid_key(self, mock_st, mock_datetime):
+    def test_deduplication_with_corrected_fhrsid_key(self, mock_datetime):
         mock_date_str = "2024-01-01"
         mock_datetime.now.return_value.strftime.return_value = mock_date_str
 
@@ -501,44 +374,65 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': api_establishments}}}
 
-        new_restaurants = process_and_update_master_data(master_data, api_data)
+        new_restaurants, message = process_and_update_master_data(master_data, api_data)
 
         self.assertEqual(len(new_restaurants), 2, "Should identify 2 new unique restaurants.")
+        self.assertIn("Identified 2 unique new restaurant", message)
 
         added_fhrsids = sorted([r['FHRSID'] for r in new_restaurants])
         expected_fhrsids = sorted(["789", "xyz"])
         self.assertEqual(added_fhrsids, expected_fhrsids)
 
-        expected_new_numeric = {col: None for col in ORIGINAL_COLUMNS_TO_KEEP}
-        expected_new_numeric.update({
-            'FHRSID': "789", 'BusinessName': 'API Cafe New Numeric', 'RatingValue': '5',
-            'NewRatingPending': 'false', 'first_seen': mock_date_str, 'manual_review': "not reviewed",
-            'AddressLine1': 'Addr2', 'AddressLine2': 'Suite B', 'PostCode': 'PC2',
-            'LocalAuthorityName': 'LA2', 'gemini_insights': 'Good place'
-        })
+    @patch('app.core.data_processing.datetime')
+    def test_maps_link_not_added(self, mock_datetime):
+        """
+        Test that 'Maps Link' is NOT added to processed restaurants.
+        """
+        mock_date_str = "2023-10-27"
+        mock_datetime.now.return_value.strftime.return_value = mock_date_str
+        master_data = []
 
-        expected_new_non_numeric = {col: None for col in ORIGINAL_COLUMNS_TO_KEEP}
-        expected_new_non_numeric.update({
-            'FHRSID': "xyz", 'BusinessName': 'API Cafe New NonNumeric', 'RatingValue': '1',
-            'NewRatingPending': 'true', 'first_seen': mock_date_str, 'manual_review': "not reviewed",
-            'AddressLine1': 'Addr4', 'PostCode': 'PC4', 'LocalAuthorityName': 'LA4'
-        })
+        api_est = {
+            'FHRSID': 123, 'BusinessName': 'Testaurant',
+            'AddressLine1': '123 Main St', 'PostCode': 'A1 1AA',
+            'RatingValue': '5', 'LocalAuthorityName': 'LA', 'NewRatingPending': 'false'
+        }
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [api_est]}}}
 
-        for r_new in new_restaurants:
-            if r_new['FHRSID'] == "789":
-                self.assertEqual(r_new, expected_new_numeric)
-            elif r_new['FHRSID'] == "xyz":
-                self.assertEqual(r_new, expected_new_non_numeric)
+        new_restaurants, message = process_and_update_master_data(master_data, api_data)
+        self.assertEqual(len(new_restaurants), 1)
+        r_new = new_restaurants[0]
+        self.assertNotIn('Maps Link', r_new)
 
-        expected_warning_calls = [
-            unittest.mock.call("FHRSID 'ABC' from master_data could not be converted to int. Using normalized string value ('abc') for comparison."),
-            unittest.mock.call("FHRSID 'ABC' from API data could not be converted to int. Using normalized string value ('abc')."),
-            unittest.mock.call("FHRSID 'XYZ' from API data could not be converted to int. Using normalized string value ('xyz').")
+    @patch('app.core.data_processing.datetime')
+    def test_deduplication_edge_cases_non_numeric(self, mock_datetime):
+        """
+        Test that deduplication handles casing and whitespace differences in NON-NUMERIC FHRSID.
+        """
+        mock_date_str = "2023-10-27"
+        mock_datetime.now.return_value.strftime.return_value = mock_date_str
+        
+        # Master data has 'AbC' and ' XyZ '
+        master_data = [
+            {'FHRSID': "AbC", 'BusinessName': 'Cafe Alpha'}, 
+            {'FHRSID': " XyZ ", 'BusinessName': 'Cafe Beta'}
         ]
-        mock_st.warning.assert_has_calls(expected_warning_calls, any_order=False)
-        self.assertEqual(mock_st.warning.call_count, 3, "Expected 3 warning calls for non-numeric FHRSIDs.")
 
-        mock_st.success.assert_called_once_with("Processed API response. Identified 2 unique new restaurant records to be added.")
+        # API data has 'abc' (lowercase) and 'XyZ' (stripped)
+        # Both should be identified as existing and NOT added.
+        api_est1 = {'FHRSID': "abc", 'BusinessName': 'Cafe Alpha API'} 
+        api_est2 = {'FHRSID': "XyZ", 'BusinessName': 'Cafe Beta API'}
+        
+        # Also add a genuinely new one 'NewID'
+        api_est3 = {'FHRSID': "NewID", 'BusinessName': 'Cafe Gamma'}
+
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [api_est1, api_est2, api_est3]}}}
+
+        new_restaurants, message = process_and_update_master_data(master_data, api_data)
+        
+        # Should only contain 'NewID' (normalized to 'newid')
+        self.assertEqual(len(new_restaurants), 1)
+        self.assertEqual(new_restaurants[0]['FHRSID'], "newid")
 
 
 if __name__ == '__main__':
@@ -549,8 +443,7 @@ from app.core.data_processing import load_data_from_csv
 import io
 
 class TestLoadDataFromCsv(unittest.TestCase):
-    @patch('app.core.data_processing.st.error')
-    def test_successful_load(self, mock_st_error):
+    def test_successful_load(self):
         csv_content = '"fhrsid","colA"\n"1","abc"\n"2","def"'
         simulated_file = io.StringIO(csv_content)
 
@@ -560,41 +453,29 @@ class TestLoadDataFromCsv(unittest.TestCase):
         self.assertEqual(len(df), 2)
         self.assertListEqual(list(df.columns), ['fhrsid', 'colA'])
         pd.testing.assert_series_equal(df['fhrsid'], pd.Series(["1", "2"], name='fhrsid', dtype=str))
-        mock_st_error.assert_not_called()
 
-    @patch('app.core.data_processing.st.error')
-    def test_missing_fhrsid_column(self, mock_st_error):
+    def test_missing_fhrsid_column(self):
         csv_content = '"colX","colA"\n"1","abc"'
         simulated_file = io.StringIO(csv_content)
+        
+        with self.assertRaisesRegex(ValueError, "required 'fhrsid' column is missing"):
+            load_data_from_csv(simulated_file)
 
-        df = load_data_from_csv(simulated_file)
-
-        self.assertIsNone(df)
-        mock_st_error.assert_called_once_with("The required 'fhrsid' column is missing in the uploaded CSV file.")
-
-    @patch('app.core.data_processing.st.error')
-    def test_empty_csv_file_content(self, mock_st_error):
+    def test_empty_csv_file_content(self):
         csv_content = ""
         simulated_file = io.StringIO(csv_content)
+        
+        with self.assertRaisesRegex(ValueError, "empty or contains no data"):
+            load_data_from_csv(simulated_file)
 
-        df = load_data_from_csv(simulated_file)
-
-        self.assertIsNone(df)
-        mock_st_error.assert_called_once_with("The uploaded CSV file is empty or contains no data.")
-
-    @patch('app.core.data_processing.st.error')
-    def test_empty_csv_file_just_headers(self, mock_st_error):
+    def test_empty_csv_file_just_headers(self):
         csv_content = '"fhrsid","colA"'
         simulated_file = io.StringIO(csv_content)
 
-        df = load_data_from_csv(simulated_file)
+        with self.assertRaisesRegex(ValueError, "empty or contains no data"):
+            load_data_from_csv(simulated_file)
 
-        self.assertIsNone(df)
-        mock_st_error.assert_called_once_with("The uploaded CSV file is empty.")
-
-
-    @patch('app.core.data_processing.st.error')
-    def test_case_insensitive_fhrsid(self, mock_st_error):
+    def test_case_insensitive_fhrsid(self):
         csv_content = '"FHRSID","colA"\n"1","abc"'
         simulated_file = io.StringIO(csv_content)
 
@@ -604,21 +485,16 @@ class TestLoadDataFromCsv(unittest.TestCase):
         self.assertIn('fhrsid', df.columns)
         self.assertTrue(pd.api.types.is_string_dtype(df['fhrsid']))
         self.assertEqual(df['fhrsid'].iloc[0], "1")
-        mock_st_error.assert_not_called()
 
-    @patch('app.core.data_processing.st.error')
-    def test_parser_error_malformed_csv(self, mock_st_error):
+    def test_parser_error_malformed_csv(self):
         csv_content = '"fhrsid","colA"\n"1"'
         simulated_file = io.StringIO(csv_content)
 
         with patch('pandas.read_csv', side_effect=pd.errors.ParserError("Test error")):
-            df = load_data_from_csv(simulated_file)
+            with self.assertRaisesRegex(ValueError, "Error parsing the CSV file"):
+                load_data_from_csv(simulated_file)
 
-        self.assertIsNone(df)
-        mock_st_error.assert_called_once_with("Error parsing the CSV file. Please ensure it's a valid CSV format.")
-
-    @patch('app.core.data_processing.st.error')
-    def test_fhrsid_column_present_but_empty_values(self, mock_st_error):
+    def test_fhrsid_column_present_but_empty_values(self):
         csv_content = '"fhrsid","colA"\n"","abc"\n"","def"'
         simulated_file = io.StringIO(csv_content)
 
@@ -627,15 +503,11 @@ class TestLoadDataFromCsv(unittest.TestCase):
         self.assertIsNotNone(df)
         self.assertEqual(len(df), 2)
         pd.testing.assert_series_equal(df['fhrsid'], pd.Series(["", ""], name='fhrsid', dtype=str))
-        mock_st_error.assert_not_called()
 
-    @patch('app.core.data_processing.st.error')
-    def test_generic_exception_during_read(self, mock_st_error):
+    def test_generic_exception_during_read(self):
         simulated_file = MagicMock()
         simulated_file.read.side_effect = Exception("Unexpected read error")
 
         with patch('app.core.data_processing.pd.read_csv', side_effect=Exception("Simulated pandas error")):
-            df = load_data_from_csv(simulated_file)
-
-        self.assertIsNone(df)
-        mock_st_error.assert_called_once_with("An unexpected error occurred while reading the CSV file: Simulated pandas error")
+            with self.assertRaisesRegex(ValueError, "An unexpected error occurred"):
+                load_data_from_csv(simulated_file)

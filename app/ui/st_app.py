@@ -31,8 +31,13 @@ from app.services.bq_utils import (
     load_filtered_data_from_bq,
     bulk_update_reviews
 )
-from app.core.data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
-from app.core.data_processing import load_data_from_csv
+from app.core.data_processing import (
+    load_json_from_local_file_path,
+    load_data_from_csv,
+    parse_coordinates,
+    run_data_synchronization,
+    parse_bq_path
+)
 
 def display_data(data_to_display: List[Dict[str, Any]]):
     """
@@ -52,36 +57,6 @@ def display_data(data_to_display: List[Dict[str, Any]]):
     except Exception as e: 
         st.error(f"Error displaying DataFrame: {e}")
 
-# Helper functions for handle_fetch_data_action
-def _parse_coordinates(coordinate_pairs_str: str) -> List[tuple[float, float]]:
-    valid_coords = []
-    coordinate_lines = coordinate_pairs_str.strip().split('\n')
-    for i, line in enumerate(coordinate_lines):
-        line = line.strip()
-        if not line: continue
-        try:
-            lon_str, lat_str = line.split(',')
-            valid_coords.append((float(lon_str.strip()), float(lat_str.strip())))
-        except ValueError:
-            st.error(f"Error parsing coordinate line {i+1}: '{line}'.")
-    return valid_coords
-
-def _fetch_data_for_all_coordinates(valid_coords: List[tuple[float, float]], max_results: int) -> List[Dict[str, Any]]:
-    all_api_establishments = []
-    for lon, lat in valid_coords:
-        page = 1
-        while True:
-            api_response = fetch_api_data(lon, lat, max_results, page)
-            time.sleep(1) 
-            if api_response:
-                establishments = api_response.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
-                if establishments is None: establishments = []
-                all_api_establishments.extend(establishments)
-                if len(establishments) < max_results: break
-                page += 1
-            else: break
-    return all_api_establishments
-
 def display_new_restaurants(new_restaurants: List[Dict[str, Any]]):
     if not new_restaurants: return
     st.subheader(f"Newly identified restaurants ({len(new_restaurants)})")
@@ -89,29 +64,44 @@ def display_new_restaurants(new_restaurants: List[Dict[str, Any]]):
     st.dataframe(df, hide_index=True)
 
 def handle_fetch_data_action(coordinate_pairs_str: str, max_results: int, bq_full_path_str: str) -> List[Dict[str, Any]]:
-    valid_coords = _parse_coordinates(coordinate_pairs_str)
+    valid_coords, errors = parse_coordinates(coordinate_pairs_str)
+    for error in errors:
+        st.error(error)
+
     if not valid_coords: 
         st.error("No valid coordinates.")
         return []
     
     try:
-        project_id, dataset_id, table_id = bq_full_path_str.split('.')
-    except ValueError:
-        st.error("Invalid BigQuery Path.")
+        project_id, dataset_id, table_id = parse_bq_path(bq_full_path_str)
+    except ValueError as e:
+        st.error(str(e))
         return []
 
-    all_api_establishments = _fetch_data_for_all_coordinates(valid_coords, max_results)
-    combined_api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': all_api_establishments}}}
+    with st.spinner("Synchronizing data (API -> Processing -> Master Data)..."):
+        try:
+            master_restaurant_data, new_restaurants, summary_msg = run_data_synchronization(
+                valid_coords, max_results, project_id, dataset_id, table_id
+            )
+            
+            if master_restaurant_data:
+                st.success(f"Loaded {len(master_restaurant_data)} records from BigQuery.")
+            else:
+                st.info("Master table is empty or returned no data.")
+                
+            if summary_msg:
+                st.info(summary_msg)
 
-    master_restaurant_data = load_master_data(project_id, dataset_id, table_id, load_all_data_from_bq)
-    new_restaurants = process_and_update_master_data(master_restaurant_data, combined_api_data)
+            if new_restaurants:
+                st.session_state.new_restaurants_to_review = new_restaurants
+                st.success(f"Found {len(new_restaurants)} new restaurants!")
+            
+            display_data(master_restaurant_data)
+            return master_restaurant_data
 
-    if new_restaurants:
-        st.session_state.new_restaurants_to_review = new_restaurants
-        st.success(f"Found {len(new_restaurants)} new restaurants!")
-    
-    display_data(master_restaurant_data)
-    return master_restaurant_data
+        except Exception as e:
+            st.error(f"Data synchronization failed: {e}")
+            return []
 
 def main_ui():
     # Initialize session state variables
@@ -154,7 +144,7 @@ def main_ui():
     if st.button("Run Gemini Analysis"):
         if bq_full_path_ui:
             try:
-                p, d, t = bq_full_path_ui.split('.')
+                p, d, t = parse_bq_path(bq_full_path_ui)
                 with st.spinner("Analyzing..."):
                     if execute_gemini_enrichment(p, d, t, connection_id_input, days_recent=days_recent_input):
                         st.success("Analysis Complete!")
@@ -174,7 +164,7 @@ def main_ui():
     if submitted:
         if bq_full_path_ui:
             try:
-                p, d, t = bq_full_path_ui.split('.')
+                p, d, t = parse_bq_path(bq_full_path_ui)
                 results = load_filtered_data_from_bq(p, d, t, days_filter=export_days_input, review_status_filter=export_status_input)
                 if results:
                     st.dataframe(pd.DataFrame(results))
@@ -184,21 +174,25 @@ def main_ui():
     st.subheader("Bulk Update Manual Reviews")
     uploaded_file = st.file_uploader("Upload CSV", type=['csv'])
     if uploaded_file is not None:
-        df_updates = pd.read_csv(uploaded_file)
-        print(f"DEBUG: Uploaded CSV columns: {df_updates.columns.tolist()}")
-        st.dataframe(df_updates.head())
-        if st.button("Execute Bulk Update"):
-            if bq_full_path_ui:
-                try:
-                    p, d, t = bq_full_path_ui.split('.')
-                    success, message = bulk_update_reviews(p, d, t, df_updates)
-                    if success:
-                        st.success(f"Bulk update successful! {message}")
-                    else:
-                        st.error(f"Bulk update failed: {message}")
-                except ValueError: st.error("Invalid path.")
-            else:
-                st.error("Please enter a BigQuery Table Path.")
+        try:
+            df_updates = load_data_from_csv(uploaded_file)
+            print(f"DEBUG: Uploaded CSV columns: {df_updates.columns.tolist()}")
+            st.dataframe(df_updates.head())
+            
+            if st.button("Execute Bulk Update"):
+                if bq_full_path_ui:
+                    try:
+                        p, d, t = parse_bq_path(bq_full_path_ui)
+                        success, message = bulk_update_reviews(p, d, t, df_updates)
+                        if success:
+                            st.success(f"Bulk update successful! {message}")
+                        else:
+                            st.error(f"Bulk update failed: {message}")
+                    except ValueError: st.error("Invalid path.")
+                else:
+                    st.error("Please enter a BigQuery Table Path.")
+        except ValueError as e:
+            st.error(str(e))
 
 if __name__ == "__main__":
     main_ui()

@@ -1,9 +1,50 @@
 import json
+import time
 import pandas as pd
-import streamlit as st
 from datetime import datetime
 from typing import List, Dict, Any, Callable, Tuple, Optional
 from app.services.bq_utils import ORIGINAL_COLUMNS_TO_KEEP
+from app.services.api_client import fetch_api_data
+
+def parse_coordinates(coordinate_pairs_str: str) -> Tuple[List[Tuple[float, float]], List[str]]:
+    """
+    Parses a string of coordinate pairs (lon, lat) separated by newlines.
+    Returns a tuple containing:
+    1. List of valid coordinate tuples (float, float).
+    2. List of error messages for invalid lines.
+    """
+    valid_coords = []
+    errors = []
+    coordinate_lines = coordinate_pairs_str.strip().split('\n')
+    for i, line in enumerate(coordinate_lines):
+        line = line.strip()
+        if not line: continue
+        try:
+            lon_str, lat_str = line.split(',')
+            valid_coords.append((float(lon_str.strip()), float(lat_str.strip())))
+        except ValueError:
+            errors.append(f"Error parsing coordinate line {i+1}: '{line}'.")
+    return valid_coords, errors
+
+def fetch_data_for_all_coordinates(valid_coords: List[Tuple[float, float]], max_results: int) -> List[Dict[str, Any]]:
+    """
+    Fetches data from the API for all provided coordinates.
+    Aggregates results up to max_results per coordinate.
+    """
+    all_api_establishments = []
+    for lon, lat in valid_coords:
+        page = 1
+        while True:
+            api_response = fetch_api_data(lon, lat, max_results, page)
+            time.sleep(1)
+            if api_response:
+                establishments = api_response.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
+                if establishments is None: establishments = []
+                all_api_establishments.extend(establishments)
+                if len(establishments) < max_results: break
+                page += 1
+            else: break
+    return all_api_establishments
 
 def load_json_from_local_file_path(uri: str) -> Optional[Dict[str, Any]]:
     """
@@ -19,13 +60,11 @@ def load_json_from_local_file_path(uri: str) -> Optional[Dict[str, Any]]:
         with open(uri, 'r') as f:
             return json.load(f)
     except FileNotFoundError:
-        st.error(f"Error: Local file not found at {uri}")
+        # Caller should handle None or we could raise exception
         return None
-    except json.JSONDecodeError as e:
-        st.error(f"Error decoding JSON from local file {uri}: {e}")
+    except json.JSONDecodeError:
         return None
-    except Exception as e:
-        st.error(f"Error reading local file {uri}: {e}")
+    except Exception:
         return None
 
 def load_master_data(project_id: str, dataset_id: str, table_id: str, load_bq_func: Callable[[str, str, str], List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -40,61 +79,57 @@ def load_master_data(project_id: str, dataset_id: str, table_id: str, load_bq_fu
                       Expected to be bq_utils.load_all_data_from_bq.
 
     Returns:
-        A list of dictionaries representing the master restaurant data. Returns an empty list on failure.
+        A list of dictionaries representing the master restaurant data.
+    
+    Raises:
+        Exception: If loading fails (propagates from load_bq_func).
     """
-    st.info(f"Loading master restaurant data from BigQuery table: {project_id}.{dataset_id}.{table_id}")
+    # Note: Logic removed logging to UI (st.info/error). Caller must handle logging.
+    
+    loaded_data = load_bq_func(project_id, dataset_id, table_id)
 
-    try:
-        loaded_data = load_bq_func(project_id, dataset_id, table_id)
-    except Exception as e:
-        st.error(f"An error occurred while calling load_bq_func for {project_id}.{dataset_id}.{table_id}: {e}")
-        loaded_data = [] # Ensure loaded_data is an empty list on exception
-
-    if loaded_data is None: # load_all_data_from_bq is designed to return [] on error, but good to be defensive
-        st.warning(f"Failed to load master restaurant data from BigQuery table {project_id}.{dataset_id}.{table_id} (function returned None). Proceeding with empty master restaurant data.")
+    if loaded_data is None: 
+        # Previously returned [] with a warning. Now we return [] but maybe caller handles warning?
+        # Or let's just return [] as before but without side effect.
         return []
     
     if isinstance(loaded_data, list):
-        if loaded_data:
-            st.success(f"Successfully loaded {len(loaded_data)} records from BigQuery table {project_id}.{dataset_id}.{table_id}.")
-        else:
-            st.info(f"Master restaurant data loaded from BigQuery table {project_id}.{dataset_id}.{table_id}, but the table is empty or returned no data.")
-
         # Retain existing logic for default 'manual_review'
         for restaurant in loaded_data:
             if isinstance(restaurant, dict) and restaurant.get("manual_review") is None:
                 restaurant["manual_review"] = "not reviewed"
         return loaded_data
     else:
-        # This case should ideally not be reached if load_bq_func adheres to its return type List[Dict[str, Any]]
-        st.error(f"Data loaded from BigQuery table {project_id}.{dataset_id}.{table_id} is not in the expected list format. Type found: {type(loaded_data)}. Proceeding with empty master restaurant data.")
-        return []
+        # Data format issue
+        raise TypeError(f"Data loaded from BigQuery table {project_id}.{dataset_id}.{table_id} is not in the expected list format. Type found: {type(loaded_data)}.")
 
-def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
     """
-    Processes API data and identifies new establishments not present in the master data,
-    ensuring no duplicates from the current API batch are added.
+    Processes API data and identifies new establishments not present in the master data.
 
     Args:
-        master_data: The current list of master restaurant data (used to check for existing FHRSIDs).
+        master_data: The current list of master restaurant data.
         api_data: The raw JSON data (as a dict) from the API.
 
     Returns:
-        A list of newly added restaurant dictionaries, unique within this processing batch.
+        A tuple containing:
+        1. A list of newly added restaurant dictionaries.
+        2. A summary message string suitable for display.
     """
     api_establishments = api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
     
+    messages = []
+    
     if api_establishments is None: 
         api_establishments = []
-        st.warning("No 'EstablishmentDetail' found in API response or it was None. No new establishments from API to process.")
+        messages.append("No 'EstablishmentDetail' found in API response or it was None. No new establishments from API to process.")
     elif not api_establishments: 
-         st.info("API response contained no establishments in 'EstablishmentDetail'.")
+         messages.append("API response contained no establishments in 'EstablishmentDetail'.")
 
     existing_fhrsid_set = set()
     for est in master_data:
         if isinstance(est, dict):
             fhrsid_val = None
-            # Check for both 'FHRSID' and 'fhrsid' keys
             if 'FHRSID' in est and est['FHRSID'] is not None:
                 fhrsid_val = est['FHRSID']
             elif 'fhrsid' in est and est['fhrsid'] is not None:
@@ -104,14 +139,13 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
                 try:
                     canonical_fhrsid = str(int(fhrsid_val))
                 except (ValueError, TypeError):
-                    # Robust normalization for non-numeric IDs
                     canonical_fhrsid = str(fhrsid_val).strip().lower()
-                    st.warning(f"FHRSID '{fhrsid_val}' from master_data could not be converted to int. Using normalized string value ('{canonical_fhrsid}') for comparison.")
+                    # Warning suppressed or could be collected if needed
                 existing_fhrsid_set.add(canonical_fhrsid)
 
     today_date = datetime.now().strftime("%Y-%m-%d")
     newly_added_restaurants: List[Dict[str, Any]] = []
-    fhrsids_processed_in_this_batch = set() # New set to track FHRSIDs within the current batch
+    fhrsids_processed_in_this_batch = set() 
 
     for api_establishment in api_establishments:
         if isinstance(api_establishment, dict) and 'FHRSID' in api_establishment and api_establishment['FHRSID'] is not None:
@@ -119,72 +153,56 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
             try:
                 canonical_api_fhrsid = str(int(original_api_fhrsid))
             except ValueError:
-                # Robust normalization for non-numeric IDs
                 canonical_api_fhrsid = str(original_api_fhrsid).strip().lower()
-                st.warning(f"FHRSID '{original_api_fhrsid}' from API data could not be converted to int. Using normalized string value ('{canonical_api_fhrsid}').")
 
-            # Replace the original FHRSID with the canonical version
             api_establishment['FHRSID'] = canonical_api_fhrsid
 
             if canonical_api_fhrsid not in existing_fhrsid_set:
-                # Check if this canonical FHRSID has already been processed in the current batch
                 if canonical_api_fhrsid not in fhrsids_processed_in_this_batch:
                     api_establishment['first_seen'] = today_date
                     api_establishment['manual_review'] = "not reviewed"
 
-                    # Filter and prepare the establishment data using ORIGINAL_COLUMNS_TO_KEEP
                     processed_establishment = {}
                     for key in ORIGINAL_COLUMNS_TO_KEEP:
                         if key in api_establishment:
                             processed_establishment[key] = api_establishment[key]
                         else:
-                            # Ensure missing keys are explicitly set to None in the processed_establishment
                             processed_establishment[key] = None
 
-                    # Ensure the 'FHRSID' in processed_establishment is the canonical_api_fhrsid.
-                    # This is guaranteed because api_establishment['FHRSID'] was updated,
-                    # and if 'FHRSID' is in ORIGINAL_COLUMNS_TO_KEEP, it will take the updated value.
-                    # If 'FHRSID' were NOT in ORIGINAL_COLUMNS_TO_KEEP, we'd need:
-                    # processed_establishment['FHRSID'] = canonical_api_fhrsid
-
                     newly_added_restaurants.append(processed_establishment)
-                    fhrsids_processed_in_this_batch.add(canonical_api_fhrsid) # Add to batch tracking set
-                else:
-                    # Optional: Log that a duplicate FHRSID within the current API batch was skipped.
-                    # Using print for now, can be changed to st.info or a more formal logger.
-                    print(f"Skipping duplicate FHRSID {canonical_api_fhrsid} found within the current API batch (already processed).")
-            # else:
-                # Optional: Log that FHRSID was found in existing_fhrsid_set (already in BQ).
-                # print(f"FHRSID {canonical_api_fhrsid} already exists in BigQuery master data. Skipping.")
-    
+                    fhrsids_processed_in_this_batch.add(canonical_api_fhrsid) 
+
     count_new_restaurants = len(newly_added_restaurants)
     if count_new_restaurants > 0:
-        st.success(f"Processed API response. Identified {count_new_restaurants} unique new restaurant records to be added.")
+        summary_msg = f"Processed API response. Identified {count_new_restaurants} unique new restaurant records to be added."
     else:
-        st.info("Processed API response. No new restaurant records identified (or all were duplicates within the batch or already in BigQuery).")
+        # Combine previous messages if any
+        if messages:
+            summary_msg = " ".join(messages)
+        else:
+            summary_msg = "Processed API response. No new restaurant records identified (or all were duplicates within the batch or already in BigQuery)."
 
-    return newly_added_restaurants
+    return newly_added_restaurants, summary_msg
 
-def load_data_from_csv(uploaded_file: Any) -> Optional[pd.DataFrame]:
+def load_data_from_csv(uploaded_file: Any) -> pd.DataFrame:
     """
     Loads data from an uploaded CSV file into a Pandas DataFrame.
     Checks for 'fhrsid' column (case-insensitive) and converts it to string.
 
     Args:
-        uploaded_file: A Streamlit UploadedFile object (or any file-like object
-                       compatible with pandas.read_csv).
+        uploaded_file: A file-like object compatible with pandas.read_csv.
 
     Returns:
-        A Pandas DataFrame if successful and 'fhrsid' column is present,
-        otherwise None.
+        A Pandas DataFrame.
+
+    Raises:
+        ValueError: If file is empty, missing columns, or parsing fails.
     """
     try:
         df = pd.read_csv(uploaded_file, na_filter=False)
         if df.empty:
-            st.error("The uploaded CSV file is empty.")
-            return None
+            raise ValueError("The uploaded CSV file is empty or contains no data.")
 
-        # Search for 'fhrsid' column case-insensitively
         fhrsid_col_name = None
         for col in df.columns:
             if col.lower() == 'fhrsid':
@@ -192,24 +210,93 @@ def load_data_from_csv(uploaded_file: Any) -> Optional[pd.DataFrame]:
                 break
 
         if fhrsid_col_name is None:
-            st.error("The required 'fhrsid' column is missing in the uploaded CSV file.")
-            return None
+            raise ValueError("The required 'fhrsid' column is missing in the uploaded CSV file.")
 
-        # Convert fhrsid column to string
         df[fhrsid_col_name] = df[fhrsid_col_name].astype(str)
 
-        # Rename column to 'fhrsid' if it's not already named that (for consistency)
         if fhrsid_col_name != 'fhrsid':
             df.rename(columns={fhrsid_col_name: 'fhrsid'}, inplace=True)
 
         return df
 
     except pd.errors.EmptyDataError:
-        st.error("The uploaded CSV file is empty or contains no data.")
-        return None
+        raise ValueError("The uploaded CSV file is empty or contains no data.")
     except pd.errors.ParserError:
-        st.error("Error parsing the CSV file. Please ensure it's a valid CSV format.")
-        return None
+        raise ValueError("Error parsing the CSV file. Please ensure it's a valid CSV format.")
     except Exception as e:
-        st.error(f"An unexpected error occurred while reading the CSV file: {e}")
-        return None
+        # Propagate or wrap? Let's wrap to match ValueError expectation or just re-raise.
+        # If it's already ValueError, re-raise.
+        if isinstance(e, ValueError): raise e
+        raise ValueError(f"An unexpected error occurred while reading the CSV file: {e}")
+
+def parse_bq_path(bq_path: str) -> Tuple[str, str, str]:
+    """
+    Parses a BigQuery path string in the format 'project.dataset.table'.
+
+    Args:
+        bq_path: The BigQuery path string.
+
+    Returns:
+        A tuple of (project_id, dataset_id, table_id).
+
+    Raises:
+        ValueError: If the path is invalid.
+    """
+    try:
+        project_id, dataset_id, table_id = bq_path.split('.')
+        return project_id, dataset_id, table_id
+    except ValueError:
+        raise ValueError(f"Invalid BigQuery Path: '{bq_path}'. Expected format: 'project.dataset.table'")
+
+def run_data_synchronization(
+    valid_coords: List[Tuple[float, float]], 
+    max_results: int, 
+    project_id: str, 
+    dataset_id: str, 
+    table_id: str
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], str]:
+    """
+    Orchestrates the data synchronization process:
+    1. Fetches data from API for given coordinates.
+    2. Loads master data from BigQuery.
+    3. Processes API data against master data to find new restaurants.
+
+    Args:
+        valid_coords: List of (lon, lat) tuples.
+        max_results: Max results per coordinate.
+        project_id: GCP Project ID.
+        dataset_id: BigQuery Dataset ID.
+        table_id: BigQuery Table ID.
+
+    Returns:
+        A tuple containing:
+        1. The master data list (from BigQuery).
+        2. The list of newly identified restaurants.
+        3. A summary message.
+    """
+    
+    # 1. Fetch from API
+    all_api_establishments = fetch_data_for_all_coordinates(valid_coords, max_results)
+    
+    # Construct the dictionary structure expected by process_and_update_master_data
+    combined_api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': all_api_establishments}}}
+
+    # 2. Load Master Data
+    # We pass load_all_data_from_bq explicitly to keep the dependency injection pattern 
+    # used in load_master_data, although we import it here.
+    # To avoid circular imports if load_all_data_from_bq was in data_processing (it's not, it's in services),
+    # we need to import it inside or at top. It's imported at top of this file in the original read.
+    # But wait, looking at imports in data_processing.py...
+    
+    # The file currently DOES NOT import load_all_data_from_bq.
+    # st_app.py imported it and passed it to load_master_data.
+    # So we need to import it here.
+    
+    from app.services.bq_utils import load_all_data_from_bq
+
+    master_restaurant_data = load_master_data(project_id, dataset_id, table_id, load_all_data_from_bq)
+    
+    # 3. Process
+    new_restaurants, summary_msg = process_and_update_master_data(master_restaurant_data, combined_api_data)
+    
+    return master_restaurant_data, new_restaurants, summary_msg
