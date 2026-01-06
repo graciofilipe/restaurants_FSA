@@ -24,7 +24,7 @@
 - [x] Task: Implement "Load Data" Logic.
     - [x] Update `load_filtered_data_from_bq` (or create new) to accept `excluded_authorities` list.
     - [x] Wire "Load Data" button to fetch and store in `st.session_state['review_data']`.
-- [x] Task: Conductor - User Manual Verification 'Phase 2: Frontend Re-architecture' (Protocol in workflow.md) [checkpoint: ]
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Frontend Re-architecture' (Protocol in workflow.md) [checkpoint: d202d26]
 
 ## Phase 3: Integration & Cleanup [checkpoint: ]
 - [ ] Task: Wire Actions to Session Data.
