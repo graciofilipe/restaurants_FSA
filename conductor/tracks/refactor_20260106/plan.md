@@ -1,0 +1,44 @@
+# Implementation Plan - Codebase Refactor and Simplification
+
+## Phase 1: Preparation & Verification
+- [ ] Task: Verify current environment and run existing tests.
+    - [ ] Run `pytest` to establish a baseline.
+    - [ ] Create a temporary backup or ensure git status is clean.
+- [ ] Task: Create new directory structure.
+    - [ ] Create `app/`, `app/ui/`, `app/services/`, `app/core/`, `scripts/`.
+    - [ ] Add `__init__.py` files to new python packages.
+- [ ] Task: Conductor - User Manual Verification 'Phase 1: Preparation & Verification' (Protocol in workflow.md)
+
+## Phase 2: Structural Migration
+- [ ] Task: Move script files.
+    - [ ] Move `bq_scripts.py`, `bigQuery_scripts.txt`, `envs.sh` to `scripts/`.
+- [ ] Task: Move service modules.
+    - [ ] Move `api_client.py` and `bq_utils.py` to `app/services/`.
+- [ ] Task: Move core logic.
+    - [ ] Move `data_processing.py` to `app/core/`.
+- [ ] Task: Move UI logic.
+    - [ ] Move `st_app.py` to `app/ui/`.
+- [ ] Task: Update import statements.
+    - [ ] Refactor imports in all moved files to reflect new paths (e.g., `from app.services import bq_utils`).
+    - [ ] Verify `Dockerfile` and `cloudbuild.yaml` point to the new app entry point if necessary.
+- [ ] Task: Conductor - User Manual Verification 'Phase 2: Structural Migration' (Protocol in workflow.md)
+
+## Phase 3: Component Refactoring (UI & Logic Separation)
+- [ ] Task: Refactor `st_app.py` (now in `app/ui/`).
+    - [ ] Identify business logic mixed in UI code.
+    - [ ] Extract logic to functions in `app/core/data_processing.py` or new modules in `app/core/`.
+    - [ ] Ensure `st_app.py` primarily handles Streamlit calls.
+- [ ] Task: Refactor `app/services/api_client.py` and `app/services/bq_utils.py`.
+    - [ ] Review for modularity improvements.
+    - [ ] Apply Google Python Style Guide recommendations (docstrings, naming).
+- [ ] Task: Conductor - User Manual Verification 'Phase 3: Component Refactoring' (Protocol in workflow.md)
+
+## Phase 4: Final Verification & Cleanup
+- [ ] Task: Final Code Style Check.
+    - [ ] Manually verify compliance with style guide (naming, whitespace, docstrings).
+- [ ] Task: Run full test suite.
+    - [ ] Ensure all tests pass with the new structure.
+    - [ ] Fix any broken tests due to path changes.
+- [ ] Task: Verify Streamlit App.
+    - [ ] Launch app locally and verify functionality.
+- [ ] Task: Conductor - User Manual Verification 'Phase 4: Final Verification & Cleanup' (Protocol in workflow.md)
