@@ -27,13 +27,13 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Frontend Re-architecture' (Protocol in workflow.md) [checkpoint: d202d26]
 
 ## Phase 3: Integration & Cleanup [checkpoint: ]
-- [ ] Task: Wire Actions to Session Data.
-    - [ ] Update "Run Gemini Analysis" to process `st.session_state['review_data']`.
-    - [ ] Update "Export CSV" to export `st.session_state['review_data']`.
-- [ ] Task: Deployment Prep.
-    - [ ] Ensure `Dockerfile` supports running the app (unchanged).
-    - [ ] Document the command for creating the Cloud Run Job: `gcloud run jobs create ... --command "python -m app.cron.fetch_weekly"`.
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Integration & Cleanup' (Protocol in workflow.md)
+- [x] Task: Wire Actions to Session Data.
+    - [x] Update "Run Gemini Analysis" to process `st.session_state['review_data']`.
+    - [x] Update "Export CSV" to export `st.session_state['review_data']`.
+- [x] Task: Deployment Prep.
+    - [x] Ensure `Dockerfile` supports running the app (unchanged).
+    - [x] Document the command for creating the Cloud Run Job: `gcloud run jobs create ... --command "python -m app.cron.fetch_weekly"`.
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Integration & Cleanup' (Protocol in workflow.md) [checkpoint: ]
 
 ## Phase 4: Final Verification [checkpoint: ]
 - [ ] Task: Run full test suite.
