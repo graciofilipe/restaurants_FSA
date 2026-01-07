@@ -1,6 +1,6 @@
 import os
 import sys
-from app.agent.maps_agent import create_restaurant_agent
+from app.agent.maps_agent import root_agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 
@@ -9,11 +9,8 @@ def main():
     location = "us-central1"
     
     print(f"Initializing Agent for project {project_id}...")
-    try:
-        agent = create_restaurant_agent(project_id=project_id, location=location)
-    except Exception as e:
-        print(f"Failed to create agent: {e}")
-        return
+    # root_agent is already instantiated in maps_agent.py
+    agent = root_agent
 
     session_service = InMemorySessionService()
     runner = Runner(agent=agent, session_service=session_service)
