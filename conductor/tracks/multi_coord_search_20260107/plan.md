@@ -11,14 +11,14 @@
     - [x] Test: Run the script with a sample list (mocked or dry-run) and verify data structure.
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Database & Configuration' (Protocol in workflow.md) [checkpoint: 3bfa77a]
 
-## Phase 2: Backend Logic Update [checkpoint: ]
-- [ ] Task: Refactor `fetch_weekly.py` for Multi-Row Processing.
-    - [ ] Create/Update `app/cron/test_fetch_weekly.py` to mock `fetch_config_params` returning multiple rows.
-    - [ ] Implement loop in `app/cron/fetch_weekly.py` to iterate through all config rows.
-    - [ ] Implement "Continue on Error" logic (try/except block inside the loop).
-    - [ ] Ensure `process_and_update_master_data` is called for each valid coordinate pair.
-    - [ ] Test: Verify logic handles multiple rows and continues after a simulated error in one.
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Backend Logic Update' (Protocol in workflow.md)
+## Phase 2: Backend Logic Update [checkpoint: 3466dbc]
+- [x] Task: Refactor `fetch_weekly.py` for Multi-Row Processing.
+    - [x] Create/Update `app/cron/test_fetch_weekly.py` to mock `fetch_config_params` returning multiple rows.
+    - [x] Implement loop in `app/cron/fetch_weekly.py` to iterate through all config rows.
+    - [x] Implement "Continue on Error" logic (try/except block inside the loop).
+    - [x] Ensure `process_and_update_master_data` is called for each valid coordinate pair.
+    - [x] Test: Verify logic handles multiple rows and continues after a simulated error in one.
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Backend Logic Update' (Protocol in workflow.md) [checkpoint: 3466dbc]
 
 ## Phase 3: Deployment & Verification [checkpoint: ]
 - [ ] Task: Deployment Prep.
