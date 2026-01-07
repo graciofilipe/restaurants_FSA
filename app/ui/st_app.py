@@ -54,6 +54,12 @@ def main_ui():
             # Ideally use @st.cache_data for this function in a real app.
             # For now, I'll put it inside a check to verify connection/existence if possible, or just try/except inside get_distinct...
             
+            if st.button("Refresh Authorities"):
+                st.session_state.pop('la_options', None)
+                with st.spinner("Refreshing Local Authorities..."):
+                    st.session_state.la_options = get_distinct_local_authorities(project_id, dataset_id, table_id)
+                    st.success(f"Refreshed list. Found {len(st.session_state.la_options)} authorities.")
+
             # Using session state to avoid re-fetching on every interaction
             if 'la_options' not in st.session_state:
                  with st.spinner("Loading Local Authorities..."):
