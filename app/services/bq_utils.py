@@ -481,6 +481,8 @@ def get_distinct_local_authorities(project_id: str, dataset_id: str, table_id: s
     try:
         df = pandas_gbq.read_gbq(query, project_id=project_id)
         if df is not None and not df.empty:
+            count = len(df)
+            logger.info(f"Fetched {count} distinct Local Authorities from {table_ref}.")
             return df['localauthorityname'].tolist()
         return []
     except Exception as e:
