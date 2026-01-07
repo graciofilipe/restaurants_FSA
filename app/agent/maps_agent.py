@@ -1,31 +1,15 @@
-from google import genai
-from google.genai import types
-import os
+from google.adk.agents import LlmAgent
+from google.adk.tools import google_maps_grounding
 
-class RestaurantAgent:
-    """An agent that answers questions about restaurants using Google Maps Grounding."""
+def create_restaurant_agent(project_id: str, location: str = "us-central1", model_name: str = "gemini-2.0-flash-exp") -> LlmAgent:
+    """Creates a Restaurant Agent using Google ADK."""
     
-    def __init__(self, project_id: str, location: str = "us-central1", model_name: str = "gemini-2.0-flash-exp"):
-        self.project_id = project_id
-        self.location = location
-        self.model_name = model_name
-        self.client = genai.Client(vertexai=True, project=project_id, location=location)
-
-    def query(self, prompt: str) -> str:
-        """
-        Queries the agent with a prompt.
-        
-        Args:
-            prompt: The user's question.
-            
-        Returns:
-            The agent's response text.
-        """
-        response = self.client.models.generate_content(
-            model=self.model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_maps=types.GoogleMaps())],
-            )
-        )
-        return response.text
+    agent = LlmAgent(
+        name="restaurant_maps_agent",
+        model=model_name,
+        instruction="You are a helpful assistant that answers questions about restaurants. "
+                    "You have access to Google Maps to find real-world location information. "
+                    "Always use the Google Maps tool to verify addresses and details.",
+        tools=[google_maps_grounding]
+    )
+    return agent
