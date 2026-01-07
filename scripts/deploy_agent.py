@@ -160,7 +160,8 @@ def deploy_agent(agent_dir: str, display_name: str, target_id: str = None):
         "--region", LOCATION,
         "--staging_bucket", STAGING_BUCKET,
         "--trace_to_cloud",
-        "--adk_app_object", "app"
+        "--adk_app_object", "app",
+        "--adk_app", "agent_engine_app"
     ]
     
     if target_id:
