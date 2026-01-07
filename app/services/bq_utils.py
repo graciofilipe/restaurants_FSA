@@ -354,6 +354,10 @@ def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table
         df_subset[new_rating_pending_col] = df_subset[new_rating_pending_col].astype(str).str.lower().map(mapping)
         df_subset[new_rating_pending_col] = df_subset[new_rating_pending_col].astype('boolean')
 
+    if 'first_seen' in df_subset.columns:
+        # Convert to datetime then date object for BQ compatibility
+        df_subset['first_seen'] = pd.to_datetime(df_subset['first_seen'], errors='coerce').dt.date
+
     fhrsid_col_name = 'fhrsid'
     if fhrsid_col_name in df_subset.columns:
         fhrsid_bq_type = None

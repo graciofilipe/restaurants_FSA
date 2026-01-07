@@ -48,7 +48,8 @@ def get_config_params() -> List[dict]:
 
 def run_sync_for_config(config: dict):
     """Runs synchronization for a single configuration row."""
-    coords_str = config.get('coordinates')
+    lat = config.get('latitude')
+    lon = config.get('longitude')
     max_results = config.get('max_results')
     target_bq_path = config.get('target_bq_table')
     
@@ -60,12 +61,16 @@ def run_sync_for_config(config: dict):
         logger.error(f"Invalid target BQ path: {target_bq_path}. Error: {e}")
         return
 
-    # 1. Parse Coordinates
-    valid_coords, errors = parse_coordinates(coords_str)
-    if errors:
-        logger.warning(f"Coordinate parsing errors: {errors}")
-    if not valid_coords:
-        logger.error("No valid coordinates found. Skipping.")
+    # 1. Parse/Validate Coordinates
+    if lat is None or lon is None:
+        logger.error(f"Missing latitude or longitude in config: {config}")
+        return
+
+    try:
+        # fetch_data_for_all_coordinates expects (lon, lat)
+        valid_coords = [(float(lon), float(lat))]
+    except ValueError as e:
+        logger.error(f"Invalid coordinate values: lat={lat}, lon={lon}. Error: {e}")
         return
 
     # 2. Fetch API Data
@@ -98,6 +103,9 @@ def run_sync_for_config(config: dict):
     logger.info(f"Appending {len(new_restaurants)} new records to BigQuery...")
     df_new = pd.DataFrame(new_restaurants)
     
+    # Normalize columns to lowercase to match BQ schema
+    df_new.columns = [c.lower() for c in df_new.columns]
+    
     # Ensure columns match schema
     success = append_to_bigquery(
         df=df_new,
@@ -121,7 +129,11 @@ def main():
             return
 
         for config in configs:
-            run_sync_for_config(config)
+            try:
+                run_sync_for_config(config)
+            except Exception as e:
+                logger.error(f"Error processing config {config}: {e}")
+                continue
             
     except Exception as e:
         logger.exception(f"Fatal error in fetch_weekly job: {e}")
