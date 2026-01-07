@@ -10,8 +10,8 @@
 - [x] Task: Implement Reasoning Engine Agent 664c6ce
     - [x] Sub-task: Create `app/agent/maps_agent.py` using `google-genai` SDK and Maps Tool.
     - [x] Sub-task: Verify local execution of the Agent.
-- [ ] Task: Deploy Agent to Vertex AI (Skipped for Prototype - Local Execution Sufficient)
-    - [ ] Sub-task: Use `reasoning_engines.ReasoningEngine.create` if deployment is desired, or skip if local test is sufficient.
+- [x] Task: Deploy Agent to Vertex AI (Initiated)
+    - [x] Sub-task: Use `reasoning_engines.ReasoningEngine.create` if deployment is desired, or skip if local test is sufficient.
 - [ ] Task: Conductor - User Manual Verification 'Agent Configuration & Setup' (Protocol in workflow.md)
 
 ## Phase 3: CLI Prototype Development
@@ -26,6 +26,6 @@
 - [x] Task: Manual Verification
     - [x] Sub-task: Run the script and ask about a specific restaurant location.
     - [x] Sub-task: Verify the answer against real Google Maps data manually.
-- [x] Task: Documentation
+- [x] Task: Documentation 8a4c63d
     - [x] Sub-task: Update `README.md` (or a specific doc in `conductor/`) with instructions on how to run this prototype.
 - [ ] Task: Conductor - User Manual Verification 'Verification & Documentation' (Protocol in workflow.md)
