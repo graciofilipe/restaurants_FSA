@@ -6,11 +6,12 @@
     - [x] Sub-task: Install dependencies to the local `.venv`.
 - [x] Task: Conductor - User Manual Verification 'Environment & Dependencies' (Protocol in workflow.md) [checkpoint: aaaf11d]
 
-## Phase 2: Agent Configuration & Setup
-- [ ] Task: Configure Vertex AI Agent
-    - [ ] Sub-task: Use `gcloud` or Python SDK to create/configure the Agent in the project `filipegracio-ai-learning`.
-    - [ ] Sub-task: Enable Google Maps Grounding for the agent.
-    - [ ] Sub-task: Verify API enablement (Vertex AI API).
+## Phase 2: Agent Implementation & Deployment
+- [x] Task: Implement Reasoning Engine Agent dab94f9
+    - [x] Sub-task: Create `app/agent/maps_agent.py` using `google-genai` SDK and Maps Tool.
+    - [x] Sub-task: Verify local execution of the Agent.
+- [ ] Task: Deploy Agent to Vertex AI (Skipped for Prototype - Local Execution Sufficient)
+    - [ ] Sub-task: Use `reasoning_engines.ReasoningEngine.create` if deployment is desired, or skip if local test is sufficient.
 - [ ] Task: Conductor - User Manual Verification 'Agent Configuration & Setup' (Protocol in workflow.md)
 
 ## Phase 3: CLI Prototype Development
