@@ -42,3 +42,18 @@ If deploying to Cloud Run (or any other host), you must add your domain to the *
 2.  Add your application's domain (e.g., `your-service-xyz.run.app`).
 
 *Note: If you skip this, users will see a "Configuration Error" regarding unauthorized domains when trying to log in.*
+
+## AI Agent Prototype (Maps Grounding)
+
+A prototype AI Agent capable of answering questions about restaurants using Google Maps Grounding is available.
+
+### Usage
+To interact with the agent via CLI:
+```bash
+python scripts/prototype_maps_agent.py
+```
+
+### Requirements
+- Google Cloud Project with Vertex AI API enabled.
+- Google Maps Grounding enabled in the project/agent configuration.
+- `google-adk` installed.
