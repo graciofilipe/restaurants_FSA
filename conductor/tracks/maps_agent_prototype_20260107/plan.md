@@ -4,7 +4,7 @@
 - [x] Task: Check and Update `requirements.txt` 04f01c5
     - [x] Sub-task: Verify if `google-cloud-aiplatform` is present; add if missing.
     - [x] Sub-task: Install dependencies to the local `.venv`.
-- [ ] Task: Conductor - User Manual Verification 'Environment & Dependencies' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Environment & Dependencies' (Protocol in workflow.md) [checkpoint: aaaf11d]
 
 ## Phase 2: Agent Configuration & Setup
 - [ ] Task: Configure Vertex AI Agent
