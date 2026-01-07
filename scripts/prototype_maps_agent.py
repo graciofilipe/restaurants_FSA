@@ -1,6 +1,6 @@
 import os
 import sys
-from app.agent.maps_agent import root_agent
+from app.agent.agent import root_agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 

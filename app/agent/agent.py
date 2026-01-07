@@ -15,7 +15,7 @@ AGENT_INSTRUCTION = (
 # Define the Agent
 root_agent = Agent(
     name="restaurant_maps_agent",
-    model="gemini-2.0-flash-exp",
+    model="gemini-2.5-flash",
     instruction=AGENT_INSTRUCTION,
     tools=[google_maps]
 )
