@@ -1,10 +1,10 @@
 # Plan: Agent Insights Generation
 
-## Phase 1: Infrastructure & Data Access (BigQuery)
+## Phase 1: Infrastructure & Data Access (BigQuery) [checkpoint: 2fa90b5]
 - [x] Task: Create BigQuery table `restaurant_agent_insights` with the specified schema.
 - [x] Task: Implement `upsert_agent_insight` function in `app/services/bq_utils.py` to handle data persistence.
 - [x] Task: Write unit tests for `upsert_agent_insight` ensuring correct upsert logic and data types.
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Infrastructure & Data Access (BigQuery)' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Infrastructure & Data Access (BigQuery)' (Protocol in workflow.md)
 
 ## Phase 2: Agent Logic & Data Processing
 - [ ] Task: Update or create a service to orchestrate calls to the Maps agent for a list of restaurants.
