@@ -503,3 +503,59 @@ MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('manual_review', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('gemini_insights', 'STRING', mode='NULLABLE'),
 ]
+
+def upsert_agent_insight(project_id: str, dataset_id: str, table_id: str, insight_data: Dict[str, Any]) -> bool:
+    """
+    Upserts agent insights into the specified BigQuery table.
+    """
+    if not insight_data or 'fhrsid' not in insight_data:
+        logger.error("Invalid insight data provided for upsert.")
+        return False
+        
+    client = bigquery.Client(project=project_id)
+    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+    
+    # Construct MERGE query
+    query = f"""
+    MERGE `{table_ref_str}` T
+    USING (
+        SELECT 
+            @fhrsid as fhrsid,
+            @raw_insight as raw_insight,
+            @cuisine_type as cuisine_type,
+            @review_count as review_count,
+            @average_rating as average_rating,
+            @updated_at as updated_at
+    ) S
+    ON T.fhrsid = S.fhrsid
+    WHEN MATCHED THEN
+      UPDATE SET 
+        raw_insight = S.raw_insight,
+        cuisine_type = S.cuisine_type,
+        review_count = S.review_count,
+        average_rating = S.average_rating,
+        updated_at = S.updated_at
+    WHEN NOT MATCHED THEN
+      INSERT (fhrsid, raw_insight, cuisine_type, review_count, average_rating, updated_at)
+      VALUES (S.fhrsid, S.raw_insight, S.cuisine_type, S.review_count, S.average_rating, S.updated_at)
+    """
+    
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("fhrsid", "STRING", str(insight_data.get("fhrsid"))),
+            bigquery.ScalarQueryParameter("raw_insight", "STRING", insight_data.get("raw_insight")),
+            bigquery.ScalarQueryParameter("cuisine_type", "STRING", insight_data.get("cuisine_type")),
+            bigquery.ScalarQueryParameter("review_count", "INT64", insight_data.get("review_count")),
+            bigquery.ScalarQueryParameter("average_rating", "FLOAT64", insight_data.get("average_rating")),
+            bigquery.ScalarQueryParameter("updated_at", "TIMESTAMP", insight_data.get("updated_at")),
+        ]
+    )
+
+    try:
+        query_job = client.query(query, job_config=job_config)
+        query_job.result()
+        logger.info(f"Successfully upserted agent insight for FHRSID {insight_data.get('fhrsid')}.")
+        return True
+    except Exception as e:
+        logger.error(f"Error upserting agent insight: {e}")
+        return False
