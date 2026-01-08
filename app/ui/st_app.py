@@ -26,7 +26,8 @@ def display_data(data_to_display: List[Dict[str, Any]]):
         df,
         on_select="rerun",
         selection_mode="multi-row",
-        use_container_width=True
+        use_container_width=True,
+        key="review_queue_table"
     )
     return event
 
@@ -95,11 +96,20 @@ def main_ui():
         selection_event = display_data(st.session_state.review_data)
         
         selected_rows = []
-        if selection_event and "rows" in selection_event:
-            selected_indices = selection_event.rows
+        if selection_event:
+            # Check for "rows" key (dictionary access)
+            try:
+                selected_indices = selection_event.get("rows", [])
+            except AttributeError:
+                # Fallback if it's an object
+                selected_indices = getattr(selection_event, "rows", [])
+            
             if selected_indices:
                 df = pd.DataFrame(st.session_state.review_data)
-                selected_rows = df.iloc[selected_indices].to_dict('records')
+                # Ensure indices are valid and convert to python ints if needed
+                valid_indices = [int(i) for i in selected_indices if i < len(df)]
+                if valid_indices:
+                    selected_rows = df.iloc[valid_indices].to_dict('records')
         
         st.divider()
         c1, c2 = st.columns(2)
