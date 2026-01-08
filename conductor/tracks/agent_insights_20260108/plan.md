@@ -13,12 +13,12 @@
 - [x] Task: Write unit tests for the agent orchestration service, mocking the Maps agent API.
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Agent Logic & Data Processing' (Protocol in workflow.md)
 
-## Phase 3: UI Enhancement (Streamlit)
+## Phase 3: UI Enhancement (Streamlit) [checkpoint: 91e0126]
 - [x] Task: Modify the main results table in `app/ui/st_app.py` to enable row selection via checkboxes.
 - [x] Task: Implement the "Generate Agent Insights" button and its associated callback/logic.
 - [x] Task: Integrate the progress bar and success/error notifications during the agent processing loop.
 - [x] Task: Write integration tests (or UI logic tests) to verify selection state and button behavior.
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: UI Enhancement (Streamlit)' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: UI Enhancement (Streamlit)' (Protocol in workflow.md)
 
 ## Phase 4: Deployment & Final Verification
 - [ ] Task: Verify all tests pass locally.
