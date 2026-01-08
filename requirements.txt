@@ -7,4 +7,4 @@ pytest
 db-dtypes
 google-genai
 google-cloud-aiplatform
-vertexaigoogle-adk
+google-adk
