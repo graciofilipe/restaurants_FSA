@@ -6,12 +6,12 @@
 - [x] Task: Write unit tests for `upsert_agent_insight` ensuring correct upsert logic and data types.
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Infrastructure & Data Access (BigQuery)' (Protocol in workflow.md)
 
-## Phase 2: Agent Logic & Data Processing
+## Phase 2: Agent Logic & Data Processing [checkpoint: 0b13a7b]
 - [x] Task: Update or create a service to orchestrate calls to the Maps agent for a list of restaurants.
 - [x] Task: Implement parsing logic to extract `cuisine_type`, `review_count`, and `average_rating` from the agent's raw text response.
 - [x] Task: Write unit tests for the parsing logic with various agent response scenarios (success, partial data, failure).
 - [x] Task: Write unit tests for the agent orchestration service, mocking the Maps agent API.
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Agent Logic & Data Processing' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Agent Logic & Data Processing' (Protocol in workflow.md)
 
 ## Phase 3: UI Enhancement (Streamlit)
 - [ ] Task: Modify the main results table in `app/ui/st_app.py` to enable row selection via checkboxes.
