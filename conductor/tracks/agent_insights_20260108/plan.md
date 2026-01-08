@@ -7,10 +7,10 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Infrastructure & Data Access (BigQuery)' (Protocol in workflow.md)
 
 ## Phase 2: Agent Logic & Data Processing
-- [ ] Task: Update or create a service to orchestrate calls to the Maps agent for a list of restaurants.
-- [ ] Task: Implement parsing logic to extract `cuisine_type`, `review_count`, and `average_rating` from the agent's raw text response.
-- [ ] Task: Write unit tests for the parsing logic with various agent response scenarios (success, partial data, failure).
-- [ ] Task: Write unit tests for the agent orchestration service, mocking the Maps agent API.
+- [x] Task: Update or create a service to orchestrate calls to the Maps agent for a list of restaurants.
+- [x] Task: Implement parsing logic to extract `cuisine_type`, `review_count`, and `average_rating` from the agent's raw text response.
+- [x] Task: Write unit tests for the parsing logic with various agent response scenarios (success, partial data, failure).
+- [x] Task: Write unit tests for the agent orchestration service, mocking the Maps agent API.
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Agent Logic & Data Processing' (Protocol in workflow.md)
 
 ## Phase 3: UI Enhancement (Streamlit)
