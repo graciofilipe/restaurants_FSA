@@ -1,24 +1,34 @@
 import streamlit as st
 import pandas as pd
 from typing import List, Dict, Any
+import datetime
 
 from app.services.bq_utils import (
     load_filtered_data_from_bq,
     execute_gemini_enrichment,
     bulk_update_reviews,
-    get_distinct_local_authorities
+    get_distinct_local_authorities,
+    upsert_agent_insight
 )
 from app.core.data_processing import (
     load_data_from_csv,
     parse_bq_path
 )
+from app.services.agent_orchestrator import get_agent_insight
 
 def display_data(data_to_display: List[Dict[str, Any]]):
     if not data_to_display:
         st.info("No data to display.")
-        return
+        return None
     df = pd.DataFrame(data_to_display)
-    st.dataframe(df)
+    # Using on_select to enable row selection
+    event = st.dataframe(
+        df,
+        on_select="rerun",
+        selection_mode="multi-row",
+        use_container_width=True
+    )
+    return event
 
 def main_ui():
     st.set_page_config(layout="wide", page_title="FSA Restaurant Reviewer")
@@ -47,25 +57,19 @@ def main_ui():
         selected_statuses = st.multiselect("Review Status", options=status_options, default=["not reviewed"])
         
         # Exclude Authorities
-        # Fetch dynamically if path is valid
         if bq_path:
-            # Check if we should fetch (maybe adding a button or just doing it if not too slow)
-            # st.spinner might flicker. Let's try to cache this or just load it.
-            # Ideally use @st.cache_data for this function in a real app.
-            # For now, I'll put it inside a check to verify connection/existence if possible, or just try/except inside get_distinct...
+            # Using session state to avoid re-fetching on every interaction
+            if 'la_options' not in st.session_state:
+                 with st.spinner("Loading Local Authorities..."):
+                    st.session_state.la_options = get_distinct_local_authorities(project_id, dataset_id, table_id)
             
             if st.button("Refresh Authorities"):
                 st.session_state.pop('la_options', None)
                 with st.spinner("Refreshing Local Authorities..."):
                     st.session_state.la_options = get_distinct_local_authorities(project_id, dataset_id, table_id)
                     st.success(f"Refreshed list. Found {len(st.session_state.la_options)} authorities.")
-
-            # Using session state to avoid re-fetching on every interaction
-            if 'la_options' not in st.session_state:
-                 with st.spinner("Loading Local Authorities..."):
-                    st.session_state.la_options = get_distinct_local_authorities(project_id, dataset_id, table_id)
             
-            la_options = st.session_state.la_options
+            la_options = st.session_state.la_options if 'la_options' in st.session_state else []
             excluded_las = st.multiselect("Exclude Local Authorities", options=la_options)
         else:
             excluded_las = []
@@ -87,28 +91,80 @@ def main_ui():
     # Main Area
     if st.session_state.review_data:
         st.subheader(f"Review Queue ({len(st.session_state.review_data)} records)")
-        display_data(st.session_state.review_data)
+        
+        selection_event = display_data(st.session_state.review_data)
+        
+        selected_rows = []
+        if selection_event and "rows" in selection_event:
+            selected_indices = selection_event.rows
+            if selected_indices:
+                df = pd.DataFrame(st.session_state.review_data)
+                selected_rows = df.iloc[selected_indices].to_dict('records')
         
         st.divider()
         c1, c2 = st.columns(2)
         
         with c1:
-            st.subheader("Gemini Analysis")
-            st.write("Run Gemini analysis on the filtered data matching the criteria above.")
-            connection_id = st.text_input("Connection ID", value="eu.gemini")
-            if st.button("Run Gemini Analysis"):
-                with st.spinner("Running Gemini Analysis... this may take a while."):
-                    success = execute_gemini_enrichment(
-                        project_id, dataset_id, table_id,
-                        connection_id=connection_id,
-                        days_recent=days_lookback,
-                        review_status_filter=selected_statuses,
-                        excluded_locations=excluded_las
-                    )
-                    if success:
-                        st.success("Analysis Complete! Reload data to see results.")
-                    else:
-                        st.error("Analysis Failed. Check logs.")
+            st.subheader("Analysis & Insights")
+            
+            tab_gemini, tab_agent = st.tabs(["Gemini Analysis (Batch)", "Agent Research (Selected)"])
+            
+            with tab_gemini:
+                st.write("Run Gemini analysis on ALL filtered data.")
+                connection_id = st.text_input("Connection ID", value="eu.gemini")
+                if st.button("Run Gemini Analysis"):
+                    with st.spinner("Running Gemini Analysis... this may take a while."):
+                        success = execute_gemini_enrichment(
+                            project_id, dataset_id, table_id,
+                            connection_id=connection_id,
+                            days_recent=days_lookback,
+                            review_status_filter=selected_statuses,
+                            excluded_locations=excluded_las
+                        )
+                        if success:
+                            st.success("Analysis Complete! Reload data to see results.")
+                        else:
+                            st.error("Analysis Failed. Check logs.")
+            
+            with tab_agent:
+                st.write("Generate deep insights for SELECTED restaurants using the Agent.")
+                if not selected_rows:
+                    st.info("Select rows in the table above to enable Agent Research.")
+                    st.button("Generate Agent Insights", disabled=True)
+                else:
+                    st.write(f"Selected {len(selected_rows)} restaurants.")
+                    if st.button("Generate Agent Insights"):
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        success_count = 0
+                        total = len(selected_rows)
+                        
+                        for i, restaurant in enumerate(selected_rows):
+                            business_name = restaurant.get('businessname', 'Unknown')
+                            status_text.text(f"Processing {i+1}/{total}: {business_name}")
+                            
+                            insight = get_agent_insight(restaurant)
+                            
+                            if insight:
+                                if 'updated_at' not in insight:
+                                    insight['updated_at'] = datetime.datetime.now().isoformat()
+                                
+                                upsert_success = upsert_agent_insight(project_id, dataset_id, "restaurant_agent_insights", insight)
+                                if upsert_success:
+                                    success_count += 1
+                                else:
+                                    st.error(f"Failed to save insight for {business_name}")
+                            else:
+                                st.error(f"Agent failed for {business_name}")
+                                
+                            progress_bar.progress((i + 1) / total)
+                            
+                        status_text.text(f"Completed! Successfully processed {success_count}/{total}.")
+                        if success_count == total:
+                            st.success("All insights generated and saved.")
+                        else:
+                            st.warning("Some insights failed.")
 
         with c2:
             st.subheader("Export Data")
