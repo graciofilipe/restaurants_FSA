@@ -3,20 +3,31 @@ import re
 import logging
 from typing import Dict, Any, Optional
 import pkg_resources
+import traceback
 from google.adk.runners import InMemoryRunner
 from app.maps_agent.agent import root_agent
 
+# Configure logger
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
-try:
-    adk_version = pkg_resources.get_distribution("google-adk").version
-    logger.info(f"DEBUG: google-adk version: {adk_version}")
-except Exception as e:
-    logger.info(f"DEBUG: Could not determine google-adk version: {e}")
+def log_system_info():
+    try:
+        logger.info("=== SYSTEM INFO START ===")
+        try:
+            adk_version = pkg_resources.get_distribution("google-adk").version
+            logger.info(f"google-adk version: {adk_version}")
+        except Exception as e:
+            logger.error(f"Could not determine google-adk version: {e}")
+        
+        logger.info(f"root_agent type: {type(root_agent)}")
+        logger.info(f"root_agent dir: {dir(root_agent)}")
+        logger.info("=== SYSTEM INFO END ===")
+    except Exception as e:
+        logger.error(f"Error logging system info: {e}")
 
-logger.info(f"DEBUG: root_agent type: {type(root_agent)}")
-logger.info(f"DEBUG: root_agent dir: {dir(root_agent)}")
-
+# Log info on module load
+log_system_info()
 
 def parse_agent_response(response_text: str) -> Dict[str, Any]:
     """
@@ -24,6 +35,7 @@ def parse_agent_response(response_text: str) -> Dict[str, Any]:
     Expected format: JSON or Markdown code block with JSON.
     Fields: cuisine_type (str), review_count (int), average_rating (float).
     """
+    logger.info(f"Parsing agent response (length: {len(response_text) if response_text else 0})")
     default_result = {
         "cuisine_type": None,
         "review_count": None,
@@ -31,10 +43,12 @@ def parse_agent_response(response_text: str) -> Dict[str, Any]:
     }
     
     if not response_text:
+        logger.warning("Agent response is empty.")
         return default_result
 
     try:
         clean_text = response_text.strip()
+        logger.debug(f"Raw response text: {clean_text}")
         
         # Remove markdown code blocks if strictly wrapping the json
         if clean_text.startswith("```"):
@@ -51,20 +65,22 @@ def parse_agent_response(response_text: str) -> Dict[str, Any]:
             json_str = json_match.group(0)
             data = json.loads(json_str)
             
-            return {
+            result = {
                 "cuisine_type": data.get("cuisine_type"),
                 "review_count": data.get("review_count"),
                 "average_rating": data.get("average_rating")
             }
+            logger.info(f"Successfully parsed data: {result}")
+            return result
         else:
-            logger.warning(f"No JSON found in agent response: {response_text[:100]}...")
+            logger.warning(f"No JSON found in agent response. First 100 chars: {response_text[:100]}...")
             return default_result
             
-    except json.JSONDecodeError:
-        logger.warning(f"Failed to decode JSON from agent response: {response_text[:100]}...")
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to decode JSON from agent response: {e}. First 100 chars: {response_text[:100]}...")
         return default_result
     except Exception as e:
-        logger.error(f"Error parsing agent response: {e}")
+        logger.error(f"Error parsing agent response: {e}", exc_info=True)
         return default_result
 
 def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -72,6 +88,8 @@ def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     Calls the agent to get insights for a single restaurant.
     """
     business_name = restaurant.get("businessname")
+    logger.info(f"Starting get_agent_insight for: {business_name}")
+    
     address = f"{restaurant.get('addressline1', '')}, {restaurant.get('postcode', '')}"
     
     prompt = (
@@ -85,15 +103,22 @@ def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     )
     
     try:
+        logger.info("Initializing InMemoryRunner...")
         runner = InMemoryRunner(agent=root_agent)
+        logger.info(f"InMemoryRunner initialized: {type(runner)}")
+        
         # Use fhrsid as session_id to maintain distinct sessions per restaurant if needed, 
         # though we recreate runner each time here.
         session_id = f"session_{restaurant.get('fhrsid', 'unknown')}"
+        logger.info(f"Using session_id: {session_id}")
         
+        logger.info("Calling runner.run()...")
         events = runner.run(user_id="system", session_id=session_id, new_message=prompt)
+        logger.info(f"runner.run() returned. Events type: {type(events)}")
         
         raw_text = ""
-        for event in events:
+        for i, event in enumerate(events):
+            logger.debug(f"Processing event {i}: {type(event)}")
             # Check if event has content and parts (based on ADK structure)
             if hasattr(event, 'content') and event.content and hasattr(event.content, 'parts'):
                 for part in event.content.parts:
@@ -104,6 +129,7 @@ def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
              logger.warning(f"Agent returned no text for {business_name}")
              return None
 
+        logger.info(f"Agent returned text (length {len(raw_text)})")
         parsed = parse_agent_response(raw_text)
         parsed["raw_insight"] = raw_text
         parsed["fhrsid"] = restaurant.get("fhrsid")
@@ -112,4 +138,5 @@ def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         
     except Exception as e:
         logger.error(f"Error calling agent for {business_name}: {e}")
+        logger.error(traceback.format_exc())
         return None
