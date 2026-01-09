@@ -3,9 +3,8 @@ import re
 import logging
 from typing import Dict, Any, Optional
 import traceback
-import requests
-import google.auth
-import google.auth.transport.requests
+import vertexai
+from vertexai import Client
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -64,16 +63,9 @@ def parse_agent_response(response_text: str) -> Dict[str, Any]:
         logger.error(f"Error parsing agent response: {e}", exc_info=True)
         return default_result
 
-def get_auth_token():
-    """Retrieves Google auth token."""
-    credentials, project = google.auth.default()
-    auth_request = google.auth.transport.requests.Request()
-    credentials.refresh(auth_request)
-    return credentials.token
-
 def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Calls the remote Vertex AI Agent to get insights for a single restaurant using direct REST API.
+    Calls the remote Vertex AI Agent to get insights for a single restaurant using the cloud-native Client SDK.
     """
     business_name = restaurant.get("businessname")
     logger.info(f"Starting get_agent_insight for: {business_name}")
@@ -91,80 +83,39 @@ def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     )
     
     try:
-        token = get_auth_token()
-        url = f"https://{LOCATION}-aiplatform.googleapis.com/v1/{AGENT_RESOURCE_ID}:streamQuery"
+        logger.info(f"Initializing Vertex AI Client (Project: {PROJECT_ID}, Location: {LOCATION})...")
+        # Ensure we are initialized for overall vertexai
+        vertexai.init(project=PROJECT_ID, location=LOCATION)
         
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
+        # Use the newer Client interface
+        client = Client(project=PROJECT_ID, location=LOCATION)
         
-        # Payload for ADK Agent
-        # Note: user_id might be required by some agents/tools
-        payload = {
-            "input": {
-                "message": {
-                    "role": "user",
-                    "parts": [{"text": prompt}]
-                },
-                "user_id": "fsa_reviewer_app" 
-            }
-        }
+        logger.info(f"Fetching Agent Engine: {AGENT_RESOURCE_ID}...")
+        agent = client.agent_engines.get(name=AGENT_RESOURCE_ID)
         
-        logger.info(f"Sending request to {url}")
-        response = requests.post(url, headers=headers, json=payload, stream=True, timeout=60)
+        logger.info("Calling stream_query...")
+        # For ADK agents, we use the message parameter. 
+        # A user_id is recommended for ADK agents.
+        response_stream = agent.stream_query(
+            message=prompt,
+            user_id="fsa_reviewer_app"
+        )
         
-        if response.status_code != 200:
-            logger.error(f"Agent API Error: {response.status_code} - {response.text}")
-            return None
-            
         full_response_text = ""
         
-        logger.info("Processing stream...")
-        # requests.iter_lines() handles decoding.
-        
-        for line in response.iter_lines():
-            if line:
-                decoded_line = line.decode('utf-8').strip()
-                # logger.info(f"Stream line: {decoded_line}") 
-                
-                chunk = None
-                if decoded_line.startswith("data: "):
-                    json_str = decoded_line[6:]
-                    if json_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(json_str)
-                    except Exception:
-                        pass
-                else:
-                    # Try parsing the line directly as JSON
-                    try:
-                        chunk = json.loads(decoded_line)
-                    except Exception:
-                        pass
-                
-                if chunk:
-                    # logger.info(f"Chunk received: {json.dumps(chunk)}")
-                    
-                    # Heuristic extraction
-                    if "output" in chunk:
-                        output = chunk["output"]
-                        if isinstance(output, str):
-                            full_response_text += output
-                        elif isinstance(output, dict):
-                            if "stringValue" in output:
-                                full_response_text += output["stringValue"]
-                            elif "string_value" in output: # snake_case check
-                                full_response_text += output["string_value"]
-                    
-                    # Check for content/parts (Reasoning Engine / GenAI structure)
-                    if "content" in chunk:
-                        content = chunk["content"]
-                        if isinstance(content, dict) and "parts" in content:
-                            for part in content["parts"]:
-                                if "text" in part:
-                                    full_response_text += part["text"]
+        # Process the stream
+        for chunk in response_stream:
+            # Chunk is typically a dictionary containing 'content'
+            if isinstance(chunk, dict) and "content" in chunk:
+                content = chunk["content"]
+                if "parts" in content:
+                    for part in content["parts"]:
+                        if "text" in part:
+                            full_response_text += part["text"]
+            elif hasattr(chunk, 'text'): # Fallback for object-like chunk
+                full_response_text += chunk.text
+            elif isinstance(chunk, str): # Fallback for plain string chunk
+                full_response_text += chunk
 
         logger.info(f"Accumulated response length: {len(full_response_text)}")
         logger.info(f"Raw response (first 100 chars): {full_response_text[:100]}")

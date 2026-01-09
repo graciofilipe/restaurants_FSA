@@ -44,44 +44,31 @@ def test_parse_agent_response_invalid_json():
     }
     assert parse_agent_response(response_text) == expected
 
-@patch('app.services.agent_orchestrator.get_auth_token')
-@patch('app.services.agent_orchestrator.requests.post')
-def test_get_agent_insight_success(mock_post, mock_get_token):
-    mock_get_token.return_value = "fake_token"
+@patch('app.services.agent_orchestrator.Client')
+def test_get_agent_insight_success(mock_client_cls):
+    # Setup mock client and agent
+    mock_client = mock_client_cls.return_value
+    mock_agent = MagicMock()
+    mock_client.agent_engines.get.return_value = mock_agent
     
-    # Mock response to return SSE data
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    
-    # Create SSE stream data mimicking Vertex AI streamQuery output
+    # Mock stream_query response
     inner_json = json.dumps({
         "cuisine_type": "Italian",
         "review_count": 100,
         "average_rating": 4.5
     })
     
-    chunk_obj = {
-        "output": {
-            "stringValue": inner_json
+    # SDK returns chunks as dicts
+    mock_chunk = {
+        "content": {
+            "parts": [{"text": inner_json}]
         }
     }
-    chunk_content = json.dumps(chunk_obj)
-    
-    # iter_lines should yield bytes
-    mock_response.iter_lines.return_value = [
-        f"data: {chunk_content}".encode('utf-8'),
-        b"",
-        b"data: [DONE]"
-    ]
-    
-    mock_post.return_value = mock_response
+    mock_agent.stream_query.return_value = [mock_chunk]
 
     restaurant = {"businessname": "Test Place", "addressline1": "123 Street", "postcode": "ABC", "fhrsid": "123"}
 
     result = get_agent_insight(restaurant)
-    
-    # Our mocked response returns the JSON inside stringValue. 
-    # parse_agent_response should handle it.
     
     assert result is not None
     assert result["cuisine_type"] == "Italian"
@@ -89,22 +76,21 @@ def test_get_agent_insight_success(mock_post, mock_get_token):
     assert result["average_rating"] == 4.5
     
     # Verify calls
-    mock_post.assert_called_once()
-    args, kwargs = mock_post.call_args
-    assert "streamQuery" in args[0]
-    assert kwargs['json']['input']['message']['parts'][0]['text']
+    mock_client_cls.assert_called_once()
+    mock_client.agent_engines.get.assert_called_once()
+    mock_agent.stream_query.assert_called_once()
+    args, kwargs = mock_agent.stream_query.call_args
+    assert "Test Place" in kwargs['message']
+    assert kwargs['user_id'] == "fsa_reviewer_app"
 
-@patch('app.services.agent_orchestrator.get_auth_token')
-@patch('app.services.agent_orchestrator.requests.post')
-def test_get_agent_insight_failure(mock_post, mock_get_token):
-    mock_get_token.return_value = "fake_token"
+@patch('app.services.agent_orchestrator.Client')
+def test_get_agent_insight_failure(mock_client_cls):
+    mock_client = mock_client_cls.return_value
+    mock_agent = MagicMock()
+    mock_client.agent_engines.get.return_value = mock_agent
     
-    # Mock response failure
-    mock_response = MagicMock()
-    mock_response.status_code = 500
-    mock_response.text = "Internal Server Error"
-    
-    mock_post.return_value = mock_response
+    # Mock exception in stream_query
+    mock_agent.stream_query.side_effect = Exception("Agent Error")
     
     restaurant = {"businessname": "Test Place", "fhrsid": "123"}
     result = get_agent_insight(restaurant)
