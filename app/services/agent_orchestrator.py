@@ -2,9 +2,21 @@ import json
 import re
 import logging
 from typing import Dict, Any, Optional
+import pkg_resources
+from google.adk.runners import InMemoryRunner
 from app.maps_agent.agent import root_agent
 
 logger = logging.getLogger(__name__)
+
+try:
+    adk_version = pkg_resources.get_distribution("google-adk").version
+    logger.info(f"DEBUG: google-adk version: {adk_version}")
+except Exception as e:
+    logger.info(f"DEBUG: Could not determine google-adk version: {e}")
+
+logger.info(f"DEBUG: root_agent type: {type(root_agent)}")
+logger.info(f"DEBUG: root_agent dir: {dir(root_agent)}")
+
 
 def parse_agent_response(response_text: str) -> Dict[str, Any]:
     """
@@ -73,9 +85,25 @@ def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     )
     
     try:
-        response = root_agent.chat(prompt)
-        raw_text = response.text
+        runner = InMemoryRunner(agent=root_agent)
+        # Use fhrsid as session_id to maintain distinct sessions per restaurant if needed, 
+        # though we recreate runner each time here.
+        session_id = f"session_{restaurant.get('fhrsid', 'unknown')}"
         
+        events = runner.run(user_id="system", session_id=session_id, new_message=prompt)
+        
+        raw_text = ""
+        for event in events:
+            # Check if event has content and parts (based on ADK structure)
+            if hasattr(event, 'content') and event.content and hasattr(event.content, 'parts'):
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        raw_text += part.text
+        
+        if not raw_text:
+             logger.warning(f"Agent returned no text for {business_name}")
+             return None
+
         parsed = parse_agent_response(raw_text)
         parsed["raw_insight"] = raw_text
         parsed["fhrsid"] = restaurant.get("fhrsid")
