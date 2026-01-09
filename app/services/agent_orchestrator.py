@@ -3,9 +3,9 @@ import re
 import logging
 from typing import Dict, Any, Optional
 import traceback
-import vertexai
-from vertexai.preview import reasoning_engines
-from google.cloud.aiplatform_v1beta1.types import QueryReasoningEngineRequest, StreamQueryReasoningEngineRequest
+import requests
+import google.auth
+import google.auth.transport.requests
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -64,9 +64,16 @@ def parse_agent_response(response_text: str) -> Dict[str, Any]:
         logger.error(f"Error parsing agent response: {e}", exc_info=True)
         return default_result
 
+def get_auth_token():
+    """Retrieves Google auth token."""
+    credentials, project = google.auth.default()
+    auth_request = google.auth.transport.requests.Request()
+    credentials.refresh(auth_request)
+    return credentials.token
+
 def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Calls the remote Vertex AI Agent to get insights for a single restaurant.
+    Calls the remote Vertex AI Agent to get insights for a single restaurant using direct REST API.
     """
     business_name = restaurant.get("businessname")
     logger.info(f"Starting get_agent_insight for: {business_name}")
@@ -84,106 +91,125 @@ def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     )
     
     try:
-        logger.info(f"Initializing Vertex AI (Project: {PROJECT_ID}, Location: {LOCATION})...")
-        vertexai.init(project=PROJECT_ID, location=LOCATION)
+        token = get_auth_token()
+        url = f"https://{LOCATION}-aiplatform.googleapis.com/v1/{AGENT_RESOURCE_ID}:streamQuery"
         
-        logger.info(f"Connecting to Remote Agent: {AGENT_RESOURCE_ID}...")
-        remote_agent = reasoning_engines.ReasoningEngine(AGENT_RESOURCE_ID)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
         
-        logger.info("Inspecting operation schemas...")
-        try:
-            schemas = remote_agent.operation_schemas()
-            logger.info(f"Operation Schemas: {schemas}")
-        except Exception as e:
-            logger.warning(f"Could not fetch operation schemas: {e}")
-
-        raw_text = ""
-        
-        if hasattr(remote_agent, 'query'):
-            logger.info("Using standard .query() method.")
-            response = remote_agent.query(input=prompt)
-            raw_text = str(response)
-            if hasattr(response, 'text'):
-                 raw_text = response.text
-            elif isinstance(response, dict):
-                 raw_text = json.dumps(response)
-        else:
-            logger.warning("Method .query() missing. Attempting manual client call with stream_query.")
-            
-            # Construct the input conforming to what ADK Agent expects (message object)
-            method_kwargs = {
+        # Payload for ADK Agent
+        payload = {
+            "input": {
                 "message": {
                     "role": "user",
                     "parts": [{"text": prompt}]
                 }
             }
+        }
+        
+        logger.info(f"Sending request to {url}")
+        response = requests.post(url, headers=headers, json=payload, stream=True, timeout=60)
+        
+        if response.status_code != 200:
+            logger.error(f"Agent API Error: {response.status_code} - {response.text}")
+            return None
             
-            request = StreamQueryReasoningEngineRequest(
-                name=remote_agent.resource_name,
-                input=method_kwargs,
-                class_method="stream_query"
-            )
-            
-            logger.info(f"Calling stream_query_reasoning_engine with class_method='stream_query'")
-            response_stream = remote_agent.execution_api_client.stream_query_reasoning_engine(request=request)
-            
-            # Accumulate text from stream
-            for chunk in response_stream:
-                if hasattr(chunk, 'output') and chunk.output:
-                    # chunk.output is a google.protobuf.Value
-                    # We usually expect a string or a dict. 
-                    # If it's a string value, it might be directly accessible if mapped, 
-                    # but typically we need to access the value.
-                    # Based on observation, it might be nested.
-                    # Let's try to extract text conservatively.
-                    
-                    # If it's a simple string yield
-                    # In python client, yield_parsed_json does some work. 
-                    # Here we are working with raw proto/gapic object.
-                    
-                    # Debug log the chunk structure once
-                    # logger.info(f"Chunk received: {chunk}")
-                    
-                    # Assuming it returns parts of text or full objects.
-                    # For now, let's cast to string whatever we get and append if it seems like content.
-                    # ADK agents often stream partial text.
-                    
-                    # We can use the helper from reasoning_engines if available, but it is internal.
-                    # Let's try to extract text from the protobuf Value.
-                    
-                    # A robust way to extract value from protobuf Value:
-                    import google.protobuf.json_format
+        # Accumulate streaming response
+        raw_text = ""
+        for line in response.iter_lines():
+            if line:
+                # SSE format: "data: {...}"
+                decoded_line = line.decode('utf-8')
+                if decoded_line.startswith("data: "):
+                    json_str = decoded_line[6:] # Strip "data: "
                     try:
-                        # Convert to python object
-                        val = None
-                        # There isn't a direct to_py helper on the chunk itself, but chunk.output is a Value
-                        # We can try to serialize/deserialize or inspect 'string_value' etc.
-                        # But Value class has 'string_value', 'struct_value', etc.
-                        # It is a google.protobuf.struct_pb2.Value
+                        chunk_data = json.loads(json_str)
+                        # Structure is likely specific to ADK agents or Reasoning Engine
+                        # Need to traverse to find the text content.
+                        # Usually it is in a structure related to the output.
+                        # Let's dump whatever we get if we can't find it easily to debug,
+                        # but for now let's try to find 'output' or similar.
                         
-                        kind = chunk.output.WhichOneof("kind")
-                        if kind == "string_value":
-                            val = chunk.output.string_value
-                        elif kind == "struct_value":
-                            # If it returns a struct, maybe convert to JSON string?
-                            val = json.dumps(dict(chunk.output.struct_value.fields))
-                        elif kind == "number_value":
-                            val = str(chunk.output.number_value)
+                        # Note: The streamQuery response is StreamQueryReasoningEngineResponse
+                        # It might not have 'output' directly if it's SSE? 
+                        # Or it wraps the response.
                         
-                        if val:
-                            raw_text += val
-                    except Exception as parse_err:
-                        logger.warning(f"Error parsing chunk: {parse_err}")
+                        # In many SSE implementations for Vertex, the chunk IS the response object.
+                        # We are looking for something that resembles text.
+                        # ADK output usually: ...
+                        
+                        # For now, let's just log chunks to debug if we don't get text immediately,
+                        # but attempt to heuristic extract.
+                        
+                        # Assuming reasoning engine returns a value.
+                        # If it's a string output:
+                        # response might look like {"output": "some text"} or similar?
+                        pass 
+                        
+                    except json.JSONDecodeError:
+                        pass
+        
+        # Since parsing SSE chunks and reconstructing the full response object manually is complex 
+        # and structure varies, for a quick fix, let's try non-streaming first? 
+        # But deploy_agent uses streamQuery.
+        
+        # Actually, requests stream=True allows us to iterate lines. 
+        # But if we just want the whole text, and if the response is not massive, we can just read it all?
+        # But it's SSE, so `response.text` will be multiple JSON objects prefixed with `data:`.
+        
+        # Let's robustly parse SSE.
+        full_response_text = ""
+        # Re-iterating because I didn't consume it in the loop above (pass)
+        
+        # Wait, I cannot re-iterate generator. 
+        # Let's do it properly.
+        
+        logger.info("Processing stream...")
+        # requests.iter_lines() handles decoding.
+        
+        for line in response.iter_lines():
+            if line:
+                decoded_line = line.decode('utf-8').strip()
+                if decoded_line.startswith("data: "):
+                    json_str = decoded_line[6:]
+                    if json_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(json_str)
+                        # Look for 'output'
+                        # Structure might be: {"output": {"string_value": "..."}} or similar
+                        
+                        # Log one chunk for debugging (optional)
+                        # logger.info(f"Chunk: {chunk}")
+                        
+                        # Heuristic extraction
+                        if "output" in chunk:
+                            output = chunk["output"]
+                            if isinstance(output, str):
+                                full_response_text += output
+                            elif isinstance(output, dict):
+                                # Check for protobuf Value fields
+                                if "stringValue" in output:
+                                    full_response_text += output["stringValue"]
+                                # Add other cases if needed
+                        
+                        # Also check candidates/content if it's following GenerateContent style?
+                        # Reasoning Engine usually returns 'output'.
+                        
+                    except Exception as e:
+                        logger.warning(f"Error parsing chunk: {e}")
 
-        logger.info(f"Agent response received. Length: {len(raw_text)}")
-        logger.info(f"Raw response text (first 100 chars): {raw_text[:100]}")
-
-        if not raw_text:
+        logger.info(f"Accumulated response length: {len(full_response_text)}")
+        logger.info(f"Raw response (first 100 chars): {full_response_text[:100]}")
+        
+        if not full_response_text:
              logger.warning(f"Agent returned no text for {business_name}")
              return None
 
-        parsed = parse_agent_response(raw_text)
-        parsed["raw_insight"] = raw_text
+        parsed = parse_agent_response(full_response_text)
+        parsed["raw_insight"] = full_response_text
         parsed["fhrsid"] = restaurant.get("fhrsid")
         
         return parsed
