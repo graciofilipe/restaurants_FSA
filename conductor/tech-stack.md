@@ -12,7 +12,8 @@
 - **Cloud Platform:** Google Cloud Platform (GCP)
 
 ## Artificial Intelligence
-- **LLM/Generative AI:** Vertex AI & Google GenAI (Gemini 1.5 Flash for data processing tasks)
+- **LLM/Generative AI:** Vertex AI & Google GenAI (Gemini 2.5 Flash for data processing tasks and Agent).
+- **Agent Framework:** Google ADK (Agent Development Kit) & Vertex AI Agent Engine.
 
 ## DevOps & Tools
 - **Containerization:** Docker

@@ -1,5 +1,5 @@
 from google.adk.tools.google_maps_grounding_tool import GoogleMapsGroundingTool
-from app.agent.agent import root_agent
+from app.maps_agent.agent import root_agent
 from google.adk.agents import Agent
 
 def test_restaurant_agent_config():

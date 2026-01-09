@@ -10,7 +10,7 @@ This is a **technology verification** step. The goal is to prove the infrastruct
 ### 2.1 Vertex AI Agent Configuration
 - **Agent Creation:** A new Agent must be configured in Vertex AI Agent Engine.
 - **Grounding Source:** The agent must be explicitly configured to use "Google Maps" as a grounding source.
-- **Model:** Use a Gemini model capable of handling grounding (e.g., `gemini-1.5-flash` or `gemini-1.5-pro` as appropriate for the region/availability).
+- **Model:** Use `gemini-2.5-flash`.
 
 ### 2.2 Interactive CLI Client
 - **Script:** Develop a Python script (e.g., `scripts/prototype_maps_agent.py`) to interact with the agent.

@@ -10,7 +10,7 @@ except ImportError:
 from google.cloud import bigquery
 import datetime
 
-@patch('app.services.bq_utils.bigquery.Client')
+@patch('google.cloud.bigquery.Client')
 def test_upsert_agent_insight_success(mock_client_cls):
     # Setup mock
     mock_client = mock_client_cls.return_value
@@ -49,7 +49,7 @@ def test_upsert_agent_insight_success(mock_client_cls):
     assert params['fhrsid'] == "123456"
     assert params['cuisine_type'] == "Italian"
 
-@patch('app.services.bq_utils.bigquery.Client')
+@patch('google.cloud.bigquery.Client')
 def test_upsert_agent_insight_failure(mock_client_cls):
     # Setup mock failure
     mock_client = mock_client_cls.return_value

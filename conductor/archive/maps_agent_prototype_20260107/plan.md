@@ -8,10 +8,12 @@
 
 ## Phase 2: Agent Implementation & Deployment
 - [x] Task: Implement Reasoning Engine Agent 664c6ce
-    - [x] Sub-task: Create `app/agent/maps_agent.py` using `google-genai` SDK and Maps Tool.
+    - [x] Sub-task: Create `app/maps_agent/agent.py` using `google-genai` SDK and Maps Tool.
     - [x] Sub-task: Verify local execution of the Agent.
-- [x] Task: Deploy Agent to Vertex AI (Initiated)
-    - [x] Sub-task: Use `reasoning_engines.ReasoningEngine.create` if deployment is desired, or skip if local test is sufficient.
+- [x] Task: Deploy Agent to Vertex AI (Troubleshooting) f4eb5a6
+    - [x] Sub-task: Create deployment script and initiated deployment.
+    - [x] Sub-task: Troubleshoot deployment failure (Code 3) - Solved by renaming to `agent.py` and letting ADK generate wrapper.
+    - [x] Sub-task: Verify deployed agent health via API - PASSED.
 - [ ] Task: Conductor - User Manual Verification 'Agent Configuration & Setup' (Protocol in workflow.md)
 
 ## Phase 3: CLI Prototype Development

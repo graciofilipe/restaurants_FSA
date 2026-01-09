@@ -1,0 +1,8 @@
+{
+  "track_id": "multi_coord_search_20260107",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-01-07T00:00:00Z",
+  "updated_at": "2026-01-07T00:00:00Z",
+  "description": "Support multiple coordinate pairs for automated weekly fetching and increase max_results to 5000."
+}

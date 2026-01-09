@@ -18,7 +18,8 @@
 - [x] Task: Implement the "Generate Agent Insights" button and its associated callback/logic.
 - [x] Task: Integrate the progress bar and success/error notifications during the agent processing loop.
 - [x] Task: Write integration tests (or UI logic tests) to verify selection state and button behavior.
-- [x] Task: Conductor - User Manual Verification 'Phase 3: UI Enhancement (Streamlit)' (Protocol in workflow.md)
+- [x] Task: Refactor UI to support Batch and Manual List inputs for Agent Insights. 462a4cc
+- [ ] Task: Conductor - User Manual Verification 'Phase 3: UI Enhancement (Streamlit)' (Protocol in workflow.md)
 
 ## Phase 4: Deployment & Final Verification
 - [ ] Task: Verify all tests pass locally.

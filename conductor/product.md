@@ -17,3 +17,4 @@ A personal Streamlit application designed to automate the discovery of newly ope
 - **Delta Analysis:** Automatically compares fetched API data with the stored BigQuery "master list" to isolate and display *only* new restaurants.
 - **Data Persistence:** Uses Google BigQuery to maintain a permanent record of all seen restaurants, ensuring accurate "new vs. old" comparison.
 - **Research Aids:** Provides key details to facilitate manual review of new finds on external tools like Google Maps.
+- **AI Agent (Prototype):** A conversational agent powered by Gemini 2.5 Flash with Google Maps Grounding to answer questions about restaurants and locations.

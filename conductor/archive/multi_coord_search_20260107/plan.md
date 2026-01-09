@@ -21,9 +21,13 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Backend Logic Update' (Protocol in workflow.md) [checkpoint: 3466dbc]
 
 ## Phase 3: Deployment & Verification [checkpoint: ]
-- [ ] Task: Deployment Prep.
-    - [ ] Verify `Dockerfile` and `cloudbuild.yaml` (should be unchanged, but good to check).
-- [ ] Task: Final Verification.
+- [x] Task: Deployment Prep.
+    - [x] Verify `Dockerfile` and `cloudbuild.yaml` (should be unchanged, but good to check).
+- [x] Task: Final Verification.
+    - [x] Run full test suite.
+    - [x] Deploy changes.
+    - [x] Trigger a manual run of the Cloud Run Job (or script) to verify end-to-end multi-coordinate fetching.
+- [ ] Task: Conductor - User Manual Verification 'Phase 3: Deployment & Verification' (Protocol in workflow.md)
     - [ ] Run full test suite.
     - [ ] Deploy changes.
     - [ ] Trigger a manual run of the Cloud Run Job (or script) to verify end-to-end multi-coordinate fetching.
