@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 import traceback
 import vertexai
 from vertexai.preview import reasoning_engines
-from google.cloud.aiplatform_v1beta1.types import QueryReasoningEngineRequest
+from google.cloud.aiplatform_v1beta1.types import QueryReasoningEngineRequest, StreamQueryReasoningEngineRequest
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -97,51 +97,85 @@ def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Could not fetch operation schemas: {e}")
 
-        response = None
+        raw_text = ""
+        
         if hasattr(remote_agent, 'query'):
             logger.info("Using standard .query() method.")
             response = remote_agent.query(input=prompt)
+            raw_text = str(response)
+            if hasattr(response, 'text'):
+                 raw_text = response.text
+            elif isinstance(response, dict):
+                 raw_text = json.dumps(response)
         else:
-            logger.warning("Method .query() missing (likely due to async mode mismatch). Attempting manual client call.")
+            logger.warning("Method .query() missing. Attempting manual client call with stream_query.")
             
-            # Assuming the method name is 'query' based on standard pattern
-            # Construct the input payload. 
-            request_input = {"input": prompt} 
+            # Construct the input conforming to what ADK Agent expects (message object)
+            method_kwargs = {
+                "message": {
+                    "role": "user",
+                    "parts": [{"text": prompt}]
+                }
+            }
             
-            request = QueryReasoningEngineRequest(
+            request = StreamQueryReasoningEngineRequest(
                 name=remote_agent.resource_name,
-                input=request_input,
-                class_method="query"
+                input=method_kwargs,
+                class_method="stream_query"
             )
             
-            api_response = remote_agent.execution_api_client.query_reasoning_engine(request=request)
+            logger.info(f"Calling stream_query_reasoning_engine with class_method='stream_query'")
+            response_stream = remote_agent.execution_api_client.stream_query_reasoning_engine(request=request)
             
-            # The API response output is a google.protobuf.Struct or similar wrapped value.
-            # We need to extract it.
-            # Usually api_response.output contains the result.
-            if hasattr(api_response, 'output'):
-                response = api_response.output
-            else:
-                logger.error(f"API response has no 'output' field: {api_response}")
-                return None
+            # Accumulate text from stream
+            for chunk in response_stream:
+                if hasattr(chunk, 'output') and chunk.output:
+                    # chunk.output is a google.protobuf.Value
+                    # We usually expect a string or a dict. 
+                    # If it's a string value, it might be directly accessible if mapped, 
+                    # but typically we need to access the value.
+                    # Based on observation, it might be nested.
+                    # Let's try to extract text conservatively.
+                    
+                    # If it's a simple string yield
+                    # In python client, yield_parsed_json does some work. 
+                    # Here we are working with raw proto/gapic object.
+                    
+                    # Debug log the chunk structure once
+                    # logger.info(f"Chunk received: {chunk}")
+                    
+                    # Assuming it returns parts of text or full objects.
+                    # For now, let's cast to string whatever we get and append if it seems like content.
+                    # ADK agents often stream partial text.
+                    
+                    # We can use the helper from reasoning_engines if available, but it is internal.
+                    # Let's try to extract text from the protobuf Value.
+                    
+                    # A robust way to extract value from protobuf Value:
+                    import google.protobuf.json_format
+                    try:
+                        # Convert to python object
+                        val = None
+                        # There isn't a direct to_py helper on the chunk itself, but chunk.output is a Value
+                        # We can try to serialize/deserialize or inspect 'string_value' etc.
+                        # But Value class has 'string_value', 'struct_value', etc.
+                        # It is a google.protobuf.struct_pb2.Value
+                        
+                        kind = chunk.output.WhichOneof("kind")
+                        if kind == "string_value":
+                            val = chunk.output.string_value
+                        elif kind == "struct_value":
+                            # If it returns a struct, maybe convert to JSON string?
+                            val = json.dumps(dict(chunk.output.struct_value.fields))
+                        elif kind == "number_value":
+                            val = str(chunk.output.number_value)
+                        
+                        if val:
+                            raw_text += val
+                    except Exception as parse_err:
+                        logger.warning(f"Error parsing chunk: {parse_err}")
 
-        logger.info(f"Agent query returned. Type: {type(response)}")
-        
-        raw_text = str(response)
-        
-        # Handle dict-like response (common if it returns JSON structure)
-        if isinstance(response, dict):
-             raw_text = json.dumps(response)
-        # Handle if it's a Value/Struct from protobuf
-        elif hasattr(response, 'items'): 
-             # Rough check for dict-like behavior from protobuf map
-             try:
-                 import google.protobuf.json_format
-                 # If it's a message, convert. If it's a MapComposite, cast to dict.
-                 raw_text = json.dumps(dict(response))
-             except:
-                 pass
-
+        logger.info(f"Agent response received. Length: {len(raw_text)}")
         logger.info(f"Raw response text (first 100 chars): {raw_text[:100]}")
 
         if not raw_text:
