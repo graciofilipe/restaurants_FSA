@@ -75,7 +75,7 @@ def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Calls the remote Vertex AI Agent to get insights for a single restaurant using direct REST API.
     """
-    business_name = .get("businessname")
+    business_name = restaurant.get("businessname")
     logger.info(f"Starting get_agent_insight for: {business_name}")
     
     address = f"{restaurant.get('addressline1', '')}, {restaurant.get('postcode', '')}"
