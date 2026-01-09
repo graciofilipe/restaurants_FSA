@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 import traceback
 import vertexai
 from vertexai.preview import reasoning_engines
+from google.cloud.aiplatform_v1beta1.types import QueryReasoningEngineRequest
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -18,8 +19,6 @@ AGENT_RESOURCE_ID = "projects/257470209980/locations/us-central1/reasoningEngine
 def parse_agent_response(response_text: str) -> Dict[str, Any]:
     """
     Parses the raw text response from the agent to extract structured data.
-    Expected format: JSON or Markdown code block with JSON.
-    Fields: cuisine_type (str), review_count (int), average_rating (float).
     """
     logger.info(f"Parsing agent response (length: {len(response_text) if response_text else 0})")
     default_result = {
@@ -37,14 +36,11 @@ def parse_agent_response(response_text: str) -> Dict[str, Any]:
         
         # Remove markdown code blocks if strictly wrapping the json
         if clean_text.startswith("```"):
-            # Find the first {
             start = clean_text.find("{")
-            # Find the last }
             end = clean_text.rfind("}")
             if start != -1 and end != -1:
                  clean_text = clean_text[start:end+1]
         
-        # Just try to find the first { and last } regardless
         json_match = re.search(r'\{.*\}', clean_text, re.DOTALL)
         if json_match:
             json_str = json_match.group(0)
@@ -94,22 +90,58 @@ def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         logger.info(f"Connecting to Remote Agent: {AGENT_RESOURCE_ID}...")
         remote_agent = reasoning_engines.ReasoningEngine(AGENT_RESOURCE_ID)
         
-        logger.info("Querying remote agent...")
-        # Querying the agent. The input argument depends on how the agent was defined.
-        # Assuming standard text input.
-        response = remote_agent.query(input=prompt)
-        
+        logger.info("Inspecting operation schemas...")
+        try:
+            schemas = remote_agent.operation_schemas()
+            logger.info(f"Operation Schemas: {schemas}")
+        except Exception as e:
+            logger.warning(f"Could not fetch operation schemas: {e}")
+
+        response = None
+        if hasattr(remote_agent, 'query'):
+            logger.info("Using standard .query() method.")
+            response = remote_agent.query(input=prompt)
+        else:
+            logger.warning("Method .query() missing (likely due to async mode mismatch). Attempting manual client call.")
+            
+            # Assuming the method name is 'query' based on standard pattern
+            # Construct the input payload. 
+            request_input = {"input": prompt} 
+            
+            request = QueryReasoningEngineRequest(
+                name=remote_agent.resource_name,
+                input=request_input,
+                class_method="query"
+            )
+            
+            api_response = remote_agent.execution_api_client.query_reasoning_engine(request=request)
+            
+            # The API response output is a google.protobuf.Struct or similar wrapped value.
+            # We need to extract it.
+            # Usually api_response.output contains the result.
+            if hasattr(api_response, 'output'):
+                response = api_response.output
+            else:
+                logger.error(f"API response has no 'output' field: {api_response}")
+                return None
+
         logger.info(f"Agent query returned. Type: {type(response)}")
         
-        # Handle response format. 
-        # If it returns a string, use it. If it returns an object, try to convert to string.
         raw_text = str(response)
         
-        if hasattr(response, 'text'):
-             raw_text = response.text
-        elif isinstance(response, dict):
+        # Handle dict-like response (common if it returns JSON structure)
+        if isinstance(response, dict):
              raw_text = json.dumps(response)
-        
+        # Handle if it's a Value/Struct from protobuf
+        elif hasattr(response, 'items'): 
+             # Rough check for dict-like behavior from protobuf map
+             try:
+                 import google.protobuf.json_format
+                 # If it's a message, convert. If it's a MapComposite, cast to dict.
+                 raw_text = json.dumps(dict(response))
+             except:
+                 pass
+
         logger.info(f"Raw response text (first 100 chars): {raw_text[:100]}")
 
         if not raw_text:

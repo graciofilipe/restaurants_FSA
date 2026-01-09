@@ -48,23 +48,20 @@ def test_parse_agent_response_invalid_json():
 def test_get_agent_insight_success(mock_engine_cls, mock_init):
     # Setup mock engine
     mock_agent = mock_engine_cls.return_value
-    
-    # Setup mock response object
-    mock_response = MagicMock()
-    # If the response is an object with a text attribute
-    mock_response.text = '{"cuisine_type": "Italian", "review_count": 100, "average_rating": 4.5}'
-    # Or if it behaves like a dict
-    mock_response.get.side_effect = lambda k: {"cuisine_type": "Italian"}.get(k)
-    
+
+    # Setup mock response object as a simple dictionary
+    mock_response = {"cuisine_type": "Italian", "review_count": 100, "average_rating": 4.5}
+
     # We configure query to return this object
     mock_agent.query.return_value = mock_response
-    
+
     restaurant = {"businessname": "Test Place", "addressline1": "123 Street", "postcode": "ABC", "fhrsid": "123"}
-    
+
     result = get_agent_insight(restaurant)
-    
+
     assert result["cuisine_type"] == "Italian"
-    assert result["raw_insight"] == mock_response.text
+    assert result["review_count"] == 100
+    assert result["average_rating"] == 4.5
     
     # Verify instantiation and call
     mock_init.assert_called_once()
