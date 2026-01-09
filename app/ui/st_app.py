@@ -151,23 +151,76 @@ def main_ui():
                             st.error("Analysis Failed. Check logs.")
             
             with tab_agent:
-                st.write("Generate deep insights for SELECTED restaurants using the Agent.")
-                if not selected_rows:
-                    st.info("Select rows in the table above to enable Agent Research.")
-                    st.button("Generate Agent Insights", disabled=True)
-                else:
-                    st.write(f"Selected {len(selected_rows)} restaurants.")
-                    if st.button("Generate Agent Insights"):
+                st.write("Generate deep insights for restaurants using the Agent.")
+                
+                # Selection Mode UI
+                agent_mode = st.radio(
+                    "Target Mode",
+                    ["Selected Rows", "Batch (All Filtered)", "Manual List"],
+                    horizontal=True,
+                    help="Choose how to select restaurants for agent research."
+                )
+                
+                targets = []
+                
+                if agent_mode == "Selected Rows":
+                    if not selected_rows:
+                        st.info("Select rows in the table above to enable Agent Research.")
+                    else:
+                        targets = selected_rows
+                        st.write(f"Targeting {len(targets)} selected restaurants.")
+                        
+                elif agent_mode == "Batch (All Filtered)":
+                    targets = st.session_state.review_data
+                    if not targets:
+                        st.warning("No data loaded in the review queue.")
+                    else:
+                        st.write(f"Targeting ALL {len(targets)} restaurants in the current view.")
+                        
+                elif agent_mode == "Manual List":
+                    st.write("Paste FHRSIDs (must be present in the loaded review queue).")
+                    manual_input = st.text_area("FHRSIDs (one per line or comma-separated)", height=100)
+                    if manual_input:
+                        # Parse IDs
+                        ids = [x.strip() for x in manual_input.replace(',', '\n').split('\n') if x.strip()]
+                        
+                        if st.session_state.review_data:
+                            # Create map for O(1) lookup. Normalize to string for safety.
+                            # Assuming 'fhrsid' exists in the data.
+                            loaded_map = {str(r.get('fhrsid')): r for r in st.session_state.review_data}
+                            
+                            found_targets = []
+                            missing_ids = []
+                            
+                            for raw_id in ids:
+                                if raw_id in loaded_map:
+                                    found_targets.append(loaded_map[raw_id])
+                                else:
+                                    missing_ids.append(raw_id)
+                            
+                            targets = found_targets
+                            
+                            if found_targets:
+                                st.success(f"Found {len(found_targets)} matching restaurants from input.")
+                            if missing_ids:
+                                st.warning(f"Could not find {len(missing_ids)} IDs in loaded data: {', '.join(missing_ids[:5])}...")
+                        else:
+                            st.warning("Please load data first to validate the ID list.")
+
+                # Action Button
+                if targets:
+                    if st.button(f"Generate Insights ({len(targets)} Restaurants)"):
                         progress_bar = st.progress(0)
                         status_text = st.empty()
                         
                         success_count = 0
-                        total = len(selected_rows)
+                        total = len(targets)
                         
-                        for i, restaurant in enumerate(selected_rows):
+                        for i, restaurant in enumerate(targets):
                             business_name = restaurant.get('businessname', 'Unknown')
                             status_text.text(f"Processing {i+1}/{total}: {business_name}")
                             
+                            # Call Agent
                             insight = get_agent_insight(restaurant)
                             
                             if insight:
@@ -189,6 +242,8 @@ def main_ui():
                             st.success("All insights generated and saved.")
                         else:
                             st.warning("Some insights failed.")
+                else:
+                    st.button("Generate Insights", disabled=True)
 
         with c2:
             st.subheader("Export Data")
