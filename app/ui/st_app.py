@@ -31,6 +31,35 @@ def display_data(data_to_display: List[Dict[str, Any]]):
     )
     return event
 
+def get_selected_rows(selection_event: Any, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Extracts selected rows from the Streamlit dataframe selection event.
+    Handles different event structures for compatibility.
+    """
+    selected_indices = []
+    if selection_event:
+        # Streamlit 1.35+ returns {'selection': {'rows': [0, 1], 'columns': []}}
+        if isinstance(selection_event, dict) and "selection" in selection_event:
+             selected_indices = selection_event["selection"].get("rows", [])
+        else:
+             # Fallback for direct structure or older versions/other widgets
+             # Try dictionary access first
+             try:
+                 selected_indices = selection_event.get("rows", [])
+             except AttributeError:
+                 # Fallback if it's an object with attributes
+                 selected_indices = getattr(selection_event, "rows", [])
+
+    selected_rows = []
+    if selected_indices:
+        df = pd.DataFrame(data)
+        # Ensure indices are valid and convert to python ints if needed
+        valid_indices = [int(i) for i in selected_indices if i < len(df)]
+        if valid_indices:
+            selected_rows = df.iloc[valid_indices].to_dict('records')
+            
+    return selected_rows
+
 def main_ui():
     st.set_page_config(layout="wide", page_title="FSA Restaurant Reviewer")
     st.title("FSA Restaurant Reviewer")
@@ -94,22 +123,7 @@ def main_ui():
         st.subheader(f"Review Queue ({len(st.session_state.review_data)} records)")
         
         selection_event = display_data(st.session_state.review_data)
-        
-        selected_rows = []
-        if selection_event:
-            # Check for "rows" key (dictionary access)
-            try:
-                selected_indices = selection_event.get("rows", [])
-            except AttributeError:
-                # Fallback if it's an object
-                selected_indices = getattr(selection_event, "rows", [])
-            
-            if selected_indices:
-                df = pd.DataFrame(st.session_state.review_data)
-                # Ensure indices are valid and convert to python ints if needed
-                valid_indices = [int(i) for i in selected_indices if i < len(df)]
-                if valid_indices:
-                    selected_rows = df.iloc[valid_indices].to_dict('records')
+        selected_rows = get_selected_rows(selection_event, st.session_state.review_data)
         
         st.divider()
         c1, c2 = st.columns(2)
