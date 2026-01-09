@@ -2,32 +2,18 @@ import json
 import re
 import logging
 from typing import Dict, Any, Optional
-import pkg_resources
 import traceback
-from google.adk.runners import InMemoryRunner
-from app.maps_agent.agent import root_agent
+import vertexai
+from vertexai.preview import reasoning_engines
 
 # Configure logger
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-def log_system_info():
-    try:
-        logger.info("=== SYSTEM INFO START ===")
-        try:
-            adk_version = pkg_resources.get_distribution("google-adk").version
-            logger.info(f"google-adk version: {adk_version}")
-        except Exception as e:
-            logger.error(f"Could not determine google-adk version: {e}")
-        
-        logger.info(f"root_agent type: {type(root_agent)}")
-        logger.info(f"root_agent dir: {dir(root_agent)}")
-        logger.info("=== SYSTEM INFO END ===")
-    except Exception as e:
-        logger.error(f"Error logging system info: {e}")
-
-# Log info on module load
-log_system_info()
+# Configuration for Remote Agent
+PROJECT_ID = "filipegracio-ai-learning"
+LOCATION = "us-central1"
+AGENT_RESOURCE_ID = "projects/257470209980/locations/us-central1/reasoningEngines/8073464293619662848"
 
 def parse_agent_response(response_text: str) -> Dict[str, Any]:
     """
@@ -48,7 +34,6 @@ def parse_agent_response(response_text: str) -> Dict[str, Any]:
 
     try:
         clean_text = response_text.strip()
-        logger.debug(f"Raw response text: {clean_text}")
         
         # Remove markdown code blocks if strictly wrapping the json
         if clean_text.startswith("```"):
@@ -85,7 +70,7 @@ def parse_agent_response(response_text: str) -> Dict[str, Any]:
 
 def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Calls the agent to get insights for a single restaurant.
+    Calls the remote Vertex AI Agent to get insights for a single restaurant.
     """
     business_name = restaurant.get("businessname")
     logger.info(f"Starting get_agent_insight for: {business_name}")
@@ -103,33 +88,34 @@ def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     )
     
     try:
-        logger.info("Initializing InMemoryRunner...")
-        runner = InMemoryRunner(agent=root_agent)
-        logger.info(f"InMemoryRunner initialized: {type(runner)}")
+        logger.info(f"Initializing Vertex AI (Project: {PROJECT_ID}, Location: {LOCATION})...")
+        vertexai.init(project=PROJECT_ID, location=LOCATION)
         
-        # Use fhrsid as session_id to maintain distinct sessions per restaurant if needed, 
-        # though we recreate runner each time here.
-        session_id = f"session_{restaurant.get('fhrsid', 'unknown')}"
-        logger.info(f"Using session_id: {session_id}")
+        logger.info(f"Connecting to Remote Agent: {AGENT_RESOURCE_ID}...")
+        remote_agent = reasoning_engines.ReasoningEngine(AGENT_RESOURCE_ID)
         
-        logger.info("Calling runner.run()...")
-        events = runner.run(user_id="system", session_id=session_id, new_message=prompt)
-        logger.info(f"runner.run() returned. Events type: {type(events)}")
+        logger.info("Querying remote agent...")
+        # Querying the agent. The input argument depends on how the agent was defined.
+        # Assuming standard text input.
+        response = remote_agent.query(input=prompt)
         
-        raw_text = ""
-        for i, event in enumerate(events):
-            logger.debug(f"Processing event {i}: {type(event)}")
-            # Check if event has content and parts (based on ADK structure)
-            if hasattr(event, 'content') and event.content and hasattr(event.content, 'parts'):
-                for part in event.content.parts:
-                    if hasattr(part, 'text') and part.text:
-                        raw_text += part.text
+        logger.info(f"Agent query returned. Type: {type(response)}")
         
+        # Handle response format. 
+        # If it returns a string, use it. If it returns an object, try to convert to string.
+        raw_text = str(response)
+        
+        if hasattr(response, 'text'):
+             raw_text = response.text
+        elif isinstance(response, dict):
+             raw_text = json.dumps(response)
+        
+        logger.info(f"Raw response text (first 100 chars): {raw_text[:100]}")
+
         if not raw_text:
              logger.warning(f"Agent returned no text for {business_name}")
              return None
 
-        logger.info(f"Agent returned text (length {len(raw_text)})")
         parsed = parse_agent_response(raw_text)
         parsed["raw_insight"] = raw_text
         parsed["fhrsid"] = restaurant.get("fhrsid")
