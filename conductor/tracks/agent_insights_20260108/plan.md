@@ -19,10 +19,10 @@
 - [x] Task: Integrate the progress bar and success/error notifications during the agent processing loop.
 - [x] Task: Write integration tests (or UI logic tests) to verify selection state and button behavior.
 - [x] Task: Refactor UI to support Batch and Manual List inputs for Agent Insights. 462a4cc
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: UI Enhancement (Streamlit)' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: UI Enhancement (Streamlit)' (Protocol in workflow.md) [checkpoint: 512b3c1]
 
 ## Phase 4: Deployment & Final Verification
-- [ ] Task: Verify all tests pass locally.
-- [ ] Task: Deploy the updated application to Cloud Run using the existing CI/CD pipeline (`cloudbuild.yaml`).
+- [x] Task: Verify all tests pass locally.
+- [~] Task: Deploy the updated application to Cloud Run using the existing CI/CD pipeline (`cloudbuild.yaml`).
 - [ ] Task: Perform end-to-end verification in the production environment: select restaurants, generate insights, and verify BQ table updates.
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: Deployment & Final Verification' (Protocol in workflow.md)
