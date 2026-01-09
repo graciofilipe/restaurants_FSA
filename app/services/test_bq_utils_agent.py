@@ -3,12 +3,57 @@ from unittest.mock import patch, MagicMock, call, ANY
 # The function upsert_agent_insight does not exist yet, so this import will fail during actual execution if I don't implement it.
 # However, I'm writing the test first.
 try:
-    from app.services.bq_utils import upsert_agent_insight
+    from app.services.bq_utils import upsert_agent_insight, load_specific_agent_insights
 except ImportError:
     pass # To allow writing the file without immediate error in the agent loop
 
 from google.cloud import bigquery
 import datetime
+
+@patch('google.cloud.bigquery.Client')
+def test_load_specific_agent_insights_success(mock_client_cls):
+    # Setup mock
+    mock_client = mock_client_cls.return_value
+    mock_query_job = MagicMock()
+    mock_client.query.return_value = mock_query_job
+    
+    # Mock row results
+    mock_rows = [
+        {"fhrsid": "1", "cuisine_type": "Italian", "review_count": 10, "average_rating": 4.0, "raw_insight": "Good", "updated_at": datetime.datetime.now(datetime.timezone.utc)},
+        {"fhrsid": "2", "cuisine_type": "Indian", "review_count": 20, "average_rating": 4.5, "raw_insight": "Spice", "updated_at": datetime.datetime.now(datetime.timezone.utc)}
+    ]
+    
+    # Convert dicts to mock objects that behave like BigQuery rows (attribute access)
+    def make_row(d):
+        row = MagicMock()
+        row.get.side_effect = d.get
+        row.__getitem__.side_effect = d.__getitem__
+        for k, v in d.items():
+            setattr(row, k, v)
+        return row
+
+    mock_query_job.result.return_value = [make_row(row) for row in mock_rows]
+
+    # Test data
+    project_id = "test-project"
+    dataset_id = "test-dataset"
+    fhrsids = ["1", "2"]
+
+    # Execute
+    result = load_specific_agent_insights(project_id, dataset_id, fhrsids)
+
+    # Verify
+    assert len(result) == 2
+    assert result[0]["fhrsid"] == "1"
+    assert result[1]["fhrsid"] == "2"
+    
+    # Verify query
+    query = mock_client.query.call_args[0][0]
+    assert "IN UNNEST" in query
+    
+    job_config = mock_client.query.call_args[1]['job_config']
+    params = {p.name: p.value for p in job_config.query_parameters}
+    assert params['fhrsids'] == fhrsids
 
 @patch('google.cloud.bigquery.Client')
 def test_upsert_agent_insight_success(mock_client_cls):
