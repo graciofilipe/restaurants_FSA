@@ -19,3 +19,4 @@ A personal Streamlit application designed to automate the discovery of newly ope
 - **Research Aids:** Provides key details to facilitate manual review of new finds on external tools like Google Maps.
 - **AI Agent & Insights:** A dedicated Agent workflow that can research specific restaurants using Google Maps data.
 - **Automated Insights Display:** Automatically displays generated insights (cuisine type, ratings, review summaries) in the UI immediately after generation.
+- **Bulk Status Update:** Allows users to select multiple restaurants and update their review status (e.g., 'accepted', 'rejected') in batch.
