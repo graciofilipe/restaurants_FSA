@@ -1,0 +1,6 @@
+{
+  "track_id": "scheduled_discovery_20260110",
+  "description": "Deploy Cloud Run Job for weekly discovery and update search configuration.",
+  "created_at": "2026-01-10",
+  "status": "planned"
+}
