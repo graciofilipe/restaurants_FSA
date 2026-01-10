@@ -559,3 +559,44 @@ def upsert_agent_insight(project_id: str, dataset_id: str, table_id: str, insigh
     except Exception as e:
         logger.error(f"Error upserting agent insight: {e}")
         return False
+
+def load_specific_agent_insights(project_id: str, dataset_id: str, fhrsids: List[str]) -> List[Dict[str, Any]]:
+    """
+    Loads agent insights from BigQuery for a specific list of FHRSIDs.
+    """
+    if not fhrsids:
+        return []
+        
+    client = bigquery.Client(project=project_id)
+    table_id = "restaurant_agent_insights"
+    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+    
+    query = f"""
+        SELECT *
+        FROM `{table_ref_str}`
+        WHERE fhrsid IN UNNEST(@fhrsids)
+    """
+    
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("fhrsids", "STRING", [str(fid) for fid in fhrsids])
+        ]
+    )
+
+    try:
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+        
+        records = []
+        for row in results:
+            # results object allows dictionary-like access
+            record = {key: value for key, value in row.items()}
+            # Convert timestamp to string for display/session compatibility
+            if 'updated_at' in record and hasattr(record['updated_at'], 'isoformat'):
+                record['updated_at'] = record['updated_at'].isoformat()
+            records.append(record)
+            
+        return records
+    except Exception as e:
+        logger.error(f"Error loading specific agent insights: {e}")
+        return []

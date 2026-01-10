@@ -28,10 +28,10 @@ def test_load_specific_agent_insights_success(mock_client_cls):
         row = MagicMock()
         row.get.side_effect = d.get
         row.__getitem__.side_effect = d.__getitem__
+        row.items.return_value = d.items()
         for k, v in d.items():
             setattr(row, k, v)
         return row
-
     mock_query_job.result.return_value = [make_row(row) for row in mock_rows]
 
     # Test data
@@ -52,8 +52,32 @@ def test_load_specific_agent_insights_success(mock_client_cls):
     assert "IN UNNEST" in query
     
     job_config = mock_client.query.call_args[1]['job_config']
-    params = {p.name: p.value for p in job_config.query_parameters}
+    params = {}
+    for p in job_config.query_parameters:
+        if hasattr(p, 'values'):
+            params[p.name] = p.values
+        else:
+            params[p.name] = p.value
     assert params['fhrsids'] == fhrsids
+
+@patch('google.cloud.bigquery.Client')
+def test_load_specific_agent_insights_failure(mock_client_cls):
+    # Setup mock failure
+    mock_client = mock_client_cls.return_value
+    mock_query_job = MagicMock()
+    mock_client.query.return_value = mock_query_job
+    mock_query_job.result.side_effect = Exception("BQ Error")
+
+    # Test data
+    project_id = "test-project"
+    dataset_id = "test-dataset"
+    fhrsids = ["1"]
+
+    # Execute
+    result = load_specific_agent_insights(project_id, dataset_id, fhrsids)
+
+    # Verify
+    assert result == []
 
 @patch('google.cloud.bigquery.Client')
 def test_upsert_agent_insight_success(mock_client_cls):
