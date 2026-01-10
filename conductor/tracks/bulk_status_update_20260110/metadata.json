@@ -1,0 +1,8 @@
+{
+  "track_id": "bulk_status_update_20260110",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-01-10T12:00:00Z",
+  "updated_at": "2026-01-10T12:00:00Z",
+  "description": "Add ability to select rows and bulk update 'manual_review' status in BigQuery via UI."
+}
