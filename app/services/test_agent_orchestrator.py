@@ -13,7 +13,8 @@ def test_parse_agent_response_json():
     expected = {
         "cuisine_type": "Italian",
         "review_count": 100,
-        "average_rating": 4.5
+        "average_rating": 4.5,
+        "summary": None
     }
     assert parse_agent_response(response_text) == expected
 
@@ -22,7 +23,18 @@ def test_parse_agent_response_plain_json():
     expected = {
         "cuisine_type": "Indian",
         "review_count": 50,
-        "average_rating": 4.0
+        "average_rating": 4.0,
+        "summary": None
+    }
+    assert parse_agent_response(response_text) == expected
+
+def test_parse_agent_response_with_summary():
+    response_text = '{"cuisine_type": "French", "review_count": 10, "average_rating": 4.8, "summary": "Great food."}'
+    expected = {
+        "cuisine_type": "French",
+        "review_count": 10,
+        "average_rating": 4.8,
+        "summary": "Great food."
     }
     assert parse_agent_response(response_text) == expected
 
@@ -31,7 +43,8 @@ def test_parse_agent_response_missing_fields():
     expected = {
         "cuisine_type": "Pub",
         "review_count": None,
-        "average_rating": None
+        "average_rating": None,
+        "summary": None
     }
     assert parse_agent_response(response_text) == expected
 
@@ -40,8 +53,11 @@ def test_parse_agent_response_invalid_json():
     expected = {
         "cuisine_type": None,
         "review_count": None,
-        "average_rating": None
+        "average_rating": None,
+        "summary": None # Because default_result now implicitly includes summary? No, let's check default_result in implementation.
     }
+    # Wait, need to check if default_result in implementation was updated.
+    # Yes, I saw it in my previous read.
     assert parse_agent_response(response_text) == expected
 
 @patch('app.services.agent_orchestrator.Client')
@@ -96,3 +112,28 @@ def test_get_agent_insight_failure(mock_client_cls):
     result = get_agent_insight(restaurant)
     
     assert result is None
+
+@patch('app.services.agent_orchestrator.Client')
+def test_get_agent_insight_includes_extra_address_fields(mock_client_cls):
+    mock_client = mock_client_cls.return_value
+    mock_agent = MagicMock()
+    mock_client.agent_engines.get.return_value = mock_agent
+    mock_agent.stream_query.return_value = [] 
+
+    restaurant = {
+        "businessname": "Expanded Place", 
+        "addressline1": "Line 1", 
+        "addressline2": "Line 2", 
+        "postcode": "SW1", 
+        "localauthorityname": "Camden",
+        "fhrsid": "999"
+    }
+
+    get_agent_insight(restaurant)
+    
+    # Verify prompt content
+    args, kwargs = mock_agent.stream_query.call_args
+    prompt = kwargs['message']
+    
+    assert "Line 2" in prompt
+    assert "Camden" in prompt

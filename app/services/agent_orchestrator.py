@@ -23,7 +23,8 @@ def parse_agent_response(response_text: str) -> Dict[str, Any]:
     default_result = {
         "cuisine_type": None,
         "review_count": None,
-        "average_rating": None
+        "average_rating": None,
+        "summary": None
     }
     
     if not response_text:
@@ -48,7 +49,8 @@ def parse_agent_response(response_text: str) -> Dict[str, Any]:
             result = {
                 "cuisine_type": data.get("cuisine_type"),
                 "review_count": data.get("review_count"),
-                "average_rating": data.get("average_rating")
+                "average_rating": data.get("average_rating"),
+                "summary": data.get("summary")
             }
             logger.info(f"Successfully parsed data: {result}")
             return result
@@ -70,7 +72,16 @@ def get_agent_insight(restaurant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     business_name = restaurant.get("businessname")
     logger.info(f"Starting get_agent_insight for: {business_name}")
     
-    address = f"{restaurant.get('addressline1', '')}, {restaurant.get('postcode', '')}"
+    # Construct address with optional fields
+    address_parts = [
+        restaurant.get('addressline1'),
+        restaurant.get('addressline2'),
+        restaurant.get('postcode'),
+        restaurant.get('localauthorityname')
+    ]
+    # Filter out None or empty strings
+    valid_parts = [str(part).strip() for part in address_parts if part]
+    address = ", ".join(valid_parts)
     
     prompt = (
         f"Research the restaurant '{business_name}' located at '{address}'. "
