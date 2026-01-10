@@ -12,7 +12,8 @@
 - [x] Task: Create a Cloud Scheduler job `trigger-fetch-weekly` to invoke the Cloud Run Job (e.g., weekly schedule).
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Cloud Job Deployment' (Protocol in workflow.md)
 
-## Phase 3: Final Verification
-- [~] Task: Manually trigger the Cloud Run Job via CLI (`gcloud run jobs execute`).
-- [ ] Task: Verify execution logs and BigQuery for new data ingestion.
+## Phase 3: Final Verification [checkpoint: (manual)]
+- [x] Task: Manually trigger the Cloud Run Job via CLI (`gcloud run jobs execute`).
+- [x] Task: Verify execution logs and BigQuery for new data ingestion.
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Final Verification' (Protocol in workflow.md)
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Final Verification' (Protocol in workflow.md)
