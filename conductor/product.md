@@ -14,7 +14,7 @@ A personal Streamlit application designed to automate the discovery of newly ope
 - **Efficient Research:** Streamlines the transition from "discovery" to "research" by providing necessary details for Google Maps and review lookups.
 
 ## Key Features
-- **Delta Analysis:** Automatically compares fetched API data with the stored BigQuery "master list" to isolate and display *only* new restaurants.
+- **Scheduled Delta Analysis:** A weekly Cloud Job automatically fetches new FSA data and compares it with the stored BigQuery "master list" to isolate new restaurants.
 - **Data Persistence:** Uses Google BigQuery to maintain a permanent record of all seen restaurants, ensuring accurate "new vs. old" comparison.
 - **Research Aids:** Provides key details to facilitate manual review of new finds on external tools like Google Maps.
 - **AI Agent & Insights:** A dedicated Agent workflow that can research specific restaurants using Google Maps data.

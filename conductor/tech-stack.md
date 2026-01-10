@@ -20,6 +20,7 @@
 ## DevOps & Tools
 - **Containerization:** Docker
 - **CI/CD:** Google Cloud Build
-- **Runtime:** Google Cloud Run
+- **Runtime:** Google Cloud Run (Service for UI, Job for scheduled tasks)
+- **Scheduling:** Google Cloud Scheduler
 - **Testing:** Pytest
 - **Environment Management:** `requirements.txt` and Shell scripts (`envs.sh`)
