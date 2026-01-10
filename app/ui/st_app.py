@@ -8,13 +8,57 @@ from app.services.bq_utils import (
     execute_gemini_enrichment,
     bulk_update_reviews,
     get_distinct_local_authorities,
-    upsert_agent_insight
+    upsert_agent_insight,
+    load_specific_agent_insights
 )
 from app.core.data_processing import (
     load_data_from_csv,
     parse_bq_path
 )
 from app.services.agent_orchestrator import get_agent_insight
+
+def handle_insight_generation(targets, project_id, dataset_id, progress_bar, status_text):
+    """
+    Orchestrates the agent insight generation for a list of targets.
+    Updates session state with processed IDs.
+    """
+    success_count = 0
+    total = len(targets)
+    processed_fhrsids = []
+    
+    # Reset session state for new batch
+    st.session_state['latest_batch_fhrsids'] = []
+    st.session_state['show_latest_insights'] = False
+
+    for i, restaurant in enumerate(targets):
+        business_name = restaurant.get('businessname', 'Unknown')
+        status_text.text(f"Processing {i+1}/{total}: {business_name}")
+        
+        # Call Agent
+        insight = get_agent_insight(restaurant)
+        
+        if insight:
+            if 'updated_at' not in insight:
+                insight['updated_at'] = datetime.datetime.now().isoformat()
+            
+            upsert_success = upsert_agent_insight(project_id, dataset_id, "restaurant_agent_insights", insight)
+            if upsert_success:
+                success_count += 1
+                if 'fhrsid' in restaurant:
+                    processed_fhrsids.append(str(restaurant['fhrsid']))
+            else:
+                st.error(f"Failed to save insight for {business_name}")
+        else:
+            st.error(f"Agent failed for {business_name}")
+            
+        progress_bar.progress((i + 1) / total)
+    
+    # Update Session State
+    st.session_state['latest_batch_fhrsids'] = processed_fhrsids
+    if processed_fhrsids:
+        st.session_state['show_latest_insights'] = True
+    
+    return success_count, total
 
 def display_data(data_to_display: List[Dict[str, Any]]):
     if not data_to_display:
@@ -65,7 +109,7 @@ def main_ui():
     st.title("FSA Restaurant Reviewer")
 
     if 'review_data' not in st.session_state:
-        st.session_state.review_data = None
+        st.session_state['review_data'] = None
 
     with st.sidebar:
         st.header("Configuration")
@@ -91,15 +135,15 @@ def main_ui():
             # Using session state to avoid re-fetching on every interaction
             if 'la_options' not in st.session_state:
                  with st.spinner("Loading Local Authorities..."):
-                    st.session_state.la_options = get_distinct_local_authorities(project_id, dataset_id, table_id)
+                    st.session_state['la_options'] = get_distinct_local_authorities(project_id, dataset_id, table_id)
             
             if st.button("Refresh Authorities"):
                 st.session_state.pop('la_options', None)
                 with st.spinner("Refreshing Local Authorities..."):
-                    st.session_state.la_options = get_distinct_local_authorities(project_id, dataset_id, table_id)
-                    st.success(f"Refreshed list. Found {len(st.session_state.la_options)} authorities.")
+                    st.session_state['la_options'] = get_distinct_local_authorities(project_id, dataset_id, table_id)
+                    st.success(f"Refreshed list. Found {len(st.session_state['la_options'])} authorities.")
             
-            la_options = st.session_state.la_options if 'la_options' in st.session_state else []
+            la_options = st.session_state['la_options'] if 'la_options' in st.session_state else []
             excluded_las = st.multiselect("Exclude Local Authorities", options=la_options)
         else:
             excluded_las = []
@@ -112,18 +156,18 @@ def main_ui():
                     review_status_filter=selected_statuses,
                     excluded_locations=excluded_las
                 )
-                st.session_state.review_data = data
+                st.session_state['review_data'] = data
                 if not data:
                     st.warning("No records found matching criteria.")
                 else:
                     st.success(f"Loaded {len(data)} records.")
 
     # Main Area
-    if st.session_state.review_data:
-        st.subheader(f"Review Queue ({len(st.session_state.review_data)} records)")
+    if st.session_state.get('review_data'):
+        st.subheader(f"Review Queue ({len(st.session_state['review_data'])} records)")
         
-        selection_event = display_data(st.session_state.review_data)
-        selected_rows = get_selected_rows(selection_event, st.session_state.review_data)
+        selection_event = display_data(st.session_state['review_data'])
+        selected_rows = get_selected_rows(selection_event, st.session_state['review_data'])
         
         st.divider()
         c1, c2 = st.columns(2)
@@ -171,7 +215,7 @@ def main_ui():
                         st.write(f"Targeting {len(targets)} selected restaurants.")
                         
                 elif agent_mode == "Batch (All Filtered)":
-                    targets = st.session_state.review_data
+                    targets = st.session_state['review_data']
                     if not targets:
                         st.warning("No data loaded in the review queue.")
                     else:
@@ -184,10 +228,10 @@ def main_ui():
                         # Parse IDs
                         ids = [x.strip() for x in manual_input.replace(',', '\n').split('\n') if x.strip()]
                         
-                        if st.session_state.review_data:
+                        if st.session_state.get('review_data'):
                             # Create map for O(1) lookup. Normalize to string for safety.
                             # Assuming 'fhrsid' exists in the data.
-                            loaded_map = {str(r.get('fhrsid')): r for r in st.session_state.review_data}
+                            loaded_map = {str(r.get('fhrsid')): r for r in st.session_state['review_data']}
                             
                             found_targets = []
                             missing_ids = []
@@ -209,33 +253,13 @@ def main_ui():
 
                 # Action Button
                 if targets:
-                    if st.button(f"Generate Insights ({len(targets)} Restaurants)"):
+                    if st.button(f"Generate Agent Insights ({len(targets)} Restaurants)"):
                         progress_bar = st.progress(0)
                         status_text = st.empty()
                         
-                        success_count = 0
-                        total = len(targets)
-                        
-                        for i, restaurant in enumerate(targets):
-                            business_name = restaurant.get('businessname', 'Unknown')
-                            status_text.text(f"Processing {i+1}/{total}: {business_name}")
-                            
-                            # Call Agent
-                            insight = get_agent_insight(restaurant)
-                            
-                            if insight:
-                                if 'updated_at' not in insight:
-                                    insight['updated_at'] = datetime.datetime.now().isoformat()
-                                
-                                upsert_success = upsert_agent_insight(project_id, dataset_id, "restaurant_agent_insights", insight)
-                                if upsert_success:
-                                    success_count += 1
-                                else:
-                                    st.error(f"Failed to save insight for {business_name}")
-                            else:
-                                st.error(f"Agent failed for {business_name}")
-                                
-                            progress_bar.progress((i + 1) / total)
+                        success_count, total = handle_insight_generation(
+                            targets, project_id, dataset_id, progress_bar, status_text
+                        )
                             
                         status_text.text(f"Completed! Successfully processed {success_count}/{total}.")
                         if success_count == total:
@@ -244,11 +268,25 @@ def main_ui():
                             st.warning("Some insights failed.")
                 else:
                     st.button("Generate Insights", disabled=True)
+            
+            # New Results Section
+            if st.session_state.get('show_latest_insights') and st.session_state.get('latest_batch_fhrsids'):
+                st.divider()
+                st.subheader("New Agent Insights")
+                with st.expander("View Latest Batch Results", expanded=True):
+                    with st.spinner("Fetching latest insights..."):
+                        latest_data = load_specific_agent_insights(
+                            project_id, dataset_id, st.session_state['latest_batch_fhrsids']
+                        )
+                        if latest_data:
+                            st.dataframe(pd.DataFrame(latest_data))
+                        else:
+                            st.info("No insights found in BigQuery for this batch yet.")
 
         with c2:
             st.subheader("Export Data")
-            if st.session_state.review_data:
-                df = pd.DataFrame(st.session_state.review_data)
+            if st.session_state.get('review_data'):
+                df = pd.DataFrame(st.session_state['review_data'])
                 csv = df.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     label="Download CSV",
