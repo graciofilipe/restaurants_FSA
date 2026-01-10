@@ -14,6 +14,8 @@
 ## Artificial Intelligence
 - **LLM/Generative AI:** Vertex AI & Google GenAI (Gemini 2.5 Flash for data processing tasks and Agent).
 - **Agent Framework:** Google ADK (Agent Development Kit) & Vertex AI Agent Engine.
+- **Agent Interaction:** Vertex AI SDK for Python (Cloud-native Client).
+- **State Management:** Streamlit Session State (for managing batch processing results and UI visibility).
 
 ## DevOps & Tools
 - **Containerization:** Docker
