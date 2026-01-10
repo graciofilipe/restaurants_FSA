@@ -7,10 +7,10 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Backend Integration (BigQuery Data Retrieval)' (Protocol in workflow.md)
 
 ## Phase 2: UI Implementation (Streamlit Results View)
-- [ ] Task: Write failing tests for UI state management (verifying `session_state.latest_insights` is populated correctly).
-- [ ] Task: Update the "Generate Agent Insights" loop in `app/ui/st_app.py` to collect processed `fhrsid`s and trigger a data fetch upon completion.
-- [ ] Task: Implement the "Latest Batch Insights" expander and table display in `app/ui/st_app.py` below the generation section.
-- [ ] Task: Verify UI responsiveness and correct data filtering (only "just now" batch is shown).
+- [x] Task: Write failing tests for UI state management (verifying `session_state.latest_insights` is populated correctly). 52da82e
+- [x] Task: Update the "Generate Agent Insights" loop in `app/ui/st_app.py` to collect processed `fhrsid`s and trigger a data fetch upon completion. 52da82e
+- [x] Task: Implement the "Latest Batch Insights" expander and table display in `app/ui/st_app.py` below the generation section. 52da82e
+- [x] Task: Verify UI responsiveness and correct data filtering (only "just now" batch is shown). 52da82e
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: UI Implementation (Streamlit Results View)' (Protocol in workflow.md)
 
 ## Phase 3: Deployment & Production Verification
