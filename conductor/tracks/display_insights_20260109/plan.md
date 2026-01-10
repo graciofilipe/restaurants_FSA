@@ -14,6 +14,6 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2: UI Implementation (Streamlit Results View)' (Protocol in workflow.md)
 
 ## Phase 3: Deployment & Production Verification
-- [ ] Task: Deploy the updated application to Google Cloud Run using the existing CI/CD pipeline (`cloudbuild.yaml`).
+- [x] Task: Deploy the updated application to Google Cloud Run using the existing CI/CD pipeline (`cloudbuild.yaml`).
 - [ ] Task: Perform final acceptance testing on the production URL: https://restaurants-fsa-tqzsejpoja-nw.a.run.app.
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Deployment & Production Verification' (Protocol in workflow.md)
