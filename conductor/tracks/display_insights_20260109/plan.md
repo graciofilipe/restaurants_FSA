@@ -1,10 +1,10 @@
 # Plan: Display Agent Insights on UI
 
-## Phase 1: Backend Integration (BigQuery Data Retrieval)
+## Phase 1: Backend Integration (BigQuery Data Retrieval) [checkpoint: a49af84]
 - [x] Task: Write failing unit tests for `load_specific_agent_insights` in `app/services/test_bq_utils_agent.py`. 5738261
 - [x] Task: Implement `load_specific_agent_insights(project_id, dataset_id, fhrsids)` in `app/services/bq_utils.py`. bfd4e86
 - [x] Task: Verify unit tests pass and code coverage for the new function is >80%. bfd4e86
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Backend Integration (BigQuery Data Retrieval)' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Backend Integration (BigQuery Data Retrieval)' (Protocol in workflow.md)
 
 ## Phase 2: UI Implementation (Streamlit Results View)
 - [ ] Task: Write failing tests for UI state management (verifying `session_state.latest_insights` is populated correctly).
