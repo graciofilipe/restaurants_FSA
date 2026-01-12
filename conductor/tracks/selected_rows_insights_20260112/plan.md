@@ -17,16 +17,13 @@
     - [x] Subtask: Pass the list of IDs to the SQL script formatting function.
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Gemini Analysis Backend Update' (Protocol in workflow.md)
 
-## Phase 3: Gemini Analysis UI Update
+## Phase 3: Gemini Analysis UI Update [checkpoint: d2bf5c3]
 - [x] Task: Update `app/ui/st_app.py` a788be2
     - [x] Subtask: Locate `tab_gemini` rendering block.
     - [x] Subtask: Pass `selected_rows` data to the logic.
     - [x] Subtask: Disable "Run Gemini Analysis" button if `selected_rows` is empty.
     - [x] Subtask: Extract `fhrsid` list from selection and pass to `execute_gemini_enrichment`.
-    - [ ] Subtask: Pass `selected_rows` data to the logic.
-    - [ ] Subtask: Disable "Run Gemini Analysis" button if `selected_rows` is empty.
-    - [ ] Subtask: Extract `fhrsid` list from selection and pass to `execute_gemini_enrichment`.
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Gemini Analysis UI Update' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Gemini Analysis UI Update' (Protocol in workflow.md)
 
 ## Phase 4: Deployment & Verification
 - [ ] Task: Deploy to Cloud Run
