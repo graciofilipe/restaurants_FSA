@@ -134,21 +134,29 @@ def main_ui():
             tab_gemini, tab_agent = st.tabs(["Gemini Analysis (Batch)", "Agent Research (Selected)"])
             
             with tab_gemini:
-                st.write("Run Gemini analysis on ALL filtered data.")
-                connection_id = st.text_input("Connection ID", value="eu.gemini")
-                if st.button("Run Gemini Analysis"):
-                    with st.spinner("Running Gemini Analysis... this may take a while."):
-                        success = execute_gemini_enrichment(
-                            project_id, dataset_id, table_id,
-                            connection_id=connection_id,
-                            days_recent=days_lookback,
-                            review_status_filter=selected_statuses,
-                            excluded_locations=excluded_las
-                        )
-                        if success:
-                            st.success("Analysis Complete! Reload data to see results.")
-                        else:
-                            st.error("Analysis Failed. Check logs.")
+                st.write("Run Gemini analysis on **Selected Rows** only.")
+                
+                # Extract FHRSIDs from selection
+                selected_fhrsids = [str(row['fhrsid']) for row in selected_rows if 'fhrsid' in row]
+                
+                if not selected_fhrsids:
+                    st.info("Select rows in the table above to enable Gemini Analysis.")
+                    st.button("Run Gemini Analysis", disabled=True, key="btn_gemini_disabled")
+                else:
+                    st.write(f"Targeting {len(selected_fhrsids)} selected restaurants.")
+                    connection_id = st.text_input("Connection ID", value="eu.gemini")
+                    
+                    if st.button(f"Run Gemini Analysis ({len(selected_fhrsids)} Rows)"):
+                        with st.spinner("Running Gemini Analysis... this may take a while."):
+                            success = execute_gemini_enrichment(
+                                project_id, dataset_id, table_id,
+                                connection_id=connection_id,
+                                fhrsids=selected_fhrsids
+                            )
+                            if success:
+                                st.success("Analysis Complete! Reload data to see results.")
+                            else:
+                                st.error("Analysis Failed. Check logs.")
             
             with tab_agent:
                 render_agent_research_tab(project_id, dataset_id, selected_rows)
