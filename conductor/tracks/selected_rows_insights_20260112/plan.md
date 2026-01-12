@@ -1,12 +1,12 @@
 # Plan: Enforce Selected Rows for Insights
 
-## Phase 1: Agent Research Refactoring
+## Phase 1: Agent Research Refactoring [checkpoint: d8ce126]
 - [x] Task: Clean up `app/ui/agent_research.py` 03feec4
     - [x] Subtask: Remove `render_agent_research_tab` "Target Mode" selection logic.
     - [x] Subtask: Remove logic and UI code for "Batch (All Filtered)" and "Manual List" modes.
     - [x] Subtask: Implement "Selected Rows" as the default and only behavior.
     - [x] Subtask: Implement UI state validation (disable button if `selected_rows` is empty).
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Agent Research Refactoring' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Agent Research Refactoring' (Protocol in workflow.md)
 
 ## Phase 2: Gemini Analysis Backend Update
 - [ ] Task: Modify SQL generation in `scripts/bq_scripts.py`
