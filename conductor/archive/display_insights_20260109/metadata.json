@@ -1,0 +1,8 @@
+{
+  "track_id": "display_insights_20260109",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-01-09T17:35:00Z",
+  "updated_at": "2026-01-09T17:35:00Z",
+  "description": "I want the results of the \"agent insights\" to be shown on the UI after loaded into the BigQuery Table"
+}

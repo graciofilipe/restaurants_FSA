@@ -34,7 +34,7 @@ NEW_BQ_SCHEMA = [
 
 # --- Tests for load_all_data_from_bq ---
 
-@patch('app.services.bq_utils.pandas_gbq.read_gbq')
+@patch('pandas_gbq.read_gbq')
 def test_load_all_data_from_bq_success(mock_read_gbq):
     """Test successful data loading and conversion to list of dicts."""
     sample_data = {'col1': [1, 2], 'col2': ['a', 'b']}
@@ -51,7 +51,7 @@ def test_load_all_data_from_bq_success(mock_read_gbq):
     assert result == expected_result
     mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
 
-@patch('app.services.bq_utils.pandas_gbq.read_gbq')
+@patch('pandas_gbq.read_gbq')
 def test_load_all_data_from_bq_empty_table(mock_read_gbq):
     """Test loading from an empty table returns an empty list."""
     mock_df = pd.DataFrame()
@@ -66,7 +66,7 @@ def test_load_all_data_from_bq_empty_table(mock_read_gbq):
     assert result == []
     mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
 
-@patch('app.services.bq_utils.pandas_gbq.read_gbq')
+@patch('pandas_gbq.read_gbq')
 @patch('builtins.print') # Mock print to check error logging
 def test_load_all_data_from_bq_pandas_gbq_exception(mock_print, mock_read_gbq):
     """Test that GenericGBQException is caught and returns an empty list."""
@@ -87,7 +87,7 @@ def test_load_all_data_from_bq_pandas_gbq_exception(mock_print, mock_read_gbq):
     # Check if error was printed (optional, but good for verifying logging)
     # mock_print.assert_any_call(f"Error loading data from BigQuery table {project_id}.{dataset_id}.{table_id}: {error_message}")
 
-@patch('app.services.bq_utils.pandas_gbq.read_gbq')
+@patch('pandas_gbq.read_gbq')
 @patch('builtins.print')
 def test_load_all_data_from_bq_google_auth_exception(mock_print, mock_read_gbq):
     """Test that DefaultCredentialsError is caught and returns an empty list."""
@@ -103,7 +103,7 @@ def test_load_all_data_from_bq_google_auth_exception(mock_print, mock_read_gbq):
     mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
     # mock_print.assert_any_call(f"Error loading data from BigQuery table {project_id}.{dataset_id}.{table_id}: {error_message}")
 
-@patch('app.services.bq_utils.pandas_gbq.read_gbq')
+@patch('pandas_gbq.read_gbq')
 @patch('builtins.print')
 def test_load_all_data_from_bq_generic_exception(mock_print, mock_read_gbq):
     """Test that a generic Exception is caught and returns an empty list."""
@@ -122,7 +122,7 @@ def test_load_all_data_from_bq_generic_exception(mock_print, mock_read_gbq):
 # --- Tests for write_to_bigquery ---
 
 @patch('builtins.print') # Patched print
-@patch('app.services.bq_utils.bigquery.Client')
+@patch('google.cloud.bigquery.Client')
 def test_write_to_bigquery_logic_with_fixed_schema(mock_bq_client_constructor, mock_print):
     mock_bq_client_instance = mock_bq_client_constructor.return_value
     mock_load_job = MagicMock()
@@ -209,7 +209,7 @@ import unittest
 
 class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCase for easier class-based structure
     @patch('builtins.print') # Patched print
-    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('google.cloud.bigquery.Client')
     def test_append_successful(self, mock_bq_client, mock_print):
         mock_job = MagicMock()
         mock_bq_client.return_value.load_table_from_dataframe.return_value = mock_job
@@ -272,7 +272,7 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
         self.assertEqual(set(called_df.columns), set(sanitized_schema_names))
 
     @patch('builtins.print') # Patched print
-    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('google.cloud.bigquery.Client')
     def test_append_failure_on_load(self, mock_bq_client, mock_print):
         mock_bq_client.return_value.load_table_from_dataframe.side_effect = Exception("BQ API error")
 
@@ -290,7 +290,7 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
         self.assertFalse(result)
 
     @patch('builtins.print') # Patched print
-    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('google.cloud.bigquery.Client')
     def test_append_empty_dataframe(self, mock_bq_client, mock_print):
         sanitized_schema_names = [field.name for field in NEW_BQ_SCHEMA]
         empty_df = pd.DataFrame(columns=sanitized_schema_names)
@@ -309,7 +309,7 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
         mock_bq_client.return_value.load_table_from_dataframe.assert_called_once()
 
     @patch('builtins.print') # Patched print
-    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('google.cloud.bigquery.Client')
     def test_column_subsetting_and_ordering_for_append(self, mock_bq_client, mock_print):
         mock_job = MagicMock()
         mock_bq_client.return_value.load_table_from_dataframe.return_value = mock_job
@@ -346,7 +346,7 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
 
 
     @patch('builtins.print') # Patched print
-    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('google.cloud.bigquery.Client')
     def test_append_to_bigquery_fhrsid_string_handling(self, mock_bq_client_constructor, mock_print):
         mock_bq_client_instance = mock_bq_client_constructor.return_value
         mock_load_job = MagicMock()
@@ -417,7 +417,7 @@ from google.cloud import bigquery, exceptions as google_exceptions # Ensure exce
 from app.services.bq_utils import update_rows_in_bigquery, FHRSID_COLNAME
 
 class TestUpdateRowsInBigQuery(unittest.TestCase):
-    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('google.cloud.bigquery.Client')
     def test_successful_update(self, mock_bq_client_constructor):
         mock_client_instance = mock_bq_client_constructor.return_value
         mock_query_job = MagicMock()
@@ -451,7 +451,7 @@ class TestUpdateRowsInBigQuery(unittest.TestCase):
         # Check table name
         self.assertIn(f"UPDATE `{project_id}.{dataset_id}.{table_id}`", actual_query)
 
-    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('google.cloud.bigquery.Client')
     def test_fhrsid_with_single_quote(self, mock_bq_client_constructor):
         mock_client_instance = mock_bq_client_constructor.return_value
         mock_query_job = MagicMock()
@@ -472,7 +472,7 @@ class TestUpdateRowsInBigQuery(unittest.TestCase):
         expected_where_clause = f"WHERE {FHRSID_COLNAME} = 'test''fhrsid'"
         self.assertIn(expected_where_clause, actual_query)
 
-    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('google.cloud.bigquery.Client')
     def test_bigquery_api_error(self, mock_bq_client_constructor):
         mock_client_instance = mock_bq_client_constructor.return_value
         # Simulate an error during query execution
@@ -487,7 +487,7 @@ class TestUpdateRowsInBigQuery(unittest.TestCase):
         result = update_rows_in_bigquery(project_id, dataset_id, table_id, fhrsid, update_data)
         self.assertFalse(result)
 
-    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('google.cloud.bigquery.Client')
     def test_bigquery_job_error(self, mock_bq_client_constructor):
         mock_client_instance = mock_bq_client_constructor.return_value
         mock_query_job = MagicMock()
@@ -505,7 +505,7 @@ class TestUpdateRowsInBigQuery(unittest.TestCase):
         self.assertFalse(result)
 
 
-    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('google.cloud.bigquery.Client')
     def test_empty_update_data(self, mock_bq_client_constructor):
         mock_client_instance = mock_bq_client_constructor.return_value
 

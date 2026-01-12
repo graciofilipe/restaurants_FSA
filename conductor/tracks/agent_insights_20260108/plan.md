@@ -21,8 +21,10 @@
 - [x] Task: Refactor UI to support Batch and Manual List inputs for Agent Insights. 462a4cc
 - [x] Task: Conductor - User Manual Verification 'Phase 3: UI Enhancement (Streamlit)' (Protocol in workflow.md) [checkpoint: 512b3c1]
 
-## Phase 4: Deployment & Final Verification
-- [x] Task: Verify all tests pass locally.
-- [~] Task: Deploy the updated application to Cloud Run using the existing CI/CD pipeline (`cloudbuild.yaml`).
-- [ ] Task: Perform end-to-end verification in the production environment: select restaurants, generate insights, and verify BQ table updates.
-- [ ] Task: Conductor - User Manual Verification 'Phase 4: Deployment & Final Verification' (Protocol in workflow.md)
+### Phase 4: Deployment & Final Verification
+- [x] Integrate `get_agent_insight` into the Streamlit UI review workflow.
+- [x] Implement the "Generate Agent Insights" button logic with progress tracking.
+- [x] Resolve `ReasoningEngine` client method registration failure (`AttributeError`) by switching to cloud-native `vertexai.Client` and `AgentEngine` SDK.
+- [x] Deploy the updated application to Cloud Run.
+- [x] Verify successful agent query execution in production.
+- [x] Confirm data persistence in BigQuery `restaurant_agent_insights` table.

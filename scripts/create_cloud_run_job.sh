@@ -11,13 +11,13 @@ echo "Creating/Updating Cloud Run Job: $JOB_NAME using image: $IMAGE_URL"
 gcloud run jobs create $JOB_NAME \
     --image $IMAGE_URL \
     --command "python" \
-    --args "-m,app.cron.fetch_weekly" \
+    --args="-m","app.cron.fetch_weekly" \
     --region $REGION \
     --task-timeout 3600s \
     --set-env-vars GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT \
     || gcloud run jobs update $JOB_NAME \
         --image $IMAGE_URL \
         --command "python" \
-        --args "-m,app.cron.fetch_weekly" \
+        --args="-m","app.cron.fetch_weekly" \
         --region $REGION \
         --set-env-vars GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT

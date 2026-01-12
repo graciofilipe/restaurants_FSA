@@ -80,6 +80,7 @@ The application is deployed to Google Cloud Run via Cloud Build. The build steps
 5.  Deploy to Cloud Run (`restaurants-fsa` service in `europe-west2`).
 
 ## Recent Updates
+*   **Agent Interaction Upgrade:** Switched from the legacy `ReasoningEngine` client to the cloud-native `vertexai.Client` and `AgentEngine` SDK to correctly handle ADK-based agents and async stream queries. This resolved an `AttributeError` in production.
 *   **Gemini 3 Integration Fixes:** Updated `bq_scripts.py` to use the correct `model_params` structure for the Vertex AI GenerateContent API.
     *   Corrected `tools` format to `[{"googleSearch": {}}]`.
     *   Added explicit `safetySettings` with `threshold: "OFF"`.

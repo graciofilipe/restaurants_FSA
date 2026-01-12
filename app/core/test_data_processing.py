@@ -9,8 +9,8 @@ import io
 
 # --- Tests for load_json_from_local_file_path ---
 class TestLoadJsonFromLocalFilePath(unittest.TestCase):
-    @patch('app.core.data_processing.open', new_callable=unittest.mock.mock_open, read_data='{"key": "value"}')
-    @patch('app.core.data_processing.json.load')
+    @patch('builtins.open', new_callable=unittest.mock.mock_open, read_data='{"key": "value"}')
+    @patch('json.load')
     def test_load_json_success(self, mock_json_load, mock_file_open):
         mock_json_load.return_value = {"key": "value"}
         result = load_json_from_local_file_path("dummy_path.json")
@@ -89,75 +89,71 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         self.assertEqual(len(new_restaurants), 0)
         self.assertIn("No new restaurant records identified", message)
 
-    @patch('app.core.data_processing.datetime') # Mock datetime for predictable first_seen
-    def test_add_new_restaurants_and_fields_initialization(self, mock_datetime):
-        # Setup mock for datetime.now().strftime()
-        mock_datetime_str = "2023-10-26"
-        mock_datetime.now.return_value.strftime.return_value = mock_datetime_str
-
-        master_data = [{'FHRSID': "1", 'BusinessName': 'A'}] # Existing record
-
-        # Define API data with one existing and two new restaurants
-        # These can have extra fields not in ORIGINAL_COLUMNS_TO_KEEP
-        api_restaurant_1_existing = {'FHRSID': "1", 'BusinessName': 'A_updated', 'RatingValue': "Awful"}
-        api_restaurant_2_new = {
-            'FHRSID': "2", 'BusinessName': 'Cafe Terra', 'RatingValue': '5',
-            'AddressLine1': '123 Main St', 'PostCode': 'AB1 2CD',
-            'LocalAuthorityName': 'Test Council', 'NewRatingPending': 'false',
-            'Scores': {'Hygiene': 10}, 'Geocode': {'Latitude': '1.0'}, 'BusinessType': 'Cafe'
-        }
-        api_restaurant_3_new = { # Minimal data, missing some optional ORIGINAL_COLUMNS_TO_KEEP fields
-            'FHRSID': "3", 'BusinessName': 'Pizza Place', 'RatingValue': '4',
-            'NewRatingPending': 'True', # String true
-            # Missing AddressLine1, PostCode, LocalAuthorityName from ORIGINAL_COLUMNS_TO_KEEP
-            'RatingDate': "2023-01-01" # This field is not in ORIGINAL_COLUMNS_TO_KEEP
-        }
-
-        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [
-            api_restaurant_1_existing,
-            api_restaurant_2_new,
-            api_restaurant_3_new
-        ]}}}
-
-        new_restaurants, message = process_and_update_master_data(master_data, api_data)
-
-        self.assertEqual(len(new_restaurants), 2)
-        self.assertIn("Identified 2 unique new restaurant", message)
-
-        # Check properties of the new restaurants
-        for r_new in new_restaurants:
-            self.assertEqual(set(r_new.keys()), set(ORIGINAL_COLUMNS_TO_KEEP))
-            self.assertEqual(r_new['first_seen'], mock_datetime_str)
-            self.assertEqual(r_new['manual_review'], "not reviewed")
-            self.assertIsNone(r_new.get('gemini_insights')) # Should be None as it's not in API mock
-
-            if r_new['FHRSID'] == "2": # api_restaurant_2_new
-                self.assertEqual(r_new['BusinessName'], 'Cafe Terra')
-                self.assertEqual(r_new['RatingValue'], '5')
-                self.assertEqual(r_new['AddressLine1'], '123 Main St')
-                self.assertEqual(r_new['PostCode'], 'AB1 2CD')
-                self.assertEqual(r_new['LocalAuthorityName'], 'Test Council')
-                self.assertEqual(r_new['NewRatingPending'], 'false') # Kept as string from API
-                # Optional fields from ORIGINAL_COLUMNS_TO_KEEP not in API mock for this item should be None
-                self.assertIsNone(r_new.get('AddressLine2'))
-                self.assertIsNone(r_new.get('AddressLine3'))
-            elif r_new['FHRSID'] == "3": # api_restaurant_3_new
-                self.assertEqual(r_new['BusinessName'], 'Pizza Place')
-                self.assertEqual(r_new['RatingValue'], '4')
-                self.assertEqual(r_new['NewRatingPending'], 'True') # Kept as string from API
-                # These were missing in API data, so should be None
-                self.assertIsNone(r_new.get('AddressLine1'))
-                self.assertIsNone(r_new.get('AddressLine2'))
-                self.assertIsNone(r_new.get('AddressLine3'))
-                self.assertIsNone(r_new.get('PostCode'))
-                self.assertIsNone(r_new.get('LocalAuthorityName'))
-
-            # Assert that fields NOT in ORIGINAL_COLUMNS_TO_KEEP are absent
-            self.assertNotIn('Scores', r_new)
-            self.assertNotIn('Geocode', r_new)
-            self.assertNotIn('BusinessType', r_new)
-            self.assertNotIn('RatingDate', r_new) # Example of a field not kept
-
+    def test_add_new_restaurants_and_fields_initialization(self):
+                # Setup mock for datetime.now().strftime()
+                mock_datetime_str = "2023-10-26"
+            
+                master_data = [{'FHRSID': "1", 'BusinessName': 'A'}] # Existing record
+                # Define API data with one existing and two new restaurants
+                # These can have extra fields not in ORIGINAL_COLUMNS_TO_KEEP
+                api_restaurant_1_existing = {'FHRSID': "1", 'BusinessName': 'A_updated', 'RatingValue': "Awful"}
+                api_restaurant_2_new = {
+                    'FHRSID': "2", 'BusinessName': 'Cafe Terra', 'RatingValue': '5',
+                    'AddressLine1': '123 Main St', 'PostCode': 'AB1 2CD',
+                    'LocalAuthorityName': 'Test Council', 'NewRatingPending': 'false',
+                    'Scores': {'Hygiene': 10}, 'Geocode': {'Latitude': '1.0'}, 'BusinessType': 'Cafe'
+                }
+                api_restaurant_3_new = { # Minimal data, missing some optional ORIGINAL_COLUMNS_TO_KEEP fields
+                    'FHRSID': "3", 'BusinessName': 'Pizza Place', 'RatingValue': '4',
+                    'NewRatingPending': 'True', # String true
+                    # Missing AddressLine1, PostCode, LocalAuthorityName from ORIGINAL_COLUMNS_TO_KEEP
+                    'RatingDate': "2023-01-01" # This field is not in ORIGINAL_COLUMNS_TO_KEEP
+                }
+            
+                api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [
+                    api_restaurant_1_existing,
+                    api_restaurant_2_new,
+                    api_restaurant_3_new
+                ]}}}
+            
+                new_restaurants, message = process_and_update_master_data(master_data, api_data, today_date=mock_datetime_str)
+            
+                self.assertEqual(len(new_restaurants), 2)
+                self.assertIn("Identified 2 unique new restaurant", message)
+            
+                # Check properties of the new restaurants
+                for r_new in new_restaurants:
+                    self.assertEqual(set(r_new.keys()), set(ORIGINAL_COLUMNS_TO_KEEP))
+                    self.assertEqual(r_new['first_seen'], mock_datetime_str)
+                    self.assertEqual(r_new['manual_review'], "not reviewed")
+                    self.assertIsNone(r_new.get('gemini_insights')) # Should be None as it's not in API mock
+                    
+                    if r_new['FHRSID'] == "2": # api_restaurant_2_new
+                        self.assertEqual(r_new['BusinessName'], 'Cafe Terra')
+                        self.assertEqual(r_new['RatingValue'], '5')
+                        self.assertEqual(r_new['AddressLine1'], '123 Main St')
+                        self.assertEqual(r_new['PostCode'], 'AB1 2CD')
+                        self.assertEqual(r_new['LocalAuthorityName'], 'Test Council')
+                        self.assertEqual(r_new['NewRatingPending'], 'false') # Kept as string from API
+                        # Optional fields from ORIGINAL_COLUMNS_TO_KEEP not in API mock for this item should be None
+                        self.assertIsNone(r_new.get('AddressLine2'))
+                        self.assertIsNone(r_new.get('AddressLine3'))
+                    elif r_new['FHRSID'] == "3": # api_restaurant_3_new
+                        self.assertEqual(r_new['BusinessName'], 'Pizza Place')
+                        self.assertEqual(r_new['RatingValue'], '4')
+                        self.assertEqual(r_new['NewRatingPending'], 'True') # Kept as string from API
+                        # These were missing in API data, so should be None
+                        self.assertIsNone(r_new.get('AddressLine1'))
+                        self.assertIsNone(r_new.get('AddressLine2'))
+                        self.assertIsNone(r_new.get('AddressLine3'))
+                        self.assertIsNone(r_new.get('PostCode'))
+                        self.assertIsNone(r_new.get('LocalAuthorityName'))
+        
+                    # Assert that fields NOT in ORIGINAL_COLUMNS_TO_KEEP are absent
+                    self.assertNotIn('Scores', r_new)
+                    self.assertNotIn('Geocode', r_new)
+                    self.assertNotIn('BusinessType', r_new)
+                    self.assertNotIn('RatingDate', r_new) # Example of a field not kept
 
     def test_empty_master_data_all_api_items_are_new(self):
         master_data = []
@@ -169,17 +165,15 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
             'ExtraField': 'This will be dropped'
         }
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [api_restaurant]}}}
-
+    
         mock_date_str = "mock_date_value"
-        with patch('app.core.data_processing.datetime') as mock_dt:
-            mock_dt.now.return_value.strftime.return_value = mock_date_str
-            new_restaurants, message = process_and_update_master_data(master_data, api_data)
-
+        new_restaurants, message = process_and_update_master_data(master_data, api_data, today_date=mock_date_str)
+    
         self.assertEqual(len(new_restaurants), 1)
         self.assertIn("Identified 1 unique new restaurant", message)
-        
+    
         r_new = new_restaurants[0]
-
+        
         self.assertEqual(set(r_new.keys()), set(ORIGINAL_COLUMNS_TO_KEEP))
         self.assertEqual(r_new['FHRSID'], "1")
         self.assertEqual(r_new['BusinessName'], 'Solo Cafe')
@@ -227,36 +221,34 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         self.assertEqual(len(new_restaurants), 0)
         self.assertIn("API response contained no establishments", message)
 
-    @patch('app.core.data_processing.datetime')
-    def test_fhrsid_is_string_after_processing_and_schema_adherence(self, mock_datetime):
-        """
-        Test FHRSID is string after processing, and output adheres to ORIGINAL_COLUMNS_TO_KEEP.
-        """
-        mock_date_str = "2023-10-27"
-        mock_datetime.now.return_value.strftime.return_value = mock_date_str
-        master_data = []
-
-        api_est_int_fhrsid = {
-            'FHRSID': 123, 'BusinessName': 'Testaurant Int',
-            'RatingValue': 'Good', 'LocalAuthorityName': 'LA1', 'NewRatingPending': 'false',
-            'ExtraInfo': 'will be dropped'
-        }
-        api_est_str_fhrsid = {
-            'FHRSID': "456", 'BusinessName': 'Testaurant Str',
-            'AddressLine1': 'Street', 'PostCode': 'PC',
-            'RatingValue': 'Bad', 'LocalAuthorityName': 'LA2', 'NewRatingPending': 'TRUE',
-            'AnotherExtra': 'also dropped'
-        }
-        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [api_est_int_fhrsid, api_est_str_fhrsid]}}}
-
-        new_restaurants, message = process_and_update_master_data(master_data, api_data)
-        self.assertEqual(len(new_restaurants), 2)
-        self.assertIn("Identified 2 unique new restaurant", message)
-
-        for r_new in new_restaurants:
-            self.assertEqual(set(r_new.keys()), set(ORIGINAL_COLUMNS_TO_KEEP))
-            self.assertIsInstance(r_new['FHRSID'], str)
-            self.assertEqual(r_new['first_seen'], mock_date_str)
+        def test_fhrsid_is_string_after_processing_and_schema_adherence(self):
+            """
+            Test FHRSID is string after processing, and output adheres to ORIGINAL_COLUMNS_TO_KEEP.
+            """
+            mock_date_str = "2023-10-27"
+            master_data = []
+        
+            api_est_int_fhrsid = {
+                'FHRSID': 123, 'BusinessName': 'Testaurant Int',
+                'RatingValue': 'Good', 'LocalAuthorityName': 'LA1', 'NewRatingPending': 'false',
+                'ExtraInfo': 'will be dropped'
+            }
+            api_est_str_fhrsid = {
+                'FHRSID': "456", 'BusinessName': 'Testaurant Str',
+                'AddressLine1': 'Street', 'PostCode': 'PC',
+                'RatingValue': 'Bad', 'LocalAuthorityName': 'LA2', 'NewRatingPending': 'TRUE',
+                'AnotherExtra': 'also dropped'
+            }
+            api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [api_est_int_fhrsid, api_est_str_fhrsid]}}}
+        
+            new_restaurants, message = process_and_update_master_data(master_data, api_data, today_date=mock_date_str)
+            self.assertEqual(len(new_restaurants), 2)
+            self.assertIn("Identified 2 unique new restaurant", message)
+        
+            for r_new in new_restaurants:
+                self.assertEqual(set(r_new.keys()), set(ORIGINAL_COLUMNS_TO_KEEP))
+                self.assertIsInstance(r_new['FHRSID'], str)
+                self.assertEqual(r_new['first_seen'], mock_date_str)
             self.assertEqual(r_new['manual_review'], "not reviewed")
             self.assertIsNone(r_new.get('gemini_insights')) # Default
 

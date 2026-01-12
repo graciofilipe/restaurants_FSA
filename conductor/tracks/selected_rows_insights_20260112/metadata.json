@@ -1,0 +1,8 @@
+{
+  "track_id": "selected_rows_insights_20260112",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-01-12T10:00:00Z",
+  "updated_at": "2026-01-12T10:00:00Z",
+  "description": "Enforce 'Selected Rows' as the only mechanism for generating Gemini and Agent insights."
+}

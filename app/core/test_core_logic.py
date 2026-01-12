@@ -22,7 +22,9 @@ def test_parse_coordinates_empty():
     assert result == []
     assert errors == []
 
-@patch('app.core.data_processing.fetch_api_data')
+import app.core.data_processing
+
+@patch.object(app.core.data_processing, 'fetch_api_data')
 def test_fetch_data_for_all_coordinates(mock_fetch):
     # Setup mock
     # First call returns one establishment, second call returns None (end of pagination/list)

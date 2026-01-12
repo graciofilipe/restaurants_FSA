@@ -7,7 +7,7 @@ steps:
   # Run tests
   - name: 'python:3.11-slim'
     entrypoint: 'python'
-    args: ['-m', 'pytest', 'test_st_app_accessibility.py']
+    args: ['-m', 'pytest', 'app/']
 
   # Build Docker image
   - name: 'gcr.io/cloud-builders/docker'

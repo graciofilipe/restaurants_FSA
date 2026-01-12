@@ -1,7 +1,7 @@
 import json
 import time
 import pandas as pd
-from datetime import datetime
+import datetime
 from typing import List, Dict, Any, Callable, Tuple, Optional
 from app.services.bq_utils import ORIGINAL_COLUMNS_TO_KEEP
 from app.services.api_client import fetch_api_data
@@ -103,19 +103,27 @@ def load_master_data(project_id: str, dataset_id: str, table_id: str, load_bq_fu
         # Data format issue
         raise TypeError(f"Data loaded from BigQuery table {project_id}.{dataset_id}.{table_id} is not in the expected list format. Type found: {type(loaded_data)}.")
 
-def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
+def process_and_update_master_data(
+    master_data: List[Dict[str, Any]], 
+    api_data: Dict[str, Any],
+    today_date: Optional[str] = None
+) -> Tuple[List[Dict[str, Any]], str]:
     """
     Processes API data and identifies new establishments not present in the master data.
 
     Args:
         master_data: The current list of master restaurant data.
         api_data: The raw JSON data (as a dict) from the API.
+        today_date: Optional date string (YYYY-MM-DD) to use as 'first_seen'. Defaults to current date.
 
     Returns:
         A tuple containing:
         1. A list of newly added restaurant dictionaries.
         2. A summary message string suitable for display.
     """
+    if today_date is None:
+        today_date = datetime.datetime.now().strftime("%Y-%m-%d")
+
     api_establishments = api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
     
     messages = []
@@ -143,7 +151,6 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
                     # Warning suppressed or could be collected if needed
                 existing_fhrsid_set.add(canonical_fhrsid)
 
-    today_date = datetime.now().strftime("%Y-%m-%d")
     newly_added_restaurants: List[Dict[str, Any]] = []
     fhrsids_processed_in_this_batch = set() 
 
