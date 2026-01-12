@@ -18,8 +18,11 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Gemini Analysis Backend Update' (Protocol in workflow.md)
 
 ## Phase 3: Gemini Analysis UI Update
-- [ ] Task: Update `app/ui/st_app.py`
-    - [ ] Subtask: Locate `tab_gemini` rendering block.
+- [x] Task: Update `app/ui/st_app.py` a788be2
+    - [x] Subtask: Locate `tab_gemini` rendering block.
+    - [x] Subtask: Pass `selected_rows` data to the logic.
+    - [x] Subtask: Disable "Run Gemini Analysis" button if `selected_rows` is empty.
+    - [x] Subtask: Extract `fhrsid` list from selection and pass to `execute_gemini_enrichment`.
     - [ ] Subtask: Pass `selected_rows` data to the logic.
     - [ ] Subtask: Disable "Run Gemini Analysis" button if `selected_rows` is empty.
     - [ ] Subtask: Extract `fhrsid` list from selection and pass to `execute_gemini_enrichment`.
