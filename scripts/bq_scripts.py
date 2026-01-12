@@ -1,7 +1,7 @@
 # SQL Scripts for Gemini Enrichment Process
 
 # SCRIPT 1: Identify Recent Restaurants
-# Parameters: project_id, dataset_id, source_table, target_table_recents
+# Parameters: project_id, dataset_id, source_table, target_table_recents, filter_condition
 SCRIPT_IDENTIFY_RECENTS = """
 CREATE OR REPLACE TABLE
 `{project_id}.{dataset_id}.{target_table_recents}` AS
@@ -13,9 +13,7 @@ SELECT
 FROM
   `{project_id}.{dataset_id}.{source_table}`
 WHERE
-  DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent}
-  AND manual_review IN ({status_list_str})
-  {exclusion_clause}
+  {filter_condition}
 """
 
 # SCRIPT 2: Generate Gemini Insights

@@ -44,10 +44,13 @@ def execute_gemini_enrichment(
     model_endpoint: str = 'gemini-2.5-pro',
     days_recent: int = 33,
     review_status_filter: List[str] = None,
-    excluded_locations: List[str] = None
+    excluded_locations: List[str] = None,
+    fhrsids: List[str] = None
 ) -> bool:
     """
     Orchestrates the Gemini enrichment process using BigQuery scripts.
+    If 'fhrsids' is provided, it processes only those IDs.
+    Otherwise, it uses 'days_recent', 'review_status_filter', and 'excluded_locations'.
     """
     client = bigquery.Client(project=project_id)
     
@@ -56,30 +59,39 @@ def execute_gemini_enrichment(
     insights_table_id = "genairesults_temp"
     
     try:
-        # Build status list string
-        if review_status_filter:
-            status_list_str = ", ".join([f"'{s}'" for s in review_status_filter])
-        else:
-            status_list_str = "'pending', 'not reviewed'"
-
-        # Step 1: Identify Recents
-        logger.info("Step 1: Identifying recent restaurants...")
+        # Step 1: Identify Recents (or specific selection)
+        logger.info("Step 1: Identifying target restaurants...")
         
-        # Build exclusion clause
-        exclusion_clause = ""
-        if excluded_locations:
-            escaped_locs = [loc.replace("'", "''") for loc in excluded_locations]
-            locs_str = ", ".join([f"'{loc}'" for loc in escaped_locs])
-            exclusion_clause = f"AND localauthorityname NOT IN ({locs_str})"
+        filter_condition = ""
+        
+        if fhrsids:
+            # Explicit selection mode
+            escaped_ids = [str(fid).replace("'", "''") for fid in fhrsids]
+            id_list_str = ", ".join([f"'{fid}'" for fid in escaped_ids])
+            filter_condition = f"fhrsid IN ({id_list_str})"
+            logger.info(f"Targeting {len(fhrsids)} specific FHRSIDs.")
+        else:
+            # Default filter mode
+            if review_status_filter:
+                status_list_str = ", ".join([f"'{s}'" for s in review_status_filter])
+            else:
+                status_list_str = "'pending', 'not reviewed'"
+            
+            exclusion_clause = ""
+            if excluded_locations:
+                escaped_locs = [loc.replace("'", "''") for loc in excluded_locations]
+                locs_str = ", ".join([f"'{loc}'" for loc in escaped_locs])
+                exclusion_clause = f"AND localauthorityname NOT IN ({locs_str})"
+            
+            filter_condition = f"DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent} AND manual_review IN ({status_list_str}) {exclusion_clause}"
+            logger.info("Targeting recent restaurants based on date and status filters.")
 
         query_recents = SCRIPT_IDENTIFY_RECENTS.format(
             project_id=project_id,
             dataset_id=dataset_id,
             source_table=master_table_id,
             target_table_recents=recents_table_id,
-            days_recent=days_recent,
-            status_list_str=status_list_str,
-            exclusion_clause=exclusion_clause
+            filter_condition=filter_condition
         )
         job1 = client.query(query_recents)
         job1.result()
