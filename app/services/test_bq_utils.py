@@ -522,6 +522,60 @@ class TestUpdateRowsInBigQuery(unittest.TestCase):
         self.assertFalse(result)
         mock_client_instance.query.assert_not_called() # Ensure BQ query is not made
 
+class TestBqUtilsGeminiSelection(unittest.TestCase):
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_execute_gemini_enrichment_with_fhrsids(self, mock_client_cls):
+        """Test that passing fhrsids modifies the generated SQL correctly."""
+        mock_client = mock_client_cls.return_value
+        mock_job = MagicMock()
+        mock_client.query.return_value = mock_job
+        
+        fhrsids = ['123', '456']
+        project_id = 'test-proj'
+        dataset_id = 'test-ds'
+        master_table = 'master'
+        
+        # Execute with fhrsids
+        # Need to import execute_gemini_enrichment locally or ensure it is available in module scope
+        from app.services.bq_utils import execute_gemini_enrichment
+
+        execute_gemini_enrichment(
+            project_id=project_id,
+            dataset_id=dataset_id,
+            master_table_id=master_table,
+            fhrsids=fhrsids
+        )
+        
+        # Verify the first query (IDENTIFY_RECENTS)
+        call_args = mock_client.query.call_args_list[0]
+        query_executed = call_args[0][0]
+        
+        self.assertIn("fhrsid IN ('123', '456')", query_executed)
+        self.assertNotIn("DATE_DIFF", query_executed)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_execute_gemini_enrichment_default(self, mock_client_cls):
+        """Test default behavior uses date/status filters."""
+        mock_client = mock_client_cls.return_value
+        mock_job = MagicMock()
+        mock_client.query.return_value = mock_job
+        
+        from app.services.bq_utils import execute_gemini_enrichment
+
+        execute_gemini_enrichment(
+            project_id='test-proj',
+            dataset_id='test-ds',
+            master_table_id='master',
+            days_recent=30,
+            review_status_filter=['pending']
+        )
+        
+        call_args = mock_client.query.call_args_list[0]
+        query_executed = call_args[0][0]
+        
+        self.assertIn("DATE_DIFF", query_executed)
+        self.assertNotIn("fhrsid IN", query_executed)
 
 # If __name__ == '__main__':
 #     unittest.main() # This allows running file directly if not using pytest
