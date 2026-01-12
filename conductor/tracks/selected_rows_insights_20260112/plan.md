@@ -9,12 +9,12 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Agent Research Refactoring' (Protocol in workflow.md)
 
 ## Phase 2: Gemini Analysis Backend Update
-- [ ] Task: Modify SQL generation in `scripts/bq_scripts.py`
-    - [ ] Subtask: Update `get_gemini_enrichment_script` (or equivalent) to accept an optional list of `fhrsid`s.
-    - [ ] Subtask: Add a `WHERE T.fhrsid IN (...)` clause to the `UPDATE` statement (and/or the source selection CTE) to restrict processing to the provided IDs.
-- [ ] Task: Update Python Wrapper in `app/services/bq_utils.py`
-    - [ ] Subtask: Modify `execute_gemini_enrichment` signature to accept `fhrsids: List[str]`.
-    - [ ] Subtask: Pass the list of IDs to the SQL script formatting function.
+- [x] Task: Modify SQL generation in `scripts/bq_scripts.py` a54bcc8
+    - [x] Subtask: Update `get_gemini_enrichment_script` (or equivalent) to accept an optional list of `fhrsid`s.
+    - [x] Subtask: Add a `WHERE T.fhrsid IN (...)` clause to the `UPDATE` statement (and/or the source selection CTE) to restrict processing to the provided IDs.
+- [x] Task: Update Python Wrapper in `app/services/bq_utils.py` a54bcc8
+    - [x] Subtask: Modify `execute_gemini_enrichment` signature to accept `fhrsids: List[str]`.
+    - [x] Subtask: Pass the list of IDs to the SQL script formatting function.
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Gemini Analysis Backend Update' (Protocol in workflow.md)
 
 ## Phase 3: Gemini Analysis UI Update
