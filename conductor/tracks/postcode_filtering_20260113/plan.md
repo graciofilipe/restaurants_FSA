@@ -11,7 +11,7 @@
 - [x] Task: Execute benchmark and select method [b632901]
     - [x] Sub-task: Run the script.
     - [x] Sub-task: Document the chosen method (A or B) and the reasoning in a new file `conductor/tracks/postcode_filtering_20260113/decision_log.md`.
-- [ ] Task: Conductor - User Manual Verification 'Prototype & Benchmark Extraction Logic' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Prototype & Benchmark Extraction Logic' (Protocol in workflow.md) [checkpoint: 7e52f12]
 
 ## Phase 2: Core Logic Implementation
 - [ ] Task: Implement `add_outcode_column` in `app/core/data_processing.py`
