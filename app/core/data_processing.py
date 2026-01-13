@@ -307,3 +307,20 @@ def run_data_synchronization(
     new_restaurants, summary_msg = process_and_update_master_data(master_restaurant_data, combined_api_data)
     
     return master_restaurant_data, new_restaurants, summary_msg
+
+def add_outcode_column(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds an 'outcode' column to the DataFrame by extracting the first part of the postcode.
+    Logic: Splits by whitespace and takes the first element.
+    """
+    if df.empty or 'PostCode' not in df.columns:
+        if 'outcode' not in df.columns:
+             df['outcode'] = [] 
+        return df
+
+    # Use vectorized string split
+    # .str accessor handles NaNs automatically (propagates them)
+    # This assumes PostCode column is object/string type.
+    df['outcode'] = df['PostCode'].str.split(' ').str[0]
+
+    return df
