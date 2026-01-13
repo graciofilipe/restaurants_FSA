@@ -11,7 +11,8 @@ from app.services.bq_utils import (
 )
 from app.core.data_processing import (
     load_data_from_csv,
-    parse_bq_path
+    parse_bq_path,
+    add_outcode_column
 )
 from app.ui.agent_research import render_agent_research_tab
 from app.ui.bulk_update import render_bulk_update_ui
@@ -120,10 +121,31 @@ def main_ui():
 
     # Main Area
     if st.session_state.get('review_data'):
-        st.subheader(f"Review Queue ({len(st.session_state['review_data'])} records)")
+        # Prepare Data: Convert to DF and enrich
+        df_master = pd.DataFrame(st.session_state['review_data'])
+        df_master = add_outcode_column(df_master)
         
-        selection_event = display_data(st.session_state['review_data'])
-        selected_rows = get_selected_rows(selection_event, st.session_state['review_data'])
+        # Sidebar: Postcode Filter
+        # Extract unique outcodes for the filter dropdown
+        # Handle cases where 'outcode' might be missing or empty
+        available_outcodes = sorted([x for x in df_master['outcode'].unique() if x and isinstance(x, str)])
+        
+        with st.sidebar:
+            selected_outcodes = st.multiselect("Filter by Postcode Area", options=available_outcodes)
+        
+        # Apply Filter
+        if selected_outcodes:
+            df_display = df_master[df_master['outcode'].isin(selected_outcodes)]
+        else:
+            df_display = df_master
+
+        # Convert back to records for compatibility with existing display functions
+        display_records = df_display.to_dict('records')
+
+        st.subheader(f"Review Queue ({len(display_records)} records)")
+        
+        selection_event = display_data(display_records)
+        selected_rows = get_selected_rows(selection_event, display_records)
         
         st.divider()
         c1, c2 = st.columns(2)
@@ -163,11 +185,11 @@ def main_ui():
 
         with c2:
             st.subheader("Export Data")
-            if st.session_state.get('review_data'):
-                df = pd.DataFrame(st.session_state['review_data'])
-                csv = df.to_csv(index=False).encode('utf-8')
+            if 'display_records' in locals() and display_records:
+                df_export = pd.DataFrame(display_records)
+                csv = df_export.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="Download CSV",
+                    label="Download CSV (Filtered)",
                     data=csv,
                     file_name='restaurant_review.csv',
                     mime='text/csv',
