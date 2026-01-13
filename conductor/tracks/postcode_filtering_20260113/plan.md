@@ -28,13 +28,14 @@
     - [x] Sub-task: Extract unique values from the new `outcode` column for the dropdown options (sorted alphabetically).
     - [x] Sub-task: Add `st.multiselect` for "Postcode Area".
     - [x] Sub-task: Implement the filtering logic: if options are selected, filter the dataframe to include only rows where `outcode` is in the selection.
-- [ ] Task: Conductor - User Manual Verification 'UI Integration' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'UI Integration' (Protocol in workflow.md) [checkpoint: c3976f4]
 
 ## Phase 4: Final Verification & Cleanup
 - [ ] Task: Run full regression tests
     - [ ] Sub-task: Run `pytest` to ensure no existing data processing logic is broken.
-- [ ] Task: Manual UI Performance Check
-    - [ ] Sub-task: Verify that loading the app and applying filters feels responsive.
+- [ ] Task: Manual UI Performance Check (via Cloud Run)
+    - [ ] Sub-task: Deploy to Cloud Run using `gcloud builds submit`.
+    - [ ] Sub-task: Verify that loading the app and applying filters feels responsive on the deployed URL.
 - [ ] Task: Remove benchmark script
     - [ ] Sub-task: Delete `tests/benchmark_postcode_extraction.py`.
 - [ ] Task: Conductor - User Manual Verification 'Final Verification & Cleanup' (Protocol in workflow.md)
