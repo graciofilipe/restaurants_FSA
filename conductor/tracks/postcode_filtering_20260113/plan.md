@@ -14,11 +14,11 @@
 - [x] Task: Conductor - User Manual Verification 'Prototype & Benchmark Extraction Logic' (Protocol in workflow.md) [checkpoint: 7e52f12]
 
 ## Phase 2: Core Logic Implementation
-- [ ] Task: Implement `add_outcode_column` in `app/core/data_processing.py`
-    - [ ] Sub-task: Create a new test file `app/core/test_postcode_logic.py`.
-    - [ ] Sub-task: Write failing tests for `add_outcode_column` ensuring it handles the full DataFrame and correctly adds the column using the chosen logic.
-    - [ ] Sub-task: Implement the function in `data_processing.py` using Pandas vectorization (e.g., `.str.split` or `.str.extract`) for performance.
-    - [ ] Sub-task: Verify tests pass.
+- [x] Task: Implement `add_outcode_column` in `app/core/data_processing.py` [5fb242c]
+    - [x] Sub-task: Create a new test file `app/core/test_postcode_logic.py`.
+    - [x] Sub-task: Write failing tests for `add_outcode_column` ensuring it handles the full DataFrame and correctly adds the column using the chosen logic.
+    - [x] Sub-task: Implement the function in `data_processing.py` using Pandas vectorization (e.g., `.str.split` or `.str.extract`) for performance.
+    - [x] Sub-task: Verify tests pass.
 - [ ] Task: Conductor - User Manual Verification 'Core Logic Implementation' (Protocol in workflow.md)
 
 ## Phase 3: UI Integration
