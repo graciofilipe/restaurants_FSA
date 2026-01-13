@@ -22,12 +22,12 @@
 - [x] Task: Conductor - User Manual Verification 'Core Logic Implementation' (Protocol in workflow.md) [checkpoint: f054eac]
 
 ## Phase 3: UI Integration
-- [ ] Task: Update `app/ui/st_app.py` to include the new filter
-    - [ ] Sub-task: Locate the sidebar filtering section.
-    - [ ] Sub-task: Call `data_processing.add_outcode_column` on the loaded dataframe.
-    - [ ] Sub-task: Extract unique values from the new `outcode` column for the dropdown options (sorted alphabetically).
-    - [ ] Sub-task: Add `st.multiselect` for "Postcode Area".
-    - [ ] Sub-task: Implement the filtering logic: if options are selected, filter the dataframe to include only rows where `outcode` is in the selection.
+- [x] Task: Update `app/ui/st_app.py` to include the new filter [89d26e7]
+    - [x] Sub-task: Locate the sidebar filtering section.
+    - [x] Sub-task: Call `data_processing.add_outcode_column` on the loaded dataframe.
+    - [x] Sub-task: Extract unique values from the new `outcode` column for the dropdown options (sorted alphabetically).
+    - [x] Sub-task: Add `st.multiselect` for "Postcode Area".
+    - [x] Sub-task: Implement the filtering logic: if options are selected, filter the dataframe to include only rows where `outcode` is in the selection.
 - [ ] Task: Conductor - User Manual Verification 'UI Integration' (Protocol in workflow.md)
 
 ## Phase 4: Final Verification & Cleanup
