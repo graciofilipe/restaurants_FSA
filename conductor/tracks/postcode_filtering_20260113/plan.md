@@ -19,7 +19,7 @@
     - [x] Sub-task: Write failing tests for `add_outcode_column` ensuring it handles the full DataFrame and correctly adds the column using the chosen logic.
     - [x] Sub-task: Implement the function in `data_processing.py` using Pandas vectorization (e.g., `.str.split` or `.str.extract`) for performance.
     - [x] Sub-task: Verify tests pass.
-- [ ] Task: Conductor - User Manual Verification 'Core Logic Implementation' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Core Logic Implementation' (Protocol in workflow.md) [checkpoint: f054eac]
 
 ## Phase 3: UI Integration
 - [ ] Task: Update `app/ui/st_app.py` to include the new filter
