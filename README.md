@@ -46,16 +46,11 @@ The app will be accessible at `http://localhost:8501`.
 ### Running Tests
 To execute the test suite:
 ```bash
-pytest
+pytest app/
 ```
 
 ## AI Agent Prototype (Maps Grounding)
-A prototype AI Agent capable of answering questions about restaurants using Google Maps Grounding is available.
-
-### Usage
-```bash
-python scripts/prototype_maps_agent.py
-```
+A prototype AI Agent capable of answering questions about restaurants using Google Maps Grounding is available in `app/maps_agent/`.
 
 ## Cloud Deployment
 The application is deployed to Google Cloud Run via Cloud Build.
