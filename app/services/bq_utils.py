@@ -161,7 +161,8 @@ def load_filtered_data_from_bq(
     days_filter: int = None,
     review_status_filter: List[str] = None,
     excluded_locations: List[str] = None,
-    postcode_areas: List[str] = None
+    postcode_areas: List[str] = None,
+    gemini_insights_status: str = None
 ) -> List[Dict[str, Any]]:
     """
     Loads data from BigQuery with optional filters.
@@ -187,6 +188,12 @@ def load_filtered_data_from_bq(
         escaped_pcs = [pc.replace("'", "''") for pc in postcode_areas]
         pcs_str = ", ".join([f"'{pc}'" for pc in escaped_pcs])
         query += f" AND SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ({pcs_str})"
+
+    if gemini_insights_status:
+        if gemini_insights_status.lower() == 'populated':
+            query += " AND gemini_insights IS NOT NULL"
+        elif gemini_insights_status.lower() == 'null':
+            query += " AND gemini_insights IS NULL"
         
     logger.info(f"Executing Filtered BigQuery query: {query}")
 

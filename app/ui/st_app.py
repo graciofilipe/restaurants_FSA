@@ -111,18 +111,26 @@ def main_ui():
             outcode_options = st.session_state['outcode_options'] if 'outcode_options' in st.session_state else []
             selected_outcodes = st.multiselect("Filter by Postcode Area", options=outcode_options)
 
+            # Gemini Insights Filter
+            gemini_insights_options = ["All", "Populated", "Null"]
+            gemini_insights_status = st.radio("Gemini Insights Status", options=gemini_insights_options, horizontal=True)
+
         else:
             excluded_las = []
             selected_outcodes = []
+            gemini_insights_status = "All"
 
         if st.button("Load Data for Review", type="primary"):
             with st.spinner("Loading filtered data..."):
+                gemini_insights_filter = gemini_insights_status if gemini_insights_status != "All" else None
+                
                 data = load_filtered_data_from_bq(
                     project_id, dataset_id, table_id,
                     days_filter=days_lookback,
                     review_status_filter=selected_statuses,
                     excluded_locations=excluded_las,
-                    postcode_areas=selected_outcodes
+                    postcode_areas=selected_outcodes,
+                    gemini_insights_status=gemini_insights_filter
                 )
                 st.session_state['review_data'] = data
                 if not data:
