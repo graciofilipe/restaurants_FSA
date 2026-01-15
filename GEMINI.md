@@ -72,7 +72,12 @@ pytest
 *   **Error Handling:** Custom exceptions like `BigQueryExecutionError` are defined to handle specific failure modes.
 
 ## Cloud Deployment
-The application is deployed to Google Cloud Run via Cloud Build. The build steps are:
+The application is deployed to Google Cloud Run via Cloud Build.
+
+> [!IMPORTANT]
+> A Cloud Build trigger is configured to automatically build and deploy the application with every commit and push to the repository. **You must commit and push your changes to the remote repository (`main` branch) to see them reflected in the live application.**
+
+The build steps are:
 1.  Install dependencies.
 2.  Run tests (`pytest`).
 3.  Build Docker image.

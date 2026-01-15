@@ -54,6 +54,10 @@ A prototype AI Agent capable of answering questions about restaurants using Goog
 
 ## Cloud Deployment
 The application is deployed to Google Cloud Run via Cloud Build.
+
+> [!IMPORTANT]
+> A Cloud Build trigger is configured to automatically build and deploy the application with every commit and push to the repository. **You must commit and push your changes to the remote repository (`main` branch) to see them reflected in the live application.**
+
 The `cloudbuild.yaml` file defines the build steps:
 1.  Install dependencies.
 2.  Run tests.
