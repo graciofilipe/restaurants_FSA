@@ -315,7 +315,7 @@ def add_outcode_column(df: pd.DataFrame) -> pd.DataFrame:
     """
     if df.empty or 'PostCode' not in df.columns:
         if 'outcode' not in df.columns:
-             df['outcode'] = [] 
+             df['outcode'] = None 
         return df
 
     # Use vectorized string split

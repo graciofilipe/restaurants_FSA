@@ -25,7 +25,7 @@ SELECT
   fhrsid, 
   AI.GENERATE( ('''Use Google Search and Google Maps to find information about this London restaurant:\n\nRestaurant Name: ''',businessname,''' \n Location: ''',address, ''' \n\nUse Google searches and Google Maps data to evaluate the restaurant based on these criteria: \n Value for Money: Affordable with generous portions for the price. \n Location: In an area with high restaurant competition and some evidence of local native population for the cuisine the restaurant serves. \n Restaurant Type: should NOT be a fast-food, take-away-only, café, bar, pub, brunch place, coffee shop, or pastry shop. \n Ambiance and Style: It should be a casual place for locals, it should NOT be luxurious, high-end, fancy, or sophisticated. \n Customers: Frequented by local, middle/working-class patrons culturally aligned with the cuisine. \n Perform detailed research first, but your final output string must START with the verdict. \n Format: \n FINAL VERDICT: [One of "REJECTED", "Probably Rejected", "Maybe Accepted", "ACCEPTED!", "UNSURE"] \n [Your concise justification and summary]'''),
     connection_id => '{connection_id}',
-    endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-2.5-pro-preview',
+    endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_endpoint}',
     model_params => JSON '''{{
                               "systemInstruction": {{
                                 "parts": [

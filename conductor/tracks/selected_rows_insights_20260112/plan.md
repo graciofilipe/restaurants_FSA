@@ -26,8 +26,8 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 3: Gemini Analysis UI Update' (Protocol in workflow.md)
 
 ## Phase 4: Deployment & Verification
-- [ ] Task: Deploy to Cloud Run
-    - [ ] Subtask: Run `gcloud builds submit` or equivalent deployment command.
+- [x] Task: Deploy to Cloud Run aa8d9ee
+    - [x] Subtask: Run `gcloud builds submit` or equivalent deployment command.
 - [ ] Task: Production Verification
     - [ ] Subtask: Open production URL.
     - [ ] Subtask: Select specific rows.

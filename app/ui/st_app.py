@@ -8,11 +8,11 @@ from app.services.bq_utils import (
     execute_gemini_enrichment,
     bulk_update_reviews,
     get_distinct_local_authorities,
+    get_distinct_outcodes,
 )
 from app.core.data_processing import (
     load_data_from_csv,
-    parse_bq_path,
-    add_outcode_column
+    parse_bq_path
 )
 from app.ui.agent_research import render_agent_research_tab
 from app.ui.bulk_update import render_bulk_update_ui
@@ -102,8 +102,18 @@ def main_ui():
             
             la_options = st.session_state['la_options'] if 'la_options' in st.session_state else []
             excluded_las = st.multiselect("Exclude Local Authorities", options=la_options)
+            
+            # Postcode Area Filter
+            if 'outcode_options' not in st.session_state:
+                 with st.spinner("Loading Postcode Areas..."):
+                    st.session_state['outcode_options'] = get_distinct_outcodes(project_id, dataset_id, table_id)
+            
+            outcode_options = st.session_state['outcode_options'] if 'outcode_options' in st.session_state else []
+            selected_outcodes = st.multiselect("Filter by Postcode Area", options=outcode_options)
+
         else:
             excluded_las = []
+            selected_outcodes = []
 
         if st.button("Load Data for Review", type="primary"):
             with st.spinner("Loading filtered data..."):
@@ -111,7 +121,8 @@ def main_ui():
                     project_id, dataset_id, table_id,
                     days_filter=days_lookback,
                     review_status_filter=selected_statuses,
-                    excluded_locations=excluded_las
+                    excluded_locations=excluded_las,
+                    postcode_areas=selected_outcodes
                 )
                 st.session_state['review_data'] = data
                 if not data:
@@ -121,31 +132,10 @@ def main_ui():
 
     # Main Area
     if st.session_state.get('review_data'):
-        # Prepare Data: Convert to DF and enrich
-        df_master = pd.DataFrame(st.session_state['review_data'])
-        df_master = add_outcode_column(df_master)
+        st.subheader(f"Review Queue ({len(st.session_state['review_data'])} records)")
         
-        # Sidebar: Postcode Filter
-        # Extract unique outcodes for the filter dropdown
-        # Handle cases where 'outcode' might be missing or empty
-        available_outcodes = sorted([x for x in df_master['outcode'].unique() if x and isinstance(x, str)])
-        
-        with st.sidebar:
-            selected_outcodes = st.multiselect("Filter by Postcode Area", options=available_outcodes)
-        
-        # Apply Filter
-        if selected_outcodes:
-            df_display = df_master[df_master['outcode'].isin(selected_outcodes)]
-        else:
-            df_display = df_master
-
-        # Convert back to records for compatibility with existing display functions
-        display_records = df_display.to_dict('records')
-
-        st.subheader(f"Review Queue ({len(display_records)} records)")
-        
-        selection_event = display_data(display_records)
-        selected_rows = get_selected_rows(selection_event, display_records)
+        selection_event = display_data(st.session_state['review_data'])
+        selected_rows = get_selected_rows(selection_event, st.session_state['review_data'])
         
         st.divider()
         c1, c2 = st.columns(2)
@@ -185,11 +175,11 @@ def main_ui():
 
         with c2:
             st.subheader("Export Data")
-            if 'display_records' in locals() and display_records:
-                df_export = pd.DataFrame(display_records)
+            if st.session_state.get('review_data'):
+                df_export = pd.DataFrame(st.session_state['review_data'])
                 csv = df_export.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="Download CSV (Filtered)",
+                    label="Download CSV",
                     data=csv,
                     file_name='restaurant_review.csv',
                     mime='text/csv',

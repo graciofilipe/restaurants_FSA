@@ -41,7 +41,7 @@ def execute_gemini_enrichment(
     dataset_id: str,
     master_table_id: str,
     connection_id: str = 'eu.gemini',
-    model_endpoint: str = 'gemini-2.5-pro',
+    model_endpoint: str = 'gemini-3-pro-preview',
     days_recent: int = 33,
     review_status_filter: List[str] = None,
     excluded_locations: List[str] = None,
@@ -68,7 +68,8 @@ def execute_gemini_enrichment(
             # Explicit selection mode
             escaped_ids = [str(fid).replace("'", "''") for fid in fhrsids]
             id_list_str = ", ".join([f"'{fid}'" for fid in escaped_ids])
-            filter_condition = f"fhrsid IN ({id_list_str})"
+            # Use CAST to ensure compatibility if fhrsid is stored as INTEGER in BQ
+            filter_condition = f"CAST(fhrsid AS STRING) IN ({id_list_str})"
             logger.info(f"Targeting {len(fhrsids)} specific FHRSIDs.")
         else:
             # Default filter mode
@@ -159,7 +160,8 @@ def load_filtered_data_from_bq(
     table_id: str,
     days_filter: int = None,
     review_status_filter: List[str] = None,
-    excluded_locations: List[str] = None
+    excluded_locations: List[str] = None,
+    postcode_areas: List[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Loads data from BigQuery with optional filters.
@@ -180,6 +182,11 @@ def load_filtered_data_from_bq(
         escaped_locs = [loc.replace("'", "''") for loc in excluded_locations]
         locs_str = ", ".join([f"'{loc}'" for loc in escaped_locs])
         query += f" AND localauthorityname NOT IN ({locs_str})"
+    
+    if postcode_areas:
+        escaped_pcs = [pc.replace("'", "''") for pc in postcode_areas]
+        pcs_str = ", ".join([f"'{pc}'" for pc in escaped_pcs])
+        query += f" AND SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ({pcs_str})"
         
     logger.info(f"Executing Filtered BigQuery query: {query}")
 
@@ -499,6 +506,29 @@ def get_distinct_local_authorities(project_id: str, dataset_id: str, table_id: s
         return []
     except Exception as e:
         logger.error(f"Error fetching distinct local authorities: {e}")
+        return []
+
+def get_distinct_outcodes(project_id: str, dataset_id: str, table_id: str) -> List[str]:
+    """
+    Fetches a list of distinct Postcode Areas (outcodes) from the master table.
+    """
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+    query = f"""
+        SELECT DISTINCT SPLIT(postcode, ' ')[SAFE_OFFSET(0)] as outcode 
+        FROM `{table_ref}` 
+        WHERE postcode IS NOT NULL 
+        ORDER BY outcode
+    """
+    
+    logger.info(f"Fetching distinct Outcodes from {table_ref}")
+    try:
+        df = pandas_gbq.read_gbq(query, project_id=project_id)
+        if df is not None and not df.empty:
+            outcodes = df['outcode'].dropna().astype(str).tolist()
+            return sorted([o for o in outcodes if o.strip()])
+        return []
+    except Exception as e:
+        logger.error(f"Error fetching distinct outcodes: {e}")
         return []
 
 MASTER_BQ_SCHEMA = [

@@ -20,3 +20,4 @@ A personal Streamlit application designed to automate the discovery of newly ope
 - **AI Agent & Insights:** A dedicated Agent workflow that can research specific restaurants using Google Maps data.
 - **Automated Insights Display:** Automatically displays generated insights (cuisine type, ratings, review summaries) in the UI immediately after generation.
 - **Bulk Status Update:** Allows users to select multiple restaurants and update their review status (e.g., 'accepted', 'rejected') in batch.
+- **Postcode Area Filtering:** Filter restaurants by their postcode "outcode" (e.g., "SE1", "SW16") to narrow down discovery to specific geographic areas.

@@ -551,7 +551,7 @@ class TestBqUtilsGeminiSelection(unittest.TestCase):
         call_args = mock_client.query.call_args_list[0]
         query_executed = call_args[0][0]
         
-        self.assertIn("fhrsid IN ('123', '456')", query_executed)
+        self.assertIn("CAST(fhrsid AS STRING) IN ('123', '456')", query_executed)
         self.assertNotIn("DATE_DIFF", query_executed)
 
     @patch('app.services.bq_utils.bigquery.Client')
@@ -585,3 +585,23 @@ class TestBqUtilsGeminiSelection(unittest.TestCase):
 # Then, from the terminal in the directory containing this file:
 # pytest test_bq_utils.py
 # Or simply: pytest (if it's in a standard test discovery path)
+
+from app.services.bq_utils import load_filtered_data_from_bq
+
+@patch('pandas_gbq.read_gbq')
+def test_load_filtered_data_with_postcode(mock_read_gbq):
+    """Test SQL generation for postcode area filtering."""
+    mock_df = pd.DataFrame({'col': [1]})
+    mock_read_gbq.return_value = mock_df
+    
+    load_filtered_data_from_bq(
+        'proj', 'ds', 'tbl',
+        postcode_areas=['SE1', "E'1"] # Test escaping
+    )
+    
+    args, kwargs = mock_read_gbq.call_args
+    query = args[0]
+    
+    # Check for correct SPLIT logic and escaping
+    # Note: query string formatting might vary slightly, checking for substring presence
+    assert "SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ('SE1', 'E''1')" in query
