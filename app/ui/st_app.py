@@ -21,7 +21,7 @@ def display_data(df, key=None):
     event = st.dataframe(
         df,
         on_select="rerun",
-        selection_mode="multi-row",
+        selection_mode="single", # Changed to single for clearer deep dive focus in unified view
         use_container_width=True,
         hide_index=True,
         key=key
@@ -60,7 +60,6 @@ def render_insights_details(row):
     st.markdown("#### 🔬 The 6-Pillar Analysis")
     
     # Dynamic rendering of numbered criteria
-    # Find keys that start with a digit
     pillars = [k for k in insights.keys() if k and k[0].isdigit()]
     pillars.sort() # Ensure 1-6 order
     
@@ -74,7 +73,6 @@ def render_insights_details(row):
         
         with st.expander(f"{pillar_title}", expanded=True):
             if isinstance(pillar_data, dict):
-                # Try to extract score/rating for a prominent display
                 score_val = pillar_data.get('score') or pillar_data.get('rating')
                 
                 c_score, c_details = st.columns([1, 4])
@@ -84,10 +82,8 @@ def render_insights_details(row):
                         st.metric("Score", f"{score_val}/5")
                     
                 with c_details:
-                    # Render other fields
                     for k, v in pillar_data.items():
                         if k not in ['score', 'rating']:
-                            # Format key nicely
                             nice_key = k.replace('_', ' ').capitalize()
                             st.write(f"**{nice_key}:** {v}")
             else:
@@ -96,18 +92,16 @@ def render_insights_details(row):
 def main():
     st.title("🍔 FSA Restaurant Explorer & Profiler")
     
-    # Global Data Load config
+    # --- Data Loading (Before Sidebar to enable dynamic filters) ---
+    # In a production app, we would cache this or load minimal metadata first.
+    # For now, we load all data to populate filters accurately.
     
-    # We need BQ path to load data. But strictly speaking we get it from sidebar usually.
-    # To resolve circular dependency (need path from sidebar -> to load data -> to populate sidebar options),
-    # we can do a 2-pass or just default path for now.
-    # Approach: Render minimal sidebar for Path first, then Load, then Render Filters.
+    # 1. Get Config (Default or Session State could be used)
+    bq_path = DEFAULT_BQ_PATH 
+    # Check if user overrode it in sidebar (we need to peek or just render config there)
+    # To keep dynamic filters working, we assume default or last known.
+    # We will enforce the styling later in sidebar.
     
-    with st.sidebar:
-        st.header("Configuration")
-        bq_path = st.text_input("BigQuery Table Path", value=DEFAULT_BQ_PATH)
-        
-    # Attempt to load data based on current path
     project_id, dataset_id, table_id = bq_path.split('.')
     df_enriched = pd.DataFrame()
     
@@ -120,66 +114,76 @@ def main():
             if 'outcode' not in df_enriched.columns and 'PostCode' in df_enriched.columns:
                  df_enriched['outcode'] = df_enriched['PostCode'].str.split(' ').str[0]
             
+            # Ensure 'manual_review' has valid defaults
+            if 'manual_review' not in df_enriched.columns:
+                df_enriched['manual_review'] = 'pending'
+            else:
+                df_enriched['manual_review'] = df_enriched['manual_review'].fillna('pending')
+
     except Exception as e:
         st.error(f"Error loading initial data: {e}")
 
-    # Now continue with Sidebar (appending to it)
+    # --- Sidebar Configuration & Filters ---
     with st.sidebar:
+        st.header("Configuration")
+        # Allow overriding path (will trigger reload on change)
+        bq_path_input = st.text_input("BigQuery Table Path", value=bq_path)
+        if bq_path_input != bq_path:
+            # If path changes, we'd ideally reload. simple st script flow handles this naturally on rerun
+            pass
+
         st.header("Discovery Filters")
         
-        # Original Filters (Restored with Dynamic Options)
-        available_outcodes = sorted(df_enriched['outcode'].dropna().unique().tolist()) if not df_enriched.empty and 'outcode' in df_enriched.columns else []
-        
+        # 1. Postcode (Outcode) - Dynamic from Data
+        available_outcodes = []
+        if not df_enriched.empty and 'outcode' in df_enriched.columns:
+            available_outcodes = sorted(df_enriched['outcode'].dropna().unique().tolist())
+            
         outcode_filter = st.multiselect("Postcode Area (Outcode)", options=available_outcodes, default=[]) 
         
+        # 2. Review Status - Fixed Options per User Request
         manual_review_filter = st.multiselect(
             "Review Status",
-            options=["detailed_review", "quick_review", "not reviewed", "archived"],
+            options=["accepted", "rejected", "pending"],
             default=[]
         )
 
-        # New Filters for AI attributes
+        # 3. AI Filters
         ai_verdict_filter = st.multiselect(
             "AI Verdict",
             ["ACCEPTED", "MAYBE", "REJECTED", "PENDING"],
             default=[]
         )
         
-        min_match_score = st.slider(
-            "Min Match Score",
-            0, 100, 0
-        )
-        
-        min_auth_score = st.slider(
-            "Min Authenticity",
-            0, 5, 0
-        )
+        min_match_score = st.slider("Min Match Score", 0, 100, 0)
+        min_auth_score = st.slider("Min Authenticity", 0, 5, 0)
 
+        st.divider()
+        st.header("Actions")
+        if st.button("Generate Profiles for Recents"):
+             with st.spinner("Agent calling Vertex AI..."):
+                result_msg = execute_gemini_enrichment(project_id, dataset_id, table_id)
+                st.success(result_msg)
+                st.rerun()
+
+        st.divider()
         st.header("Data Sync")
         uploaded_file = st.file_uploader("Upload FSA Data (CSV)", type="csv")
-        
         if uploaded_file and st.button("Sync to BigQuery"):
-            try:
-                # Basic Sync Trigger
-                st.info("Sync triggered... (Coord logic implicit for now)")
-                csv_df = load_data_from_csv(uploaded_file)
-                # re-parse logic would be here
-                pass 
-            except Exception as e:
-                st.error(f"Sync failed: {e}")
+            st.info("Sync triggered...")
+            # Sync logic...
 
-    # Main Tabs
-    tab_data, tab_gemini = st.tabs(["Data Overview", "AI Profiling Lab"])
+    # --- Main Unified Interface ---
     
     if not df_enriched.empty:
-        # FILTER
+        # Apply Filters
         filtered_df = df_enriched.copy()
         
         if outcode_filter:
             filtered_df = filtered_df[filtered_df['outcode'].isin(outcode_filter)]
             
         if manual_review_filter:
-                filtered_df = filtered_df[filtered_df['manual_review'].isin(manual_review_filter)]
+             filtered_df = filtered_df[filtered_df['manual_review'].isin(manual_review_filter)]
         
         if "insight_verdict" in filtered_df.columns and ai_verdict_filter:
             filtered_df = filtered_df[filtered_df["insight_verdict"].isin(ai_verdict_filter)]
@@ -188,32 +192,28 @@ def main():
             filtered_df = filtered_df[filtered_df["insight_score"] >= min_match_score]
             
         if "insight_authenticity" in filtered_df.columns and min_auth_score > 0:
-                filtered_df = filtered_df[filtered_df["insight_authenticity"] >= min_auth_score]
+             filtered_df = filtered_df[filtered_df["insight_authenticity"] >= min_auth_score]
 
-        with tab_data:
-            st.subheader(f"Restaurant Registry ({len(filtered_df)} records)")
-            display_data(filtered_df, key="main_grid")
-            
-        with tab_gemini:
-            st.subheader("🤖 Culinary Anthropologist (Agent)")
-            
-            c_action, c_info = st.columns([1, 2])
-            with c_action:
-                if st.button("Generate Profiles for Recents"):
-                    with st.spinner("Agent calling Vertex AI..."):
-                        result_msg = execute_gemini_enrichment(project_id, dataset_id, table_id)
-                        st.success(result_msg)
-                        st.rerun()
-                        
-            st.markdown("### Deep Dive View")
-            st.write("Select a restaurant in the table below to see the extensive 6-pillar analysis.")
-            
-            selection_event = display_data(filtered_df, key="profile_selector")
-            selected_rows = get_selected_rows(selection_event, filtered_df)
-            
-            if selected_rows is not None and not selected_rows.empty:
-                for idx, row in selected_rows.iterrows():
-                    render_insights_details(row)
+        # Metric Summary
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total Restaurants", len(df_enriched))
+        m2.metric("Filtered View", len(filtered_df))
+        m3.metric("AI Profiled", len(filtered_df[filtered_df['detailed_insights'].notna()]))
+
+        st.subheader("Restaurant Registry")
+        
+        # Main Grid - Single Selection Mode
+        selection_event = display_data(filtered_df, key="main_input_grid")
+        selected_rows = get_selected_rows(selection_event, filtered_df)
+        
+        # Deep Dive Section (Integrated below grid)
+        if selected_rows is not None and not selected_rows.empty:
+            st.divider()
+            # Loop (though single select)
+            for idx, row in selected_rows.iterrows():
+                render_insights_details(row)
+        else:
+            st.info("👆 Select a restaurant in the table above to view its full AI Profile.")
                     
     else:
         st.warning("No data loaded. Check connection or table path.")

@@ -14,31 +14,30 @@ def mock_bq_data():
 @patch('app.ui.st_app.load_all_data_from_bq')
 @patch('app.ui.st_app.execute_gemini_enrichment')
 @patch('streamlit.columns')
-@patch('streamlit.tabs')
 @patch('streamlit.sidebar')
 @patch('streamlit.text_input')
 @patch('streamlit.multiselect')
 @patch('streamlit.slider')
 @patch('streamlit.dataframe')
 def test_gemini_tab_interaction(mock_dataframe, mock_slider, mock_multiselect, mock_text_input, 
-                              mock_sidebar, mock_tabs, mock_columns, mock_execute, mock_load, mock_enhance):
+                              mock_sidebar, mock_columns, mock_execute, mock_load, mock_enhance):
     # Setup mocks
     mock_load.return_value = [{"fhrsid": "123", "BusinessName": "Test", "PostCode": "SW14 7HG"}]
     mock_enhance.return_value = pd.DataFrame([{"fhrsid": "123", "BusinessName": "Test", "insight_verdict": "ACCEPTED", "PostCode": "SW14 7HG", "outcode": "SW14"}])
     
     # Mock UI elements to avoid type errors
+    # Mock UI elements
     mock_slider.return_value = 0
     mock_multiselect.return_value = []
     
-    # Mock tabs
-    mock_tab1 = MagicMock()
-    mock_tab2 = MagicMock()
-    mock_tabs.return_value = [mock_tab1, mock_tab2]
-    
-    # Mock columns
+    # Mock columns (used for metrics and grid layout)
     mock_col1 = MagicMock()
     mock_col2 = MagicMock()
-    mock_columns.return_value = [mock_col1, mock_col2]
+    mock_col3 = MagicMock()
+    mock_columns.return_value = [mock_col1, mock_col2, mock_col3] # now 3 columns for metrics
+    
+    # Removed mock_tabs
+
     
     with patch('streamlit.button') as mock_button:
         mock_button.return_value = True
