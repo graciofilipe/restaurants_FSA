@@ -92,69 +92,48 @@ def render_insights_details(row):
             else:
                 st.write(pillar_data)
 
+@st.cache_data
+def get_cached_outcodes(project_id, dataset_id, table_id):
+    return get_distinct_outcodes(project_id, dataset_id, table_id)
+
 def main():
     st.title("🍔 FSA Restaurant Explorer & Profiler")
     
-    # --- Data Loading (Before Sidebar to enable dynamic filters) ---
-    # In a production app, we would cache this or load minimal metadata first.
-    # For now, we load all data to populate filters accurately.
-    
-    # 1. Get Config (Default or Session State could be used)
+    # Session State Initialization
+    if 'df_enriched' not in st.session_state:
+        st.session_state.df_enriched = pd.DataFrame()
+    if 'data_loaded' not in st.session_state:
+        st.session_state.data_loaded = False
+
+    # Config
     bq_path = DEFAULT_BQ_PATH 
-    # Check if user overrode it in sidebar (we need to peek or just render config there)
-    # To keep dynamic filters working, we assume default or last known.
-    # We will enforce the styling later in sidebar.
-    
     project_id, dataset_id, table_id = bq_path.split('.')
-    df_enriched = pd.DataFrame()
     
-    try:
-        raw_data = load_all_data_from_bq(project_id, dataset_id, table_id)
-        df_master = pd.DataFrame(raw_data)
-        if not df_master.empty:
-            df_enriched = enhance_dataframe_with_insights(df_master)
-            # Ensure 'outcode' column exists
-            if 'outcode' not in df_enriched.columns:
-                if 'PostCode' in df_enriched.columns:
-                     df_enriched['outcode'] = df_enriched['PostCode'].str.split(' ').str[0]
-                elif 'postcode' in df_enriched.columns:
-                     df_enriched['outcode'] = df_enriched['postcode'].str.split(' ').str[0]
-            
-            # Ensure 'manual_review' has valid defaults
-            if 'manual_review' not in df_enriched.columns:
-                df_enriched['manual_review'] = 'pending'
-            else:
-                df_enriched['manual_review'] = df_enriched['manual_review'].fillna('pending')
-
-    except Exception as e:
-        st.error(f"Error loading initial data: {e}")
-
-    # --- Sidebar Configuration & Filters ---
+    # --- Sidebar Filters (Lazy) ---
     with st.sidebar:
         st.header("Configuration")
-        # Allow overriding path (will trigger reload on change)
         bq_path_input = st.text_input("BigQuery Table Path", value=bq_path)
-        if bq_path_input != bq_path:
-            # If path changes, we'd ideally reload. simple st script flow handles this naturally on rerun
-            pass
-
+        
         st.header("Discovery Filters")
         
-        # 1. Postcode (Outcode) - Dynamic from Data
-        available_outcodes = []
-        if not df_enriched.empty and 'outcode' in df_enriched.columns:
-            available_outcodes = sorted(df_enriched['outcode'].dropna().unique().tolist())
+        # 1. Postcode (Server-Side)
+        # Fetch available outcodes from BQ metadata to populate list
+        try:
+            available_outcodes = get_cached_outcodes(project_id, dataset_id, table_id)
+        except Exception as e:
+            st.error(f"Failed to fetch outcodes: {e}")
+            available_outcodes = []
             
         outcode_filter = st.multiselect("Postcode Area (Outcode)", options=available_outcodes, default=[]) 
         
-        # 2. Review Status - Fixed Options per User Request
+        # 2. Review Status (Server-Side)
         manual_review_filter = st.multiselect(
             "Review Status",
             options=["accepted", "rejected", "pending"],
-            default=[]
+            default=["pending"] # Default to pending usually makes sense for workflow
         )
 
-        # 3. AI Filters
+        # 3. AI Filters (Client-Side after load)
         ai_verdict_filter = st.multiselect(
             "AI Verdict",
             ["ACCEPTED", "MAYBE", "REJECTED", "PENDING"],
@@ -165,7 +144,47 @@ def main():
         min_auth_score = st.slider("Min Authenticity", 0, 5, 0)
 
         st.divider()
-        # Actions removed (moved to main grid selection)
+        # Load Button
+        if st.button("Load Data", type="primary"):
+            with st.spinner("Fetching data from BigQuery..."):
+                try:
+                    # Server-side Filtering
+                    raw_data = load_filtered_data_from_bq(
+                        project_id, 
+                        dataset_id, 
+                        table_id,
+                        review_status_filter=manual_review_filter,
+                        postcode_areas=outcode_filter
+                    )
+                    
+                    df_master = pd.DataFrame(raw_data)
+                    if not df_master.empty:
+                        # Enrichment
+                        df_enriched = enhance_dataframe_with_insights(df_master)
+                        
+                        # Normalize Columns
+                        # Ensure 'outcode' column exists
+                        if 'outcode' not in df_enriched.columns:
+                            if 'PostCode' in df_enriched.columns:
+                                df_enriched['outcode'] = df_enriched['PostCode'].str.split(' ').str[0]
+                            elif 'postcode' in df_enriched.columns:
+                                df_enriched['outcode'] = df_enriched['postcode'].str.split(' ').str[0]
+                        
+                        # Ensure 'manual_review'
+                        if 'manual_review' not in df_enriched.columns:
+                            df_enriched['manual_review'] = 'pending'
+                        else:
+                            df_enriched['manual_review'] = df_enriched['manual_review'].fillna('pending')
+
+                        st.session_state.df_enriched = df_enriched
+                        st.session_state.data_loaded = True
+                    else:
+                        st.session_state.df_enriched = pd.DataFrame()
+                        st.session_state.data_loaded = True
+                        st.warning("No data found matching criteria.")
+                        
+                except Exception as e:
+                    st.error(f"Error loading data: {e}")
 
         st.divider()
         st.header("Data Sync")
@@ -174,38 +193,31 @@ def main():
             st.info("Sync triggered...")
             # Sync logic...
 
-    # --- Main Unified Interface ---
-    
-    if not df_enriched.empty:
-        # Apply Filters
-        filtered_df = df_enriched.copy()
+    # --- Main Interface ---
+    if st.session_state.data_loaded and not st.session_state.df_enriched.empty:
+        df_display = st.session_state.df_enriched.copy()
         
-        if outcode_filter:
-            filtered_df = filtered_df[filtered_df['outcode'].isin(outcode_filter)]
+        # Apply Client-Side AI Filters
+        if "insight_verdict" in df_display.columns and ai_verdict_filter:
+            df_display = df_display[df_display["insight_verdict"].isin(ai_verdict_filter)]
             
-        if manual_review_filter:
-             filtered_df = filtered_df[filtered_df['manual_review'].isin(manual_review_filter)]
-        
-        if "insight_verdict" in filtered_df.columns and ai_verdict_filter:
-            filtered_df = filtered_df[filtered_df["insight_verdict"].isin(ai_verdict_filter)]
+        if "insight_score" in df_display.columns and min_match_score > 0:
+            df_display = df_display[df_display["insight_score"] >= min_match_score]
             
-        if "insight_score" in filtered_df.columns and min_match_score > 0:
-            filtered_df = filtered_df[filtered_df["insight_score"] >= min_match_score]
-            
-        if "insight_authenticity" in filtered_df.columns and min_auth_score > 0:
-             filtered_df = filtered_df[filtered_df["insight_authenticity"] >= min_auth_score]
+        if "insight_authenticity" in df_display.columns and min_auth_score > 0:
+             df_display = df_display[df_display["insight_authenticity"] >= min_auth_score]
 
         # Metric Summary
         m1, m2, m3 = st.columns(3)
-        m1.metric("Total Restaurants", len(df_enriched))
-        m2.metric("Filtered View", len(filtered_df))
-        m3.metric("AI Profiled", len(filtered_df[filtered_df['detailed_insights'].notna()]))
+        m1.metric("Total Loaded", len(st.session_state.df_enriched))
+        m2.metric("Filtered View", len(df_display))
+        m3.metric("AI Profiled", len(df_display[df_display['detailed_insights'].notna()]))
 
         st.subheader("Restaurant Registry")
         
         # Main Grid - Multi Selection Mode
-        selection_event = display_data(filtered_df, key="main_input_grid")
-        selected_rows = get_selected_rows(selection_event, filtered_df)
+        selection_event = display_data(df_display, key="main_input_grid")
+        selected_rows = get_selected_rows(selection_event, df_display)
         
         # Action Bar for Selection
         if selected_rows is not None and not selected_rows.empty:
@@ -216,10 +228,12 @@ def main():
                 if st.button(f"Generate Profiles for {count} Selected"):
                     # Extract IDs
                     fhrsids = []
-                    if 'fhrsid' in selected_rows.columns:
-                        fhrsids = selected_rows['fhrsid'].astype(str).tolist()
-                    elif 'FHRSID' in selected_rows.columns:
-                        fhrsids = selected_rows['FHRSID'].astype(str).tolist()
+                    # Robust ID extraction
+                    col_map = {c.lower(): c for c in selected_rows.columns}
+                    id_col = col_map.get('fhrsid')
+                    
+                    if id_col:
+                        fhrsids = selected_rows[id_col].astype(str).tolist()
                     
                     if fhrsids:
                         with st.spinner(f"Generating profiles for {count} restaurants..."):
@@ -230,22 +244,26 @@ def main():
                                 fhrsids=fhrsids
                             )
                             st.success(result_msg)
-                            time.sleep(2) # Brief pause to read
+                            time.sleep(2)
+                            # Invalidate cache/reload? 
+                            # For now, just rerun which might re-render state. 
+                            # Ideally we reload data but that's expensive.
                             st.rerun()
                     else:
                         st.error("Could not identify FHRSIDs for selection.")
         
-        # Deep Dive Section (Integrated below grid)
+        # Deep Dive Section
         if selected_rows is not None and not selected_rows.empty:
             st.markdown("### 🔬 Deep Dive Analysis")
-            # Loop
             for idx, row in selected_rows.iterrows():
                 render_insights_details(row)
         else:
             st.info("👆 Select one or more restaurants in the table above to view their AI Profile or Generate new ones.")
-                    
+    
+    elif st.session_state.data_loaded and st.session_state.df_enriched.empty:
+        st.warning("No data found. Try adjusting filters and clicking 'Load Data'.")
     else:
-        st.warning("No data loaded. Check connection or table path.")
+        st.info("👈 Use the filters in the sidebar and click **Load Data** to begin.")
 
 if __name__ == "__main__":
     main()

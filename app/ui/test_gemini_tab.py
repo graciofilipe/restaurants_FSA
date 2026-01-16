@@ -40,7 +40,10 @@ def test_gemini_tab_interaction(mock_dataframe, mock_slider, mock_multiselect, m
 
     
     with patch('streamlit.button') as mock_button:
-        mock_button.return_value = True
+        # Side effect to handle multiple buttons: Load Data (True), others (False or True as needed)
+        # Sequence: Load Data -> True. 
+        mock_button.side_effect = lambda label, **kwargs: True if "Load Data" in label else False
+        
         mock_execute.return_value = "Success"
         
         # Run main to trigger logic
