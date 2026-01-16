@@ -12,7 +12,8 @@ from app.services.bq_utils import (
 )
 from app.core.data_processing import (
     load_data_from_csv,
-    parse_bq_path
+    parse_bq_path,
+    enhance_dataframe_with_insights
 )
 from app.ui.agent_research import render_agent_research_tab
 from app.ui.bulk_update import render_bulk_update_ui
@@ -120,11 +121,20 @@ def main_ui():
             selected_outcodes = []
             gemini_insights_status = "All"
 
+        st.divider()
+        st.subheader("AI Discovery Filters")
+        st.caption("Filter loaded results by AI Insights")
+        
+        filter_verdict = st.multiselect("AI Verdict", ["ACCEPTED", "MAYBE", "REJECTED"], default=[])
+        
+        min_match_score = st.slider("Min Match Score (0-100)", 0, 100, 0)
+        min_authenticity = st.slider("Min Authenticity (1-5)", 1, 5, 1)        
+
         if st.button("Load Data for Review", type="primary"):
             with st.spinner("Loading filtered data..."):
                 gemini_insights_filter = gemini_insights_status if gemini_insights_status != "All" else None
                 
-                data = load_filtered_data_from_bq(
+                data_dict = load_filtered_data_from_bq(
                     project_id, dataset_id, table_id,
                     days_filter=days_lookback,
                     review_status_filter=selected_statuses,
@@ -132,18 +142,39 @@ def main_ui():
                     postcode_areas=selected_outcodes,
                     gemini_insights_status=gemini_insights_filter
                 )
-                st.session_state['review_data'] = data
-                if not data:
+                
+                # Enrich with Insights Parsing
+                if data_dict:
+                    df = pd.DataFrame(data_dict)
+                    df = enhance_dataframe_with_insights(df)
+                    data_dict = df.to_dict('records')
+                    
+                st.session_state['review_data'] = data_dict
+                if not data_dict:
                     st.warning("No records found matching criteria.")
                 else:
-                    st.success(f"Loaded {len(data)} records.")
+                    st.success(f"Loaded {len(data_dict)} records.")
 
     # Main Area
     if st.session_state.get('review_data'):
-        st.subheader(f"Review Queue ({len(st.session_state['review_data'])} records)")
+        # Apply Client-Side Filters
+        filtered_data = st.session_state['review_data']
         
-        selection_event = display_data(st.session_state['review_data'])
-        selected_rows = get_selected_rows(selection_event, st.session_state['review_data'])
+        # Filter by Verdict
+        if filter_verdict:
+            filtered_data = [r for r in filtered_data if r.get('insight_verdict') in filter_verdict]
+            
+        # Filter by Scores
+        if min_match_score > 0:
+            filtered_data = [r for r in filtered_data if (r.get('insight_score') or 0) >= min_match_score]
+            
+        if min_authenticity > 1:
+            filtered_data = [r for r in filtered_data if (r.get('insight_authenticity') or 0) >= min_authenticity]
+            
+        st.subheader(f"Review Queue ({len(filtered_data)} / {len(st.session_state['review_data'])} records)")
+        
+        selection_event = display_data(filtered_data)
+        selected_rows = get_selected_rows(selection_event, filtered_data)
         
         st.divider()
         c1, c2 = st.columns(2)

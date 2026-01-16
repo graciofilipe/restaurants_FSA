@@ -324,3 +324,78 @@ def add_outcode_column(df: pd.DataFrame) -> pd.DataFrame:
     df['outcode'] = df['PostCode'].str.split(' ').str[0]
 
     return df
+
+def parse_insight_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Parses the insight columns (structured V2 and legacy V1) to extract standardized metrics.
+    
+    Returns a dict with:
+    - insight_score: int (0-100)
+    - insight_authenticity: int (1-5)
+    - insight_verdict: str (ACCEPTED, REJECTED, etc)
+    - insight_summary: str
+    """
+    # Default values
+    result = {
+        "insight_score": None,
+        "insight_authenticity": None,
+        "insight_verdict": "PENDING",
+        "insight_summary": None,
+        "insight_vibe": None
+    }
+    
+    # 1. Try V2 (Structured)
+    v2_json = row.get('gemini_insights_structured')
+    if v2_json:
+        try:
+            data = json.loads(v2_json)
+            result["insight_score"] = data.get('match_score')
+            result["insight_authenticity"] = data.get('cultural_authenticity_rating')
+            result["insight_summary"] = data.get('summary_reasoning')
+            result["insight_vibe"] = data.get('atmosphere')
+            
+            # Synthesize Verdict from Score
+            score = data.get('match_score', 0)
+            if score >= 85:
+                result["insight_verdict"] = "ACCEPTED"
+            elif score >= 70:
+                result["insight_verdict"] = "MAYBE"
+            else:
+                result["insight_verdict"] = "REJECTED"
+                
+            return result
+        except (json.JSONDecodeError, TypeError):
+            pass # Fallback to V1
+            
+    # 2. Try V1 (Legacy Text)
+    v1_text = row.get('gemini_insights')
+    if v1_text:
+        result["insight_summary"] = v1_text # Full text as summary
+        upper_text = v1_text.upper()
+        
+        if "FINAL VERDICT: ACCEPTED" in upper_text:
+            result["insight_verdict"] = "ACCEPTED"
+            result["insight_score"] = 90 # Proxy score
+        elif "FINAL VERDICT: PROBABLY REJECTED" in upper_text or "FINAL VERDICT: REJECTED" in upper_text:
+             result["insight_verdict"] = "REJECTED"
+             result["insight_score"] = 20
+        elif "FINAL VERDICT: MAYBE" in upper_text or "UNSURE" in upper_text:
+            result["insight_verdict"] = "MAYBE"
+            result["insight_score"] = 50
+    
+    return result
+
+def enhance_dataframe_with_insights(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Enriches the dataframe with parsed insight columns.
+    """
+    if df.empty:
+        return df
+        
+    # Apply parsing row by row
+    parsed_data = df.apply(lambda row: pd.Series(parse_insight_row(row)), axis=1)
+    
+    # Concatenate with original DF
+    # We use join (index based)
+    df_enriched = pd.concat([df, parsed_data], axis=1)
+    return df_enriched

@@ -23,14 +23,14 @@ CREATE OR REPLACE TABLE
 `{project_id}.{dataset_id}.{target_table_insights}` AS
 SELECT
   fhrsid, 
-  AI.GENERATE( ('''Use Google Search and Google Maps to find information about this London restaurant:\n\nRestaurant Name: ''',businessname,''' \n Location: ''',address, ''' \n\nUse Google searches and Google Maps data to evaluate the restaurant based on these criteria: \n Value for Money: Affordable with generous portions for the price. \n Location: In an area with high restaurant competition and some evidence of local native population for the cuisine the restaurant serves. \n Restaurant Type: should NOT be a fast-food, take-away-only, café, bar, pub, brunch place, coffee shop, or pastry shop. \n Ambiance and Style: It should be a casual place for locals, it should NOT be luxurious, high-end, fancy, or sophisticated. \n Customers: Frequented by local, middle/working-class patrons culturally aligned with the cuisine. \n Perform detailed research first, but your final output string must START with the verdict. \n Format: \n FINAL VERDICT: [One of "REJECTED", "Probably Rejected", "Maybe Accepted", "ACCEPTED!", "UNSURE"] \n [Your concise justification and summary]'''),
+  AI.GENERATE( ('''Use Google Search and Google Maps to find information about this London restaurant:\n\nRestaurant Name: ''',businessname,''' \n Location: ''',address, ''' \n\nResearch and evaluate this restaurant based on the following criteria:\n1. Affordability & Portions: Is it good value? Big portions?\n2. Authenticity: Is it "Westernized" or does it serve authentic regional dishes? Does it attract a native local community?\n3. Atmosphere: Is it a casual, "hole-in-the-wall" or "no-frills" spot? Or is it fancy/upscale?\n4. Vibe: Is it a sit-down place? (Not just takeaway/cafe)\n\nOUTPUT FORMAT: \nYou must strictly output ONLY a valid JSON object. Do not include markdown formatting (```json).\n\nSchema:\n{\n    "match_score": Integer (0-100, holistic score based on strict adherence to ALL user preferences: Affordability + Portions, Specific Cultural Authenticity, Sit-down Restaurant Type, and Casual Vibe),\n    "cultural_authenticity_rating": Integer (1-5, 5=Evidence of native patronage/languages), \n    "establishment_type": String (Enum: ["RESTAURANT_SITDOWN", "TAKEAWAY_ONLY", "CAFE_BRUNCH", "PUB_BAR", "FAST_FOOD", "OTHER"]),\n    "atmosphere": String (Enum: ["DIVE_HOLE_IN_WALL", "CASUAL_NO_FRILLS", "BUSTLING_FAMILY", "UPSCALE_FANCY", "GENERIC_MODERN", "TOURIST_TRAP"]),\n    "portion_size": String (Enum: ["SMALL_PLATES", "AVERAGE", "GENEROUS", "UNKNOWN"]),\n    "value_rating": Integer (1-5, 5=Cheap/Generous, 1=Expensive), \n    "summary_reasoning": String (Concise verdict)\n}'''),
     connection_id => '{connection_id}',
     endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_endpoint}',
     model_params => JSON '''{{
                               "systemInstruction": {{
                                 "parts": [
                                   {{
-                                    "text": "You are a restaurant evaluation agent. Use Google Search and Google Maps combined to evaluate restaurants against user-provided criteria. All information must be exclusively from search results and Maps. Generate precise Google Search queries to evaluate based on the criteria, and use Google Maps to understand ratings and customer reviews. Your evaluation should be methodical. Your response MUST START with the final verdict line."
+                                    "text": "You are a specialized restaurant profiler. Your result must be a valid, parseable JSON object. Do not include any introductory text or markdown code blocks. Focus heavily on detecting ''Authenticity'' and ''Specific Emigrant Communities''."
                                   }}
                                 ]
                               }},
@@ -60,7 +60,7 @@ MERGE `{project_id}.{dataset_id}.{target_table_master}` T
 USING `{project_id}.{dataset_id}.{source_table_insights}` S
 ON T.fhrsid = S.fhrsid
 WHEN MATCHED THEN
-  UPDATE SET T.gemini_insights = S.gemini_insights
+  UPDATE SET T.gemini_insights_structured = S.gemini_insights
 """
 
 # SCRIPT 4: Bulk Update Manual Reviews

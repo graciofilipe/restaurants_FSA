@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 ORIGINAL_COLUMNS_TO_KEEP = [
     'FHRSID', 'BusinessName', 'AddressLine1', 'AddressLine2', 'AddressLine3',
     'PostCode', 'LocalAuthorityName', 'RatingValue', 'NewRatingPending',
-    'first_seen', 'manual_review', 'gemini_insights'
+    'first_seen', 'manual_review', 'gemini_insights', 'gemini_insights_structured'
 ]
 
 # Custom Exceptions
@@ -551,6 +551,7 @@ MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('first_seen', 'DATE', mode='NULLABLE'),
     bigquery.SchemaField('manual_review', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('gemini_insights', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('gemini_insights_structured', 'STRING', mode='NULLABLE'),
 ]
 
 def upsert_agent_insight(project_id: str, dataset_id: str, table_id: str, insight_data: Dict[str, Any]) -> bool:
