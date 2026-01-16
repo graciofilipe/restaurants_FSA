@@ -111,8 +111,11 @@ def main():
         if not df_master.empty:
             df_enriched = enhance_dataframe_with_insights(df_master)
             # Ensure 'outcode' column exists
-            if 'outcode' not in df_enriched.columns and 'PostCode' in df_enriched.columns:
-                 df_enriched['outcode'] = df_enriched['PostCode'].str.split(' ').str[0]
+            if 'outcode' not in df_enriched.columns:
+                if 'PostCode' in df_enriched.columns:
+                     df_enriched['outcode'] = df_enriched['PostCode'].str.split(' ').str[0]
+                elif 'postcode' in df_enriched.columns:
+                     df_enriched['outcode'] = df_enriched['postcode'].str.split(' ').str[0]
             
             # Ensure 'manual_review' has valid defaults
             if 'manual_review' not in df_enriched.columns:
