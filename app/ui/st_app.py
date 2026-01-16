@@ -6,7 +6,8 @@ from app.services.bq_utils import (
     execute_gemini_enrichment, 
     get_distinct_local_authorities,
     get_distinct_outcodes,
-    load_filtered_data_from_bq
+    load_filtered_data_from_bq,
+    bulk_update_reviews
 )
 from app.core.data_processing import (
     load_data_from_csv, 
@@ -146,7 +147,7 @@ def main():
         
         # 2. Review Status (Server-Side)
         manual_review_filter = st.multiselect(
-            "Review Status",
+            "Manual Review",
             options=["accepted", "rejected", "pending", "not reviewed"],
             default=["pending"] # Default to pending usually makes sense for workflow
         )
@@ -240,8 +241,12 @@ def main():
         # Action Bar for Selection
         if selected_rows is not None and not selected_rows.empty:
             st.divider()
-            c_act, c_msg = st.columns([1, 4])
-            with c_act:
+            
+            # Action Containers
+            col_gen, col_update = st.columns([1, 1])
+            
+            # 1. Generate Profiles
+            with col_gen:
                 count = len(selected_rows)
                 if st.button(f"Generate Profiles for {count} Selected"):
                     # Extract IDs
@@ -263,12 +268,57 @@ def main():
                             )
                             st.success(result_msg)
                             time.sleep(2)
-                            # Invalidate cache/reload? 
-                            # For now, just rerun which might re-render state. 
-                            # Ideally we reload data but that's expensive.
                             st.rerun()
                     else:
                         st.error("Could not identify FHRSIDs for selection.")
+
+            # 2. Update Status
+            with col_update:
+                st.write("Update Manual Review Status:")
+                c_acc, c_rej, c_pend = st.columns(3)
+                
+                new_status = None
+                if c_acc.button("✅ Accept"):
+                    new_status = "accepted"
+                if c_rej.button("❌ Reject"):
+                    new_status = "rejected"
+                if c_pend.button("🔄 Reset"):
+                    new_status = "pending"
+                
+                if new_status:
+                    # Extract IDs
+                    col_map = {c.lower(): c for c in selected_rows.columns}
+                    id_col = col_map.get('fhrsid')
+                    
+                    if id_col:
+                        ids_to_update = selected_rows[id_col].unique().tolist()
+                        
+                        # Prepare update DataFrame
+                        df_updates = pd.DataFrame({
+                            'fhrsid': ids_to_update,
+                            'manual_review': [new_status] * len(ids_to_update)
+                        })
+                        
+                        with st.spinner(f"Updating {len(ids_to_update)} rows to '{new_status}'..."):
+                            success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_updates)
+                            if success:
+                                st.success(f"Updated: {msg}")
+                                # Update session state directly to reflect change immediately
+                                if 'df_enriched' in st.session_state:
+                                    df_s = st.session_state.df_enriched
+                                    s_col_map = {c.lower(): c for c in df_s.columns}
+                                    s_id_col = s_col_map.get('fhrsid')
+                                    
+                                    if s_id_col and 'manual_review' in df_s.columns:
+                                         mask = df_s[s_id_col].astype(str).isin([str(x) for x in ids_to_update])
+                                         st.session_state.df_enriched.loc[mask, 'manual_review'] = new_status
+                                
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error(f"Update failed: {msg}")
+                    else:
+                         st.error("Could not identify FHRSID for updates.")
         
         # Deep Dive Section
         if selected_rows is not None and not selected_rows.empty:
