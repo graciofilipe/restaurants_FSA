@@ -38,7 +38,8 @@ def render_insights_details(row):
     """
     Renders the detailed 6-pillar insights for a single selected row.
     """
-    st.markdown(f"### 🍽️ Profiling: {row['BusinessName']}")
+    biz_name = row.get('BusinessName') or row.get('businessname') or "Unknown Restaurant"
+    st.markdown(f"### 🍽️ Profiling: {biz_name}")
     
     if not row.get('detailed_insights'):
         st.info("No detailed persona profile available for this restaurant yet.")
