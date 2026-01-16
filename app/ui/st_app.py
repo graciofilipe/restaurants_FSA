@@ -129,7 +129,7 @@ def main():
         # 2. Review Status (Server-Side)
         manual_review_filter = st.multiselect(
             "Review Status",
-            options=["accepted", "rejected", "pending"],
+            options=["accepted", "rejected", "pending", "not reviewed"],
             default=["pending"] # Default to pending usually makes sense for workflow
         )
 
