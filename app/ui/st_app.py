@@ -22,7 +22,7 @@ def display_data(df, key=None):
     event = st.dataframe(
         df,
         on_select="rerun",
-        selection_mode="single-row",
+        selection_mode="multi-row",
         use_container_width=True,
         hide_index=True,
         key=key
