@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 import pandas as pd
 from app.services.bq_utils import (
     load_all_data_from_bq, 
@@ -162,12 +163,7 @@ def main():
         min_auth_score = st.slider("Min Authenticity", 0, 5, 0)
 
         st.divider()
-        st.header("Actions")
-        if st.button("Generate Profiles for Recents"):
-             with st.spinner("Agent calling Vertex AI..."):
-                result_msg = execute_gemini_enrichment(project_id, dataset_id, table_id)
-                st.success(result_msg)
-                st.rerun()
+        # Actions removed (moved to main grid selection)
 
         st.divider()
         st.header("Data Sync")
@@ -205,18 +201,46 @@ def main():
 
         st.subheader("Restaurant Registry")
         
-        # Main Grid - Single Selection Mode
+        # Main Grid - Multi Selection Mode
         selection_event = display_data(filtered_df, key="main_input_grid")
         selected_rows = get_selected_rows(selection_event, filtered_df)
         
-        # Deep Dive Section (Integrated below grid)
+        # Action Bar for Selection
         if selected_rows is not None and not selected_rows.empty:
             st.divider()
-            # Loop (though single select)
+            c_act, c_msg = st.columns([1, 4])
+            with c_act:
+                count = len(selected_rows)
+                if st.button(f"Generate Profiles for {count} Selected"):
+                    # Extract IDs
+                    fhrsids = []
+                    if 'fhrsid' in selected_rows.columns:
+                        fhrsids = selected_rows['fhrsid'].astype(str).tolist()
+                    elif 'FHRSID' in selected_rows.columns:
+                        fhrsids = selected_rows['FHRSID'].astype(str).tolist()
+                    
+                    if fhrsids:
+                        with st.spinner(f"Generating profiles for {count} restaurants..."):
+                            result_msg = execute_gemini_enrichment(
+                                project_id, 
+                                dataset_id, 
+                                table_id, 
+                                fhrsids=fhrsids
+                            )
+                            st.success(result_msg)
+                            time.sleep(2) # Brief pause to read
+                            st.rerun()
+                    else:
+                        st.error("Could not identify FHRSIDs for selection.")
+        
+        # Deep Dive Section (Integrated below grid)
+        if selected_rows is not None and not selected_rows.empty:
+            st.markdown("### 🔬 Deep Dive Analysis")
+            # Loop
             for idx, row in selected_rows.iterrows():
                 render_insights_details(row)
         else:
-            st.info("👆 Select a restaurant in the table above to view its full AI Profile.")
+            st.info("👆 Select one or more restaurants in the table above to view their AI Profile or Generate new ones.")
                     
     else:
         st.warning("No data loaded. Check connection or table path.")
