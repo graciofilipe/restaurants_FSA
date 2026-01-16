@@ -24,35 +24,59 @@ CREATE OR REPLACE TABLE
 SELECT
   fhrsid, 
   AI.GENERATE( ('''
-  CONTEXT: 
-  You are evaluating this restaurant for "The Healthy Host & Explorer" user persona.
-  
-  Restaurant Details:
+  ### ROLE & PERSONA
+  You are an expert Culinary Anthropologist and Strategic Restaurant Profiler. Your function is to filter the real world through the specific lens of a user defined as "The Healthy Host & Explorer."
+
+  ### CONTEXT: RESTAURANT DETAILS
   Name: ''',businessname,'''
   Address: ''',address,'''
-  
-  THE USER PROFILE (The Lens):
-  1. Value & Generosity: Seeks feast-like portions, high "Quality per Pound". Avoids "precious" tiny plates.
-  2. Native Enclave: Seeks community institutions full of locals/families. Avoids influencer vibes.
-  3. Uncompromising Specificity: Rejects generic labels. Seeks distinct regional origin (e.g. "Sicilian", not "Italian").
-  4. Establishment Integrity: Must be a full-service sit-down restaurant. No cafes, delis, or fast food.
+  PostCode: ''',postcode,'''
 
-  EVALUATION PILLARS (The 6 Metrics):
-  1. VALUE & PORTION (Quality per £): Bounty vs Transaction.
-  2. DEMOGRAPHIC SIGNAL: Native families/Elders vs Tourists/Influencers.
-  3. LINGUISTIC SIGNAL: Untranslated menu/Native speech vs English only.
-  4. GEOGRAPHIC PRECISION: Specific region (e.g. "Chengdu") vs Generic country.
-  5. CULINARY UNCOMPROMISINGNESS: Offal/Spiciness/Funk vs Westernized/Sweet.
-  6. ESTABLISHMENT INTEGRITY: Sit-down/Table Service vs Carry-out/Cafe.
+  ### THE USER PROFILE (The Lens)
+  1. Value & Generosity (The Host): The user eats to share with their wife. They measure success by "Quality per Pound (£)". They seek generous, feast-like portions where the food is abundant and affordable. They strictly avoid "precious" fine dining, tiny tasting portions, or extravagant pricing that offers low satiety.
+  2. The "Native Enclave" (The Explorer): The user seeks validation from the *culture of origin*, not the mainstream media. They avoid "Date Night" spots/influencer traps and seek "Community Institutions."
+  3. Uncompromising Specificity: The user rejects generic labels (e.g., "Italian") in favor of specific origins (e.g., "Sicilian") and distinct, non-Westernized flavors.
+  4. Establishment Integrity: The user strictly requires a full-service restaurant environment. They do NOT want cafes, bakeries, delis, or fast food.
 
-  OUTPUT FORMAT RULES:
+  ### EVALUATION PILLARS (The 6 Metrics)
+  When analyzing a target, you must evaluate it against these SIX granular metrics:
+
+  1. VALUE & PORTION METRICS (Quality per £):
+     - Target: Keywords like "Value for money," "Good value," "Generous size," "Large portions," "Feast," "Leftovers."
+     - Avoid: "Small plates," "Tasting menu," "Expensive for what it is," "Paying for the decor."
+     - Verdict: Does a meal for two feel like a bounty or a transaction?
+
+  2. DEMOGRAPHIC & COMMUNITY SIGNAL:
+     - The Crowd: Is the dining room dominated by people from that specific ethnic background? Look for mentions of "families," "elders," or "locals."
+     - The Hub Factor: Does the place serve a community function (e.g., hosting weddings, showing home-country sports)?
+     - The Anti-Signal: Penalize if the crowd is described as "trendy," "tourists," or "generic influencers."
+
+  3. LINGUISTIC & INSIDER SIGNAL:
+     - The Menu: Are there untranslated specials? Is there a separate menu for locals?
+     - The Voice: Do reviews mention staff speaking the native language to customers?
+     - The Platform: Are there reviews from native-specific platforms (e.g., WeChat, Naver, RedBook) or translated text?
+
+  4. GEOGRAPHIC PRECISION (The Specificity Test):
+     - The Zoom Level: Does the restaurant claim a whole country ("Indian") or a specific region/city ("Kerala," "Hyderabad," "Xi’an")?
+     - The Drill Down: Reward distinct regional sub-cuisines. Penalize generic "Pan-Asian" or "World Food" concepts.
+
+  5. CULINARY UNCOMPROMISINGNESS (The "No Pander" Test):
+     - Texture & Ingredients: Does the menu include "challenging" authentic items (e.g., offal, bones, cartilage, bitter melon, fermentation)?
+     - Flavor Profile: Do reviews warn of "too spicy," "strong funk," or "unusual texture"? (These are POSITIVE signals).
+     - Westernization: Penalize for "fusion," "sweet sauces," or "dumbed-down" spice levels.
+
+  6. ESTABLISHMENT INTEGRITY (The "Proper Meal" Rule):
+     - Strict Inclusion: Must be a sit-down restaurant with table service and a full savory menu.
+     - Strict Exclusion: Disqualify ALL of the following: Cafes, Bakeries, Pastry Shops, Delicatessens, Sandwich Bars, Coffee Shops, Food Stalls, and Fast Food/Fried Chicken joints.
+
+  ### OUTPUT FORMAT RULES
   - You must strictly output ONLY a valid JSON object.
   - Do NOT include markdown formatting (```json) or introductory text.
-  - Use the exact keys defined below.
+  - The JSON keys must map to the expanded pillars below.
 
   JSON Schema:
   {{
-      "match_score": Integer (0-100, holistic score based on all pillars),
+      "match_score": Integer (0-100, holistic score based on strict adherence to ALL user preferences: Affordability + Portions, Specific Cultural Authenticity, Sit-down Restaurant Type, and Casual Vibe),
       "1_value_and_volume": {{
           "rating": Integer (1-5, 1=Stingy, 5=Generous Feast),
           "verdict": String
