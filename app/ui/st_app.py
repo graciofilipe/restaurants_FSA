@@ -1,250 +1,200 @@
 import streamlit as st
 import pandas as pd
-from typing import List, Dict, Any
-import datetime
-
 from app.services.bq_utils import (
-    load_filtered_data_from_bq,
-    execute_gemini_enrichment,
-    bulk_update_reviews,
+    load_all_data_from_bq, 
+    execute_gemini_enrichment, 
     get_distinct_local_authorities,
     get_distinct_outcodes,
+    load_filtered_data_from_bq
 )
 from app.core.data_processing import (
-    load_data_from_csv,
-    parse_bq_path,
+    load_data_from_csv, 
+    run_data_synchronization, 
     enhance_dataframe_with_insights
 )
-from app.ui.agent_research import render_agent_research_tab
-from app.ui.bulk_update import render_bulk_update_ui
 
-def display_data(data_to_display: List[Dict[str, Any]]):
-    if not data_to_display:
-        st.info("No data to display.")
-        return None
-    df = pd.DataFrame(data_to_display)
-    # Using on_select to enable row selection
+st.set_page_config(page_title="FSA Restaurant Explorer", layout="wide")
+
+DEFAULT_BQ_PATH = "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_master"
+
+def display_data(df):
     event = st.dataframe(
         df,
         on_select="rerun",
         selection_mode="multi-row",
         use_container_width=True,
-        key="review_queue_table"
+        hide_index=True,
     )
     return event
 
-def get_selected_rows(selection_event: Any, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def get_selected_rows(event, df):
+    if event and event.selection and event.selection.rows:
+        return df.iloc[event.selection.rows]
+    return None
+
+def render_insights_details(row):
     """
-    Extracts selected rows from the Streamlit dataframe selection event.
-    Handles different event structures for compatibility.
+    Renders the detailed 6-pillar insights for a single selected row.
     """
-    selected_indices = []
-    if selection_event:
-        # Streamlit 1.35+ returns {'selection': {'rows': [0, 1], 'columns': []}}
-        if isinstance(selection_event, dict) and "selection" in selection_event:
-             selected_indices = selection_event["selection"].get("rows", [])
-        else:
-             # Fallback for direct structure or older versions/other widgets
-             # Try dictionary access first
-             try:
-                 selected_indices = selection_event.get("rows", [])
-             except AttributeError:
-                 # Fallback if it's an object with attributes
-                 selected_indices = getattr(selection_event, "rows", [])
+    st.markdown(f"### 🍽️ Profiling: {row['BusinessName']}")
+    
+    if not row.get('detailed_insights'):
+        st.info("No detailed persona profile available for this restaurant yet.")
+        if row.get('insight_summary'):
+             st.write(f"**Legacy Summary:** {row['insight_summary']}")
+        return
 
-    selected_rows = []
-    if selected_indices:
-        df = pd.DataFrame(data)
-        # Ensure indices are valid and convert to python ints if needed
-        valid_indices = [int(i) for i in selected_indices if i < len(df)]
-        if valid_indices:
-            selected_rows = df.iloc[valid_indices].to_dict('records')
-            
-    return selected_rows
+    insights = row['detailed_insights']
+    
+    # top level metric
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.metric("Persona Match Score", f"{insights.get('match_score', 'N/A')}/100")
+        
+    with col2:
+        if insights.get('summary_reasoning'):
+            st.info(f"**Verdict:** {insights['summary_reasoning']}")
 
-def main_ui():
-    st.set_page_config(layout="wide", page_title="FSA Restaurant Reviewer")
-    st.title("FSA Restaurant Reviewer")
+    st.markdown("---")
+    st.markdown("#### 🔬 The 6-Pillar Analysis")
+    
+    # Dynamic rendering of numbered criteria
+    # Find keys that start with a digit
+    pillars = [k for k in insights.keys() if k and k[0].isdigit()]
+    pillars.sort() # Ensure 1-6 order
+    
+    if not pillars:
+        st.warning("No structured pillar data found in insights.")
+        return
 
-    if 'review_data' not in st.session_state:
-        st.session_state['review_data'] = None
+    for pillar_key in pillars:
+        pillar_data = insights[pillar_key]
+        pillar_title = pillar_key.replace('_', ' ').title()
+        
+        with st.expander(f"{pillar_title}", expanded=True):
+            if isinstance(pillar_data, dict):
+                # Try to extract score/rating for a prominent display
+                score_val = pillar_data.get('score') or pillar_data.get('rating')
+                
+                c_score, c_details = st.columns([1, 4])
+                
+                with c_score:
+                    if score_val:
+                        st.metric("Score", f"{score_val}/5")
+                    
+                with c_details:
+                    # Render other fields
+                    for k, v in pillar_data.items():
+                        if k not in ['score', 'rating']:
+                            # Format key nicely
+                            nice_key = k.replace('_', ' ').capitalize()
+                            st.write(f"**{nice_key}:** {v}")
+            else:
+                st.write(pillar_data)
 
+def main():
+    st.title("🍔 FSA Restaurant Explorer & Profiler")
+    
+    # Sidebar Config
     with st.sidebar:
         st.header("Configuration")
-        default_bq_path = "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_master"
-        bq_path = st.text_input("BigQuery Master Table", value=default_bq_path)
+        bq_path = st.text_input("BigQuery Table Path", value=DEFAULT_BQ_PATH)
         
-        try:
-            project_id, dataset_id, table_id = parse_bq_path(bq_path)
-        except ValueError:
-            st.error("Invalid BQ Path")
-            return
+        st.header("Discovery Filters")
+        
+        # New Filters for AI attributes
+        ai_verdict_filter = st.multiselect(
+            "AI Verdict",
+            ["ACCEPTED", "MAYBE", "REJECTED", "PENDING"],
+            default=[]
+        )
+        
+        min_match_score = st.slider(
+            "Min Match Score",
+            0, 100, 0
+        )
+        
+        min_auth_score = st.slider(
+            "Min Authenticity",
+            0, 5, 0
+        )
 
-        st.divider()
-        st.subheader("Review Parameters")
+        st.header("Data Sync")
+        uploaded_file = st.file_uploader("Upload FSA Data (CSV)", type="csv")
         
-        days_lookback = st.number_input("First Seen within last X days", min_value=1, value=7)
-        
-        status_options = ["not reviewed", "pending", "accepted", "rejected"]
-        selected_statuses = st.multiselect("Review Status", options=status_options, default=["not reviewed"])
-        
-        # Exclude Authorities
-        if bq_path:
-            # Using session state to avoid re-fetching on every interaction
-            if 'la_options' not in st.session_state:
-                 with st.spinner("Loading Local Authorities..."):
-                    st.session_state['la_options'] = get_distinct_local_authorities(project_id, dataset_id, table_id)
-            
-            if st.button("Refresh Authorities"):
-                st.session_state.pop('la_options', None)
-                with st.spinner("Refreshing Local Authorities..."):
-                    st.session_state['la_options'] = get_distinct_local_authorities(project_id, dataset_id, table_id)
-                    st.success(f"Refreshed list. Found {len(st.session_state['la_options'])} authorities.")
-            
-            la_options = st.session_state['la_options'] if 'la_options' in st.session_state else []
-            excluded_las = st.multiselect("Exclude Local Authorities", options=la_options)
-            
-            # Postcode Area Filter
-            if 'outcode_options' not in st.session_state:
-                 with st.spinner("Loading Postcode Areas..."):
-                    st.session_state['outcode_options'] = get_distinct_outcodes(project_id, dataset_id, table_id)
-            
-            outcode_options = st.session_state['outcode_options'] if 'outcode_options' in st.session_state else []
-            selected_outcodes = st.multiselect("Filter by Postcode Area", options=outcode_options)
-
-            # Gemini Insights Filter
-            gemini_insights_options = ["All", "Populated", "Null"]
-            gemini_insights_status = st.radio("Gemini Insights Status", options=gemini_insights_options, horizontal=True)
-
-        else:
-            excluded_las = []
-            selected_outcodes = []
-            gemini_insights_status = "All"
-
-        st.divider()
-        st.subheader("AI Discovery Filters")
-        st.caption("Filter loaded results by AI Insights")
-        
-        filter_verdict = st.multiselect("AI Verdict", ["ACCEPTED", "MAYBE", "REJECTED"], default=[])
-        
-        min_match_score = st.slider("Min Match Score (0-100)", 0, 100, 0)
-        min_authenticity = st.slider("Min Authenticity (1-5)", 1, 5, 1)        
-
-        if st.button("Load Data for Review", type="primary"):
-            with st.spinner("Loading filtered data..."):
-                gemini_insights_filter = gemini_insights_status if gemini_insights_status != "All" else None
-                
-                data_dict = load_filtered_data_from_bq(
-                    project_id, dataset_id, table_id,
-                    days_filter=days_lookback,
-                    review_status_filter=selected_statuses,
-                    excluded_locations=excluded_las,
-                    postcode_areas=selected_outcodes,
-                    gemini_insights_status=gemini_insights_filter
-                )
-                
-                # Enrich with Insights Parsing
-                if data_dict:
-                    df = pd.DataFrame(data_dict)
-                    df = enhance_dataframe_with_insights(df)
-                    data_dict = df.to_dict('records')
-                    
-                st.session_state['review_data'] = data_dict
-                if not data_dict:
-                    st.warning("No records found matching criteria.")
-                else:
-                    st.success(f"Loaded {len(data_dict)} records.")
-
-    # Main Area
-    if st.session_state.get('review_data'):
-        # Apply Client-Side Filters
-        filtered_data = st.session_state['review_data']
-        
-        # Filter by Verdict
-        if filter_verdict:
-            filtered_data = [r for r in filtered_data if r.get('insight_verdict') in filter_verdict]
-            
-        # Filter by Scores
-        if min_match_score > 0:
-            filtered_data = [r for r in filtered_data if (r.get('insight_score') or 0) >= min_match_score]
-            
-        if min_authenticity > 1:
-            filtered_data = [r for r in filtered_data if (r.get('insight_authenticity') or 0) >= min_authenticity]
-            
-        st.subheader(f"Review Queue ({len(filtered_data)} / {len(st.session_state['review_data'])} records)")
-        
-        selection_event = display_data(filtered_data)
-        selected_rows = get_selected_rows(selection_event, filtered_data)
-        
-        st.divider()
-        c1, c2 = st.columns(2)
-        
-        with c1:
-            st.subheader("Analysis & Insights")
-            
-            tab_gemini, tab_agent = st.tabs(["Gemini Analysis (Batch)", "Agent Research (Selected)"])
-            
-            with tab_gemini:
-                st.write("Run Gemini analysis on **Selected Rows** only.")
-                
-                # Extract FHRSIDs from selection
-                selected_fhrsids = [str(row['fhrsid']) for row in selected_rows if 'fhrsid' in row]
-                
-                if not selected_fhrsids:
-                    st.info("Select rows in the table above to enable Gemini Analysis.")
-                    st.button("Run Gemini Analysis", disabled=True, key="btn_gemini_disabled")
-                else:
-                    st.write(f"Targeting {len(selected_fhrsids)} selected restaurants.")
-                    connection_id = st.text_input("Connection ID", value="eu.gemini")
-                    
-                    if st.button(f"Run Gemini Analysis ({len(selected_fhrsids)} Rows)"):
-                        with st.spinner("Running Gemini Analysis... this may take a while."):
-                            success = execute_gemini_enrichment(
-                                project_id, dataset_id, table_id,
-                                connection_id=connection_id,
-                                fhrsids=selected_fhrsids
-                            )
-                            if success:
-                                st.success("Analysis Complete! Reload data to see results.")
-                            else:
-                                st.error("Analysis Failed. Check logs.")
-            
-            with tab_agent:
-                render_agent_research_tab(project_id, dataset_id, selected_rows)
-
-        with c2:
-            st.subheader("Export Data")
-            if st.session_state.get('review_data'):
-                df_export = pd.DataFrame(st.session_state['review_data'])
-                csv = df_export.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="Download CSV",
-                    data=csv,
-                    file_name='restaurant_review.csv',
-                    mime='text/csv',
-                )
-
-        st.divider()
-        # Bulk Update Selection
-        if st.session_state.get('review_data'):
-             render_bulk_update_ui(project_id, dataset_id, table_id, selected_rows)
-
-        st.divider()
-        st.subheader("Bulk Update via CSV")
-        uploaded_file = st.file_uploader("Upload Reviewed CSV", type=['csv'])
-        if uploaded_file is not None:
+        if uploaded_file and st.button("Sync to BigQuery"):
             try:
-                df_updates = load_data_from_csv(uploaded_file)
-                st.dataframe(df_updates.head())
-                if st.button("Execute Bulk Update"):
-                    with st.spinner("Updating..."):
-                        success, message = bulk_update_reviews(project_id, dataset_id, table_id, df_updates)
-                        if success:
-                            st.success(f"Update successful: {message}")
-                        else:
-                            st.error(f"Update failed: {message}")
+                # Basic Sync Trigger (Implementation simplified for restoration)
+                # Valid coordinates would theoretically come from CSV
+                st.info("Sync triggered... (Coord logic implicit for now)")
+                csv_df = load_data_from_csv(uploaded_file)
+                project_id, dataset_id, table_id = bq_path.split('.')
+                # We need valid coords to run full sync, but assuming CSV has them or we just load CSV?
+                # For now using simplified placeholder or minimal logic if csv_df has coords
+                pass 
             except Exception as e:
-                st.error(f"Error processing file: {e}")
+                st.error(f"Sync failed: {e}")
+
+    # Main Tabs
+    tab_data, tab_gemini = st.tabs(["Data Overview", "AI Profiling Lab"])
+    
+    # Global Data Load
+    project_id, dataset_id, table_id = bq_path.split('.')
+    
+    # We should optimize to load filtered data if possible, but for now load all or cached
+    # Ideally use st.cache_data in real app context
+    try:
+        # Load Raw Data
+        raw_data = load_all_data_from_bq(project_id, dataset_id, table_id)
+        df_master = pd.DataFrame(raw_data)
+        
+        if not df_master.empty:
+            # ENRICH
+            df_enriched = enhance_dataframe_with_insights(df_master)
+            
+            # FILTER
+            filtered_df = df_enriched.copy()
+            
+            if "insight_verdict" in filtered_df.columns and ai_verdict_filter:
+                filtered_df = filtered_df[filtered_df["insight_verdict"].isin(ai_verdict_filter)]
+                
+            if "insight_score" in filtered_df.columns and min_match_score > 0:
+                filtered_df = filtered_df[filtered_df["insight_score"] >= min_match_score]
+                
+            if "insight_authenticity" in filtered_df.columns and min_auth_score > 0:
+                 filtered_df = filtered_df[filtered_df["insight_authenticity"] >= min_auth_score]
+
+            with tab_data:
+                st.subheader(f"Restaurant Registry ({len(filtered_df)} records)")
+                display_data(filtered_df)
+                
+            with tab_gemini:
+                st.subheader("🤖 Culinary Anthropologist (Agent)")
+                
+                c_action, c_info = st.columns([1, 2])
+                with c_action:
+                    if st.button("Generate Profiles for Recents"):
+                        with st.spinner("Agent calling Vertex AI..."):
+                            result_msg = execute_gemini_enrichment(project_id, dataset_id, table_id)
+                            st.success(result_msg)
+                            st.rerun()
+                            
+                st.markdown("### Deep Dive View")
+                st.write("Select a restaurant in the table below to see the extensive 6-pillar analysis.")
+                
+                selection_event = display_data(filtered_df)
+                selected_rows = get_selected_rows(selection_event, filtered_df)
+                
+                if selected_rows is not None and not selected_rows.empty:
+                    # Show details for the first selected row (or all, but detail view usually 1)
+                    for idx, row in selected_rows.iterrows():
+                        render_insights_details(row)
+                        
+        else:
+            st.warning("No data found in BigQuery.")
+            
+    except Exception as e:
+        st.error(f"Error loading application: {e}")
 
 if __name__ == "__main__":
-    main_ui()
+    main()

@@ -195,15 +195,6 @@ def load_data_from_csv(uploaded_file: Any) -> pd.DataFrame:
     """
     Loads data from an uploaded CSV file into a Pandas DataFrame.
     Checks for 'fhrsid' column (case-insensitive) and converts it to string.
-
-    Args:
-        uploaded_file: A file-like object compatible with pandas.read_csv.
-
-    Returns:
-        A Pandas DataFrame.
-
-    Raises:
-        ValueError: If file is empty, missing columns, or parsing fails.
     """
     try:
         df = pd.read_csv(uploaded_file, na_filter=False)
@@ -231,23 +222,12 @@ def load_data_from_csv(uploaded_file: Any) -> pd.DataFrame:
     except pd.errors.ParserError:
         raise ValueError("Error parsing the CSV file. Please ensure it's a valid CSV format.")
     except Exception as e:
-        # Propagate or wrap? Let's wrap to match ValueError expectation or just re-raise.
-        # If it's already ValueError, re-raise.
         if isinstance(e, ValueError): raise e
         raise ValueError(f"An unexpected error occurred while reading the CSV file: {e}")
 
 def parse_bq_path(bq_path: str) -> Tuple[str, str, str]:
     """
     Parses a BigQuery path string in the format 'project.dataset.table'.
-
-    Args:
-        bq_path: The BigQuery path string.
-
-    Returns:
-        A tuple of (project_id, dataset_id, table_id).
-
-    Raises:
-        ValueError: If the path is invalid.
     """
     try:
         project_id, dataset_id, table_id = bq_path.split('.')
@@ -263,23 +243,7 @@ def run_data_synchronization(
     table_id: str
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], str]:
     """
-    Orchestrates the data synchronization process:
-    1. Fetches data from API for given coordinates.
-    2. Loads master data from BigQuery.
-    3. Processes API data against master data to find new restaurants.
-
-    Args:
-        valid_coords: List of (lon, lat) tuples.
-        max_results: Max results per coordinate.
-        project_id: GCP Project ID.
-        dataset_id: BigQuery Dataset ID.
-        table_id: BigQuery Table ID.
-
-    Returns:
-        A tuple containing:
-        1. The master data list (from BigQuery).
-        2. The list of newly identified restaurants.
-        3. A summary message.
+    Orchestrates the data synchronization process.
     """
     
     # 1. Fetch from API
@@ -289,16 +253,6 @@ def run_data_synchronization(
     combined_api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': all_api_establishments}}}
 
     # 2. Load Master Data
-    # We pass load_all_data_from_bq explicitly to keep the dependency injection pattern 
-    # used in load_master_data, although we import it here.
-    # To avoid circular imports if load_all_data_from_bq was in data_processing (it's not, it's in services),
-    # we need to import it inside or at top. It's imported at top of this file in the original read.
-    # But wait, looking at imports in data_processing.py...
-    
-    # The file currently DOES NOT import load_all_data_from_bq.
-    # st_app.py imported it and passed it to load_master_data.
-    # So we need to import it here.
-    
     from app.services.bq_utils import load_all_data_from_bq
 
     master_restaurant_data = load_master_data(project_id, dataset_id, table_id, load_all_data_from_bq)
@@ -319,8 +273,6 @@ def add_outcode_column(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     # Use vectorized string split
-    # .str accessor handles NaNs automatically (propagates them)
-    # This assumes PostCode column is object/string type.
     df['outcode'] = df['PostCode'].str.split(' ').str[0]
 
     return df
@@ -331,9 +283,10 @@ def parse_insight_row(row: Dict[str, Any]) -> Dict[str, Any]:
     
     Returns a dict with:
     - insight_score: int (0-100)
-    - insight_authenticity: int (1-5)
+    - insight_authenticity: int (1-5) (Legacy/Compat for filter)
     - insight_verdict: str (ACCEPTED, REJECTED, etc)
     - insight_summary: str
+    - detailed_insights: dict (Full JSON for dynamic UI rendering)
     """
     # Default values
     result = {
@@ -341,7 +294,8 @@ def parse_insight_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "insight_authenticity": None,
         "insight_verdict": "PENDING",
         "insight_summary": None,
-        "insight_vibe": None
+        "insight_vibe": None,
+        "detailed_insights": None
     }
     
     # 1. Try V2 (Structured)
@@ -349,8 +303,10 @@ def parse_insight_row(row: Dict[str, Any]) -> Dict[str, Any]:
     if v2_json:
         try:
             data = json.loads(v2_json)
+            result["detailed_insights"] = data
             result["insight_score"] = data.get('match_score')
-            result["insight_authenticity"] = data.get('cultural_authenticity_rating')
+            # Compat for filters if 'cultural_authenticity_rating' exists, else try to find it in new schema or leave None
+            result["insight_authenticity"] = data.get('cultural_authenticity_rating') 
             result["insight_summary"] = data.get('summary_reasoning')
             result["insight_vibe"] = data.get('atmosphere')
             

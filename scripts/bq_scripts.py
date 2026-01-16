@@ -23,21 +23,77 @@ CREATE OR REPLACE TABLE
 `{project_id}.{dataset_id}.{target_table_insights}` AS
 SELECT
   fhrsid, 
-  AI.GENERATE( ('''Use Google Search and Google Maps to find information about this London restaurant:\n\nRestaurant Name: ''',businessname,''' \n Location: ''',address, ''' \n\nResearch and evaluate this restaurant based on the following criteria:\n1. Affordability & Portions: Is it good value? Big portions?\n2. Authenticity: Is it "Westernized" or does it serve authentic regional dishes? Does it attract a native local community?\n3. Atmosphere: Is it a casual, "hole-in-the-wall" or "no-frills" spot? Or is it fancy/upscale?\n4. Vibe: Is it a sit-down place? (Not just takeaway/cafe)\n\nOUTPUT FORMAT: \nYou must strictly output ONLY a valid JSON object. Do not include markdown formatting (```json).\n\nSchema:\n{{\n    "match_score": Integer (0-100, holistic score based on strict adherence to ALL user preferences: Affordability + Portions, Specific Cultural Authenticity, Sit-down Restaurant Type, and Casual Vibe),\n    "cultural_authenticity_rating": Integer (1-5, 5=Evidence of native patronage/languages), \n    "establishment_type": String (Enum: ["RESTAURANT_SITDOWN", "TAKEAWAY_ONLY", "CAFE_BRUNCH", "PUB_BAR", "FAST_FOOD", "OTHER"]),\n    "atmosphere": String (Enum: ["DIVE_HOLE_IN_WALL", "CASUAL_NO_FRILLS", "BUSTLING_FAMILY", "UPSCALE_FANCY", "GENERIC_MODERN", "TOURIST_TRAP"]),\n    "portion_size": String (Enum: ["SMALL_PLATES", "AVERAGE", "GENEROUS", "UNKNOWN"]),\n    "value_rating": Integer (1-5, 5=Cheap/Generous, 1=Expensive), \n    "summary_reasoning": String (Concise verdict)\n}}'''),
+  AI.GENERATE( ('''
+  CONTEXT: 
+  You are evaluating this restaurant for "The Healthy Host & Explorer" user persona.
+  
+  Restaurant Details:
+  Name: ''',businessname,'''
+  Address: ''',address,'''
+  
+  THE USER PROFILE (The Lens):
+  1. Value & Generosity: Seeks feast-like portions, high "Quality per Pound". Avoids "precious" tiny plates.
+  2. Native Enclave: Seeks community institutions full of locals/families. Avoids influencer vibes.
+  3. Uncompromising Specificity: Rejects generic labels. Seeks distinct regional origin (e.g. "Sicilian", not "Italian").
+  4. Establishment Integrity: Must be a full-service sit-down restaurant. No cafes, delis, or fast food.
+
+  EVALUATION PILLARS (The 6 Metrics):
+  1. VALUE & PORTION (Quality per £): Bounty vs Transaction.
+  2. DEMOGRAPHIC SIGNAL: Native families/Elders vs Tourists/Influencers.
+  3. LINGUISTIC SIGNAL: Untranslated menu/Native speech vs English only.
+  4. GEOGRAPHIC PRECISION: Specific region (e.g. "Chengdu") vs Generic country.
+  5. CULINARY UNCOMPROMISINGNESS: Offal/Spiciness/Funk vs Westernized/Sweet.
+  6. ESTABLISHMENT INTEGRITY: Sit-down/Table Service vs Carry-out/Cafe.
+
+  OUTPUT FORMAT RULES:
+  - You must strictly output ONLY a valid JSON object.
+  - Do NOT include markdown formatting (```json) or introductory text.
+  - Use the exact keys defined below.
+
+  JSON Schema:
+  {{
+      "match_score": Integer (0-100, holistic score based on all pillars),
+      "1_value_and_volume": {{
+          "rating": Integer (1-5, 1=Stingy, 5=Generous Feast),
+          "verdict": String
+      }},
+      "2_demographic_community": {{
+          "score": Integer (1-5, 1=Tourists, 5=Native Community Hub),
+          "evidence": String
+      }},
+      "3_linguistic_signal": {{
+          "score": Integer (1-5, 1=English Only, 5=Untranslated/Native Dominant),
+          "menu_type": String
+      }},
+      "4_geographic_precision": {{
+          "region_identified": String,
+          "specificity_level": String (Enum: ["GENERIC_NATIONAL", "BROAD_REGIONAL", "HYPER_LOCAL_CITY"])
+      }},
+      "5_culinary_uncompromisingness": {{
+          "score": Integer (1-5, 1=Westernized/Safe, 5=Challenging/Authentic),
+          "pander_check": String
+      }},
+      "6_establishment_integrity": {{
+          "is_sit_down_restaurant": Boolean,
+          "type": String (Enum: ["RESTAURANT_DINING", "CAFE_BAKERY_DELI", "FAST_FOOD_JOINT"])
+      }},
+      "summary_reasoning": String (Concise verdict: Does it balance Insider Fame with Mainstream Obscurity?)
+  }}
+  '''),
     connection_id => '{connection_id}',
     endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_endpoint}',
     model_params => JSON '''{{
                               "systemInstruction": {{
                                 "parts": [
                                   {{
-                                    "text": "You are a specialized restaurant profiler. Your result must be a valid, parseable JSON object. Do not include any introductory text or markdown code blocks. Focus heavily on detecting ''Authenticity'' and ''Specific Emigrant Communities''."
+                                    "text": "You are an expert Culinary Anthropologist and Strategic Restaurant Profiler. Your function is to filter the real world through the specific lens of the ''Healthy Host & Explorer''. Output strictly valid parseable JSON."
                                   }}
                                 ]
                               }},
                               "generationConfig": {{
-                                "temperature": 0.6,
+                                "temperature": 0.4,
                                 "maxOutputTokens": 65535,
-                                "topP": 0.72
+                                "topP": 0.8
                               }},
                               "safetySettings": [
                                 {{ "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" }},
