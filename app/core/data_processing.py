@@ -318,6 +318,41 @@ def parse_insight_row(row: Dict[str, Any]) -> Dict[str, Any]:
                 result["insight_verdict"] = "MAYBE"
             else:
                 result["insight_verdict"] = "REJECTED"
+
+            # Flattened Columns for Display
+            result["match_score"] = data.get("match_score")
+            
+            # 1. Value & Volume
+            val_vol = data.get("1_value_and_volume", {})
+            result["1_value_and_volume_rating"] = val_vol.get("rating")
+            result["1_value_and_volume_verdict"] = val_vol.get("verdict")
+            
+            # 2. Demographic
+            dem = data.get("2_demographic_community", {})
+            result["2_demographic_community_score"] = dem.get("score")
+            result["2_demographic_community_evidence"] = dem.get("evidence")
+            
+            # 3. Linguistic
+            ling = data.get("3_linguistic_signal", {})
+            result["3_linguistic_signal_score"] = ling.get("score")
+            result["3_linguistic_signal_menu_type"] = ling.get("menu_type")
+            
+            # 4. Geographic
+            geo = data.get("4_geographic_precision", {})
+            result["4_geographic_precision_region_identified"] = geo.get("region_identified")
+            result["4_geographic_precision_specificity_level"] = geo.get("specificity_level")
+            
+            # 5. Culinary
+            cul = data.get("5_culinary_uncompromisingness", {})
+            result["5_culinary_uncompromisingness_score"] = cul.get("score")
+            result["5_culinary_uncompromisingness_pander_check"] = cul.get("pander_check")
+            
+            # 6. Integrity
+            integ = data.get("6_establishment_integrity", {})
+            result["6_establishment_integrity_is_sit_down_restaurant"] = integ.get("is_sit_down_restaurant")
+            result["6_establishment_integrity_type"] = integ.get("type")
+            
+            result["summary_reasoning"] = data.get("summary_reasoning")
                 
             return result
         except (json.JSONDecodeError, TypeError):

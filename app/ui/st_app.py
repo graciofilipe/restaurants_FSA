@@ -18,13 +18,31 @@ st.set_page_config(page_title="FSA Restaurant Explorer", layout="wide")
 
 DEFAULT_BQ_PATH = "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_master"
 
+DISPLAY_COLUMNS = [
+    "fhrsid", "businessname", "addressline1", "addressline2", "addressline3", 
+    "postcode", "localauthorityname", "first_seen", "manual_review", 
+    "gemini_insights", "gemini_insights_structured",
+    "match_score",
+    "1_value_and_volume_rating", "1_value_and_volume_verdict",
+    "2_demographic_community_score", "2_demographic_community_evidence",
+    "3_linguistic_signal_score", "3_linguistic_signal_menu_type",
+    "4_geographic_precision_region_identified", "4_geographic_precision_specificity_level",
+    "5_culinary_uncompromisingness_score", "5_culinary_uncompromisingness_pander_check",
+    "6_establishment_integrity_is_sit_down_restaurant", "6_establishment_integrity_type",
+    "summary_reasoning"
+]
+
 def display_data(df, key=None):
+    # Ensure columns exist to avoid Streamlit warnings, though column_order usually handles missing gracefully (hides them)
+    # But filters/logic might define columns that are not yet in DF if filtered empty?
+    # We pass column_order directly.
     event = st.dataframe(
         df,
         on_select="rerun",
         selection_mode="multi-row",
         use_container_width=True,
         hide_index=True,
+        column_order=DISPLAY_COLUMNS,
         key=key
     )
     return event
