@@ -14,7 +14,7 @@ class TestStAppAgentUI(unittest.TestCase):
         call_kwargs = mock_st.dataframe.call_args[1]
         
         assert call_kwargs.get("on_select") == "rerun"
-        assert call_kwargs.get("selection_mode") == "single"
+        assert call_kwargs.get("selection_mode") == "single-row"
 
     @patch('app.ui.agent_research.st')
     def test_render_agent_research_tab_logic(self, mock_st):

@@ -21,7 +21,7 @@ def display_data(df, key=None):
     event = st.dataframe(
         df,
         on_select="rerun",
-        selection_mode="single", # Changed to single for clearer deep dive focus in unified view
+        selection_mode="single-row",
         use_container_width=True,
         hide_index=True,
         key=key
