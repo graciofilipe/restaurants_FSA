@@ -6,8 +6,11 @@ class TestGeminiTab(unittest.TestCase):
     @patch('app.ui.st_app.st')
     @patch('app.ui.st_app.execute_gemini_enrichment')
     @patch('app.ui.st_app.get_selected_rows')
+    @patch('app.ui.st_app.enhance_dataframe_with_insights')
+    @patch('app.ui.st_app.get_distinct_outcodes')
+    @patch('app.ui.st_app.get_distinct_local_authorities')
     @patch('app.ui.st_app.load_filtered_data_from_bq')
-    def test_gemini_analysis_button_logic(self, mock_load, mock_get_rows, mock_execute, mock_st):
+    def test_gemini_analysis_button_logic(self, mock_load, mock_get_las, mock_get_outcodes, mock_enhance, mock_get_rows, mock_execute, mock_st):
         """Test Gemini Analysis button enabled/disabled state."""
         # Setup common mocks
         mock_st.session_state = {'review_data': [{'fhrsid': '123'}]}
@@ -15,6 +18,13 @@ class TestGeminiTab(unittest.TestCase):
         mock_st.text_input.return_value = "proj.ds.table"
         mock_st.tabs.return_value = [MagicMock(), MagicMock()]
         mock_st.columns.return_value = [MagicMock(), MagicMock()]
+        mock_st.slider.return_value = 0 # Fix for '>', '>=' comparisons
+        mock_st.multiselect.return_value = [] # Fix for iteration
+        
+        # Mock BQ Utils to return empty lists (avoid network calls)
+        mock_get_las.return_value = []
+        mock_get_outcodes.return_value = [] 
+        mock_enhance.side_effect = lambda df: df # Pass-through for enhancement
         
         # --- Case 1: With Selection ---
         mock_get_rows.return_value = [{'fhrsid': '123'}]

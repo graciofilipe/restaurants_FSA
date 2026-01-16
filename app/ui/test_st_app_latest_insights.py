@@ -72,7 +72,11 @@ class TestStAppLatestInsights(unittest.TestCase):
     @patch('app.ui.agent_research.st') # Need to patch st in agent_research too as it's called
     @patch('app.ui.agent_research.load_specific_agent_insights')
     @patch('app.ui.st_app.parse_bq_path')
-    def test_ui_displays_latest_insights(self, mock_parse_bq, mock_load, mock_st_agent, mock_st):
+    @patch('app.ui.st_app.enhance_dataframe_with_insights')
+    @patch('app.ui.st_app.get_distinct_outcodes')
+    @patch('app.ui.st_app.get_distinct_local_authorities')
+    @patch('app.ui.st_app.load_filtered_data_from_bq')
+    def test_ui_displays_latest_insights(self, mock_load_filtered, mock_get_las, mock_get_outcodes, mock_enhance, mock_parse_bq, mock_load, mock_st_agent, mock_st):
         # Setup state
         # Both mocks need access to session state
         state = {
@@ -90,8 +94,17 @@ class TestStAppLatestInsights(unittest.TestCase):
         
         # Configure interactive widgets to avoid entering unexpected blocks
         mock_st.button.return_value = False
+        mock_st.button.return_value = False
         mock_st_agent.button.return_value = False
         mock_st_agent.radio.return_value = "Batch (All Filtered)" # Default to something valid
+        
+        mock_st.slider.return_value = 0
+        mock_st.multiselect.return_value = []
+        
+        mock_get_las.return_value = []
+        mock_get_outcodes.return_value = []
+        mock_enhance.side_effect = lambda df: df
+        mock_load_filtered.return_value = []
         
         # Mock context managers
         mock_col = MagicMock()
