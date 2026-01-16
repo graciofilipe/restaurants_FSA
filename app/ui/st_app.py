@@ -38,6 +38,7 @@ def render_insights_details(row):
     """
     Renders the detailed 6-pillar insights for a single selected row.
     """
+    # Handle case-insensitive column names (BQ often returns lowercase)
     biz_name = row.get('BusinessName') or row.get('businessname') or "Unknown Restaurant"
     st.markdown(f"### 🍽️ Profiling: {biz_name}")
     
