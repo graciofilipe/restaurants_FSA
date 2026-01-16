@@ -23,8 +23,8 @@ def mock_bq_data():
 def test_gemini_tab_interaction(mock_dataframe, mock_slider, mock_multiselect, mock_text_input, 
                               mock_sidebar, mock_tabs, mock_columns, mock_execute, mock_load, mock_enhance):
     # Setup mocks
-    mock_load.return_value = [{"fhrsid": "123", "BusinessName": "Test"}]
-    mock_enhance.return_value = pd.DataFrame([{"fhrsid": "123", "BusinessName": "Test", "insight_verdict": "ACCEPTED"}])
+    mock_load.return_value = [{"fhrsid": "123", "BusinessName": "Test", "PostCode": "SW14 7HG"}]
+    mock_enhance.return_value = pd.DataFrame([{"fhrsid": "123", "BusinessName": "Test", "insight_verdict": "ACCEPTED", "PostCode": "SW14 7HG", "outcode": "SW14"}])
     
     # Mock UI elements to avoid type errors
     mock_slider.return_value = 0
