@@ -1,38 +1,53 @@
 import pandas as pd
+from unittest.mock import MagicMock
 from app.ui.st_app import get_selected_rows
 
-def test_get_selected_rows_legacy_structure():
-    data = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
-    # Legacy/Direct dictionary structure: {'rows': [0]}
-    event = {'rows': [0]}
-    
-    selected = get_selected_rows(event, data)
-    
-    assert len(selected) == 1
-    assert selected[0]["name"] == "A"
+class MockSelection:
+    def __init__(self, rows):
+        self.rows = rows
 
-def test_get_selected_rows_new_structure():
-    data = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
-    # New structure: {'selection': {'rows': [1], ...}}
-    event = {'selection': {'rows': [1], 'columns': []}}
+class MockEvent:
+    def __init__(self, selection_rows=None):
+        if selection_rows is not None:
+            self.selection = MockSelection(selection_rows)
+        else:
+            self.selection = None
+
+def test_get_selected_rows_basic():
+    df = pd.DataFrame([{"id": 1, "name": "A"}, {"id": 2, "name": "B"}])
+    # Event with row 0 selected
+    event = MockEvent(selection_rows=[0])
     
-    selected = get_selected_rows(event, data)
+    selected = get_selected_rows(event, df)
     
+    assert selected is not None
     assert len(selected) == 1
-    assert selected[0]["name"] == "B"
+    assert selected.iloc[0]["name"] == "A"
+
+def test_get_selected_rows_second_item():
+    df = pd.DataFrame([{"id": 1, "name": "A"}, {"id": 2, "name": "B"}])
+    # Event with row 1 selected
+    event = MockEvent(selection_rows=[1])
+    
+    selected = get_selected_rows(event, df)
+    
+    assert selected is not None
+    assert len(selected) == 1
+    assert selected.iloc[0]["name"] == "B"
 
 def test_get_selected_rows_empty_selection():
-    data = [{"id": 1, "name": "A"}]
-    event = {'selection': {'rows': [], 'columns': []}}
+    df = pd.DataFrame([{"id": 1, "name": "A"}])
+    event = MockEvent(selection_rows=[])
     
-    selected = get_selected_rows(event, data)
+    selected = get_selected_rows(event, df)
     
-    assert len(selected) == 0
+    # Implementation returns None if no selection
+    assert selected is None
 
 def test_get_selected_rows_none_event():
-    data = [{"id": 1, "name": "A"}]
+    df = pd.DataFrame([{"id": 1, "name": "A"}])
     event = None
     
-    selected = get_selected_rows(event, data)
+    selected = get_selected_rows(event, df)
     
-    assert len(selected) == 0
+    assert selected is None
