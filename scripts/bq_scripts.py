@@ -8,6 +8,7 @@ CREATE OR REPLACE TABLE
 SELECT
   fhrsid,
   businessname,
+  postcode,
   CONCAT( COALESCE(addressline1, ', '), ' ', COALESCE(addressline2, ', '), ' ', COALESCE(addressline3, ', '), ' ', COALESCE(postcode, ', '), ' ', COALESCE(localauthorityname, ' ')) AS address,
   manual_review
 FROM
