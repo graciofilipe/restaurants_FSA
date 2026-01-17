@@ -140,9 +140,9 @@ SELECT
   Analyze the restaurant details below against your specific Culinary Anthropologist Persona and Scoring Logic defined in your System Instructions.
 
   ### RESTAURANT DETAILS
-  Name: ''',businessname,''',
-  Address: ''',address,''',
-  PostCode: ''',postcode,''',
+  Name: ''',BusinessName,''',
+  Address: ''',COALESCE(AddressLine1, ''),', ',COALESCE(AddressLine2, ''),', ',COALESCE(AddressLine3, ''),''',
+  PostCode: ''',PostCode,''',
   '''),
     connection_id => '{connection_id}',
     endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_endpoint}',
