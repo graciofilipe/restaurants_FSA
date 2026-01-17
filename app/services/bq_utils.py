@@ -10,7 +10,8 @@ from scripts.bq_scripts import (
     SCRIPT_IDENTIFY_RECENTS, 
     SCRIPT_GENERATE_INSIGHTS, 
     SCRIPT_MERGE_INSIGHTS,
-    SCRIPT_BULK_UPDATE_MERGE
+    SCRIPT_BULK_UPDATE_MERGE,
+    MODEL_PARAMS_JSON
 )
 
 # Configure logging
@@ -106,7 +107,8 @@ def execute_gemini_enrichment(
             source_table_recents=recents_table_id,
             target_table_insights=insights_table_id,
             connection_id=connection_id,
-            model_endpoint=model_endpoint
+            model_endpoint=model_endpoint,
+            model_params_json=MODEL_PARAMS_JSON
         )
         job2 = client.query(query_insights)
         job2.result()
