@@ -108,14 +108,14 @@ SELECT
     connection_id => '{connection_id}',
     endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_endpoint}',
     model_params => JSON '''{{
-                              "system_instruction": {{
+                              "systemInstruction": {{
                                 "parts": [
                                   {{
                                     "text": "You are an expert Culinary Anthropologist and Strategic Restaurant Profiler. Your function is to filter the real world through the specific lens of the ''Healthy Host & Explorer''. Output strictly valid parseable JSON."
                                   }}
                                 ]
                               }},
-                              "generation_config": {{
+                              "generationConfig": {{
                                 "temperature": 0.4,
                                 "maxOutputTokens": 65535,
                                 "topP": 0.8,
@@ -186,7 +186,7 @@ SELECT
                                   ]
                                 }}
                               }},
-                              "safety_settings": [
+                              "safetySettings": [
                                 {{ "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" }},
                                 {{ "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" }},
                                 {{ "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" }},
