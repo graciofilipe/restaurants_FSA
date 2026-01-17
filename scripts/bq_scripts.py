@@ -191,6 +191,9 @@ SELECT
                                 {{ "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" }},
                                 {{ "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" }},
                                 {{ "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" }}
+                              ],
+                              "tools": [
+                                {{ "googleSearch": {{}} }}
                               ]
                             }}''').result AS gemini_insights
 FROM
