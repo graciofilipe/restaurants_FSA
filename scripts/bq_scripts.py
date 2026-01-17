@@ -143,7 +143,6 @@ SELECT
   Name: ''',businessname,''',
   Address: ''',COALESCE(addressline1, ''),', ',COALESCE(addressline2, ''),', ',COALESCE(addressline3, ''),''',
   PostCode: ''',postcode,''',
-  Analysis Timestamp: ''',CURRENT_TIMESTAMP(),'''
   '''),
     connection_id => '{connection_id}',
     endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_endpoint}',
