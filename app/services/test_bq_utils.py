@@ -604,3 +604,19 @@ def test_load_filtered_data_with_postcode(mock_read_gbq):
     # Check for correct SPLIT logic and escaping
     # Note: query string formatting might vary slightly, checking for substring presence
     assert "SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ('SE1', 'E''1')" in query
+
+@patch('pandas_gbq.read_gbq')
+def test_load_filtered_data_with_date(mock_read_gbq):
+    """Test SQL generation for first_seen_start_date filtering."""
+    mock_df = pd.DataFrame({'col': [1]})
+    mock_read_gbq.return_value = mock_df
+    
+    load_filtered_data_from_bq(
+        'proj', 'ds', 'tbl',
+        first_seen_start_date='2023-01-01'
+    )
+    
+    args, kwargs = mock_read_gbq.call_args
+    query = args[0]
+    
+    assert "AND first_seen >= '2023-01-01'" in query

@@ -164,7 +164,8 @@ def load_filtered_data_from_bq(
     review_status_filter: List[str] = None,
     excluded_locations: List[str] = None,
     postcode_areas: List[str] = None,
-    gemini_insights_status: str = None
+    gemini_insights_status: str = None,
+    first_seen_start_date: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Loads data from BigQuery with optional filters.
@@ -175,6 +176,9 @@ def load_filtered_data_from_bq(
     
     if days_filter is not None:
         query += f" AND DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_filter}"
+
+    if first_seen_start_date:
+        query += f" AND first_seen >= '{first_seen_start_date}'"
     
     if review_status_filter:
         statuses_str = ", ".join([f"'{s}'" for s in review_status_filter])

@@ -115,7 +115,7 @@ def render_insights_details(row):
 def get_cached_outcodes(project_id, dataset_id, table_id):
     return get_distinct_outcodes(project_id, dataset_id, table_id)
 
-def load_data_into_state(project_id, dataset_id, table_id, review_status_filter, outcode_filter):
+def load_data_into_state(project_id, dataset_id, table_id, review_status_filter, outcode_filter, first_seen_start_date=None):
     """
     Helper to load data into session state.
     Used by 'Load Data' button and after 'Generate Profiles' to ensure freshness.
@@ -128,7 +128,8 @@ def load_data_into_state(project_id, dataset_id, table_id, review_status_filter,
                 dataset_id, 
                 table_id,
                 review_status_filter=review_status_filter,
-                postcode_areas=outcode_filter
+                postcode_areas=outcode_filter,
+                first_seen_start_date=first_seen_start_date
             )
             
             df_master = pd.DataFrame(raw_data)
@@ -205,9 +206,28 @@ def main():
         min_auth_score = st.slider("Min Authenticity", 0, 5, 0)
 
         st.divider()
+        
+        # 4. Date Filter (Server-Side)
+        st.write("### 📅 Date Filter")
+        first_seen_date = st.date_input(
+            "First Seen After",
+            value=None,
+            min_value=None,
+            max_value=pd.Timestamp.now().date(),
+            help="Load restaurants first seen ON or AFTER this date."
+        )
+
+        
         # Load Button
         if st.button("Load Data", type="primary"):
-            load_data_into_state(project_id, dataset_id, table_id, manual_review_filter, outcode_filter)
+            load_data_into_state(
+                project_id, 
+                dataset_id, 
+                table_id, 
+                manual_review_filter, 
+                outcode_filter,
+                first_seen_start_date=first_seen_date
+            )
 
         st.divider()
         st.header("Data Sync")
@@ -273,7 +293,14 @@ def main():
                             time.sleep(1) # Brief pause for user to see success
                             
                             # Reload data to ensure freshness (fix for stale UI)
-                            load_data_into_state(project_id, dataset_id, table_id, manual_review_filter, outcode_filter)
+                            load_data_into_state(
+                                project_id, 
+                                dataset_id, 
+                                table_id, 
+                                manual_review_filter, 
+                                outcode_filter,
+                                first_seen_start_date=first_seen_date
+                            )
                             
                             st.rerun()
                     else:
