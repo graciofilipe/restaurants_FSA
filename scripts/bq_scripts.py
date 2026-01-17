@@ -70,41 +70,61 @@ SELECT
      - Strict Inclusion: Must be a sit-down restaurant with table service and a full savory menu.
      - Strict Exclusion: Disqualify ALL of the following: Cafes, Bakeries, Pastry Shops, Delicatessens, Sandwich Bars, Coffee Shops, Food Stalls, and Fast Food/Fried Chicken joints.
 
-  ### OUTPUT FORMAT RULES
-  - You must strictly output ONLY a valid JSON object.
-  - Do NOT include markdown formatting (```json) or introductory text.
-  - The JSON keys must map to the expanded pillars below.
+   7. SCORING LOGIC (The "Match Score" Algorithm):
+      - The "match_score" (0-100) MUST be a rigorous composite of the six pillar scores.
+      - Calculate the average of the 6 pillar scores (normalized to 100).
+      - Penalize heavily (subtract 20-30 points) if ANY of the "Strict Exclusion" criteria (Establishment Integrity) are violated.
+      - Penalize (subtract 10-15 points) for "Generic/National" geographic specificity.
+      - Reward (add 5-10 points) for "Hyper-Local" specificity or "Uncompromising" culinary signals.
+      - The final score must reflect the holistic fit for the "Healthy Host & Explorer".
 
-  JSON Schema:
-  {{
-      "match_score": Integer (0-100, holistic score based on strict adherence to ALL user preferences: Affordability + Portions, Specific Cultural Authenticity, Sit-down Restaurant Type, and Casual Vibe),
+   ### OUTPUT FORMAT RULES
+   - You must strictly output ONLY a valid JSON object.
+   - Do NOT include markdown formatting (```json) or introductory text.
+   - The JSON keys must map to the expanded pillars below.
+
+   ### EXAMPLE OUTPUT
+   {{
+      "match_score": 85,
       "1_value_and_volume": {{
-          "rating": Integer (1-5, 1=Stingy, 5=Generous Feast),
-          "verdict": String
+          "rating": 5,
+          "verdict": "Feast-like portions, excellent value."
       }},
       "2_demographic_community": {{
-          "score": Integer (1-5, 1=Tourists, 5=Native Community Hub),
-          "evidence": String
+          "score": 4,
+          "evidence": "Reviews mention locals and families dining."
       }},
       "3_linguistic_signal": {{
-          "score": Integer (1-5, 1=English Only, 5=Untranslated/Native Dominant),
-          "menu_type": String
+          "score": 3,
+          "menu_type": "English with some native terms."
       }},
       "4_geographic_precision": {{
-          "region_identified": String,
-          "specificity_level": String (Enum: ["GENERIC_NATIONAL", "BROAD_REGIONAL", "HYPER_LOCAL_CITY"])
+          "region_identified": "Sichuan",
+          "specificity_level": "BROAD_REGIONAL"
       }},
       "5_culinary_uncompromisingness": {{
-          "score": Integer (1-5, 1=Westernized/Safe, 5=Challenging/Authentic),
-          "pander_check": String
+          "score": 5,
+          "pander_check": "Uses numbing peppercorns, no dumbed-down spice."
       }},
       "6_establishment_integrity": {{
-          "is_sit_down_restaurant": Boolean,
-          "type": String (Enum: ["RESTAURANT_DINING", "CAFE_BAKERY_DELI", "FAST_FOOD_JOINT"])
+          "is_sit_down_restaurant": true,
+          "type": "RESTAURANT_DINING"
       }},
-      "summary_reasoning": String (Concise verdict: Does it balance Insider Fame with Mainstream Obscurity?)
-  }}
-  '''),
+      "summary_reasoning": "A strong contender with authentic flavor and good value, though slightly busy."
+   }}
+
+   JSON Schema Reference (Do strictly follow this structure):
+   {{
+       "match_score": Integer (0-100),
+       "1_value_and_volume": {{ "rating": Integer, "verdict": String }},
+       "2_demographic_community": {{ "score": Integer, "evidence": String }},
+       "3_linguistic_signal": {{ "score": Integer, "menu_type": String }},
+       "4_geographic_precision": {{ "region_identified": String, "specificity_level": String (Enum: ["GENERIC_NATIONAL", "BROAD_REGIONAL", "HYPER_LOCAL_CITY"]) }},
+       "5_culinary_uncompromisingness": {{ "score": Integer, "pander_check": String }},
+       "6_establishment_integrity": {{ "is_sit_down_restaurant": Boolean, "type": String (Enum: ["RESTAURANT_DINING", "CAFE_BAKERY_DELI", "FAST_FOOD_JOINT"]) }},
+       "summary_reasoning": String (Concise verdict: Does it balance Insider Fame with Mainstream Obscurity?)
+   }}
+   '''),
     connection_id => '{connection_id}',
     endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_endpoint}',
     model_params => JSON '''{{
@@ -118,7 +138,10 @@ SELECT
                               "generationConfig": {{
                                 "temperature": 0.4,
                                 "maxOutputTokens": 65535,
-                                "topP": 0.8
+                                "topP": 0.8,
+                                "thinkingConfig": {{
+                                  "thinkingLevel": "HIGH"
+                                }}
                               }},
                               "safetySettings": [
                                 {{ "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" }},
