@@ -108,76 +108,89 @@ SELECT
     connection_id => '{connection_id}',
     endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_endpoint}',
     model_params => JSON '''{{
-                              "systemInstruction": {{
+                              "system_instruction": {{
                                 "parts": [
                                   {{
                                     "text": "You are an expert Culinary Anthropologist and Strategic Restaurant Profiler. Your function is to filter the real world through the specific lens of the ''Healthy Host & Explorer''. Output strictly valid parseable JSON."
                                   }}
                                 ]
                               }},
-                              "generationConfig": {{
+                              "generation_config": {{
                                 "temperature": 0.4,
                                 "maxOutputTokens": 65535,
                                 "topP": 0.8,
                                 "responseMimeType": "application/json",
                                 "responseSchema": {{
-                                  "type": "OBJECT",
+                                  "type": "object",
                                   "properties": {{
-                                    "match_score": {{ "type": "INTEGER" }},
+                                    "match_score": {{ "type": "integer" }},
                                     "1_value_and_volume": {{
-                                      "type": "OBJECT",
+                                      "type": "object",
                                       "properties": {{
-                                        "rating": {{ "type": "INTEGER" }},
-                                        "verdict": {{ "type": "STRING" }}
-                                      }}
+                                        "rating": {{ "type": "integer" }},
+                                        "verdict": {{ "type": "string" }}
+                                      }},
+                                      "required": ["rating", "verdict"]
                                     }},
                                     "2_demographic_community": {{
-                                      "type": "OBJECT",
+                                      "type": "object",
                                       "properties": {{
-                                        "score": {{ "type": "INTEGER" }},
-                                        "evidence": {{ "type": "STRING" }}
-                                      }}
+                                        "score": {{ "type": "integer" }},
+                                        "evidence": {{ "type": "string" }}
+                                      }},
+                                      "required": ["score", "evidence"]
                                     }},
                                     "3_linguistic_signal": {{
-                                      "type": "OBJECT",
+                                      "type": "object",
                                       "properties": {{
-                                        "score": {{ "type": "INTEGER" }},
-                                        "menu_type": {{ "type": "STRING" }}
-                                      }}
+                                        "score": {{ "type": "integer" }},
+                                        "menu_type": {{ "type": "string" }}
+                                      }},
+                                      "required": ["score", "menu_type"]
                                     }},
                                     "4_geographic_precision": {{
-                                      "type": "OBJECT",
+                                      "type": "object",
                                       "properties": {{
-                                        "region_identified": {{ "type": "STRING" }},
-                                        "specificity_level": {{ "type": "STRING", "enum": ["GENERIC_NATIONAL", "BROAD_REGIONAL", "HYPER_LOCAL_CITY"] }}
-                                      }}
+                                        "region_identified": {{ "type": "string" }},
+                                        "specificity_level": {{ "type": "string", "enum": ["GENERIC_NATIONAL", "BROAD_REGIONAL", "HYPER_LOCAL_CITY"] }}
+                                      }},
+                                      "required": ["region_identified", "specificity_level"]
                                     }},
                                     "5_culinary_uncompromisingness": {{
-                                      "type": "OBJECT",
+                                      "type": "object",
                                       "properties": {{
-                                        "score": {{ "type": "INTEGER" }},
-                                        "pander_check": {{ "type": "STRING" }}
-                                      }}
+                                        "score": {{ "type": "integer" }},
+                                        "pander_check": {{ "type": "string" }}
+                                      }},
+                                      "required": ["score", "pander_check"]
                                     }},
                                     "6_establishment_integrity": {{
-                                      "type": "OBJECT",
+                                      "type": "object",
                                       "properties": {{
-                                        "is_sit_down_restaurant": {{ "type": "BOOLEAN" }},
-                                        "type": {{ "type": "STRING", "enum": ["RESTAURANT_DINING", "CAFE_BAKERY_DELI", "FAST_FOOD_JOINT"] }}
-                                      }}
+                                        "is_sit_down_restaurant": {{ "type": "boolean" }},
+                                        "type": {{ "type": "string", "enum": ["RESTAURANT_DINING", "CAFE_BAKERY_DELI", "FAST_FOOD_JOINT"] }}
+                                      }},
+                                      "required": ["is_sit_down_restaurant", "type"]
                                     }},
-                                    "summary_reasoning": {{ "type": "STRING" }}
-                                  }}
+                                    "summary_reasoning": {{ "type": "string" }}
+                                  }},
+                                  "required": [
+                                    "match_score", 
+                                    "1_value_and_volume", 
+                                    "2_demographic_community", 
+                                    "3_linguistic_signal", 
+                                    "4_geographic_precision", 
+                                    "5_culinary_uncompromisingness", 
+                                    "6_establishment_integrity", 
+                                    "summary_reasoning"
+                                  ]
                                 }}
                               }},
-                              "safetySettings": [
+                              "safety_settings": [
                                 {{ "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" }},
                                 {{ "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" }},
                                 {{ "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" }},
                                 {{ "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" }}
-                              ],
-                              "tools": [
-                                {{ "googleSearch": {{}} }}
                               ]
                             }}''').result AS gemini_insights
 FROM
