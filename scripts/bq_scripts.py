@@ -118,7 +118,57 @@ SELECT
                               "generationConfig": {{
                                 "temperature": 0.4,
                                 "maxOutputTokens": 65535,
-                                "topP": 0.8
+                                "topP": 0.8,
+                                "responseMimeType": "application/json",
+                                "responseSchema": {{
+                                  "type": "OBJECT",
+                                  "properties": {{
+                                    "match_score": {{ "type": "INTEGER" }},
+                                    "1_value_and_volume": {{
+                                      "type": "OBJECT",
+                                      "properties": {{
+                                        "rating": {{ "type": "INTEGER" }},
+                                        "verdict": {{ "type": "STRING" }}
+                                      }}
+                                    }},
+                                    "2_demographic_community": {{
+                                      "type": "OBJECT",
+                                      "properties": {{
+                                        "score": {{ "type": "INTEGER" }},
+                                        "evidence": {{ "type": "STRING" }}
+                                      }}
+                                    }},
+                                    "3_linguistic_signal": {{
+                                      "type": "OBJECT",
+                                      "properties": {{
+                                        "score": {{ "type": "INTEGER" }},
+                                        "menu_type": {{ "type": "STRING" }}
+                                      }}
+                                    }},
+                                    "4_geographic_precision": {{
+                                      "type": "OBJECT",
+                                      "properties": {{
+                                        "region_identified": {{ "type": "STRING" }},
+                                        "specificity_level": {{ "type": "STRING", "enum": ["GENERIC_NATIONAL", "BROAD_REGIONAL", "HYPER_LOCAL_CITY"] }}
+                                      }}
+                                    }},
+                                    "5_culinary_uncompromisingness": {{
+                                      "type": "OBJECT",
+                                      "properties": {{
+                                        "score": {{ "type": "INTEGER" }},
+                                        "pander_check": {{ "type": "STRING" }}
+                                      }}
+                                    }},
+                                    "6_establishment_integrity": {{
+                                      "type": "OBJECT",
+                                      "properties": {{
+                                        "is_sit_down_restaurant": {{ "type": "BOOLEAN" }},
+                                        "type": {{ "type": "STRING", "enum": ["RESTAURANT_DINING", "CAFE_BAKERY_DELI", "FAST_FOOD_JOINT"] }}
+                                      }}
+                                    }},
+                                    "summary_reasoning": {{ "type": "STRING" }}
+                                  }}
+                                }}
                               }},
                               "safetySettings": [
                                 {{ "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" }},
