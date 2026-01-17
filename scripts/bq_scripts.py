@@ -118,73 +118,7 @@ SELECT
                               "generationConfig": {{
                                 "temperature": 0.4,
                                 "maxOutputTokens": 65535,
-                                "topP": 0.8,
-                                "responseMimeType": "application/json",
-                                "responseSchema": {{
-                                  "type": "object",
-                                  "properties": {{
-                                    "match_score": {{ "type": "integer" }},
-                                    "1_value_and_volume": {{
-                                      "type": "object",
-                                      "properties": {{
-                                        "rating": {{ "type": "integer" }},
-                                        "verdict": {{ "type": "string" }}
-                                      }},
-                                      "required": ["rating", "verdict"]
-                                    }},
-                                    "2_demographic_community": {{
-                                      "type": "object",
-                                      "properties": {{
-                                        "score": {{ "type": "integer" }},
-                                        "evidence": {{ "type": "string" }}
-                                      }},
-                                      "required": ["score", "evidence"]
-                                    }},
-                                    "3_linguistic_signal": {{
-                                      "type": "object",
-                                      "properties": {{
-                                        "score": {{ "type": "integer" }},
-                                        "menu_type": {{ "type": "string" }}
-                                      }},
-                                      "required": ["score", "menu_type"]
-                                    }},
-                                    "4_geographic_precision": {{
-                                      "type": "object",
-                                      "properties": {{
-                                        "region_identified": {{ "type": "string" }},
-                                        "specificity_level": {{ "type": "string", "enum": ["GENERIC_NATIONAL", "BROAD_REGIONAL", "HYPER_LOCAL_CITY"] }}
-                                      }},
-                                      "required": ["region_identified", "specificity_level"]
-                                    }},
-                                    "5_culinary_uncompromisingness": {{
-                                      "type": "object",
-                                      "properties": {{
-                                        "score": {{ "type": "integer" }},
-                                        "pander_check": {{ "type": "string" }}
-                                      }},
-                                      "required": ["score", "pander_check"]
-                                    }},
-                                    "6_establishment_integrity": {{
-                                      "type": "object",
-                                      "properties": {{
-                                        "is_sit_down_restaurant": {{ "type": "boolean" }},
-                                        "type": {{ "type": "string", "enum": ["RESTAURANT_DINING", "CAFE_BAKERY_DELI", "FAST_FOOD_JOINT"] }}
-                                      }},
-                                      "required": ["is_sit_down_restaurant", "type"]
-                                    }},
-                                    "summary_reasoning": {{ "type": "string" }}
-                                  }},
-                                  "required": [
-                                    "match_score", 
-                                    "1_value_and_volume", 
-                                    "2_demographic_community", 
-                                    "3_linguistic_signal", 
-                                    "4_geographic_precision", 
-                                    "5_culinary_uncompromisingness", 
-                                    "6_establishment_integrity", 
-                                    "summary_reasoning"
-                                  ]
-                                }}
+                                "topP": 0.8
                               }},
                               "safetySettings": [
                                 {{ "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" }},
