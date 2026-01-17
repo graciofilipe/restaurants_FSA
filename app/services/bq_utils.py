@@ -124,7 +124,7 @@ def execute_gemini_enrichment(
         )
         job3 = client.query(query_merge)
         job3.result()
-        logger.info("Step 3 Complete.")
+        logger.info(f"Step 3 Complete. Rows merged: {job3.num_dml_affected_rows}")
         
         return True
 

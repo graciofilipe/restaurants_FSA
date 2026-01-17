@@ -115,6 +115,49 @@ def render_insights_details(row):
 def get_cached_outcodes(project_id, dataset_id, table_id):
     return get_distinct_outcodes(project_id, dataset_id, table_id)
 
+def load_data_into_state(project_id, dataset_id, table_id, review_status_filter, outcode_filter):
+    """
+    Helper to load data into session state.
+    Used by 'Load Data' button and after 'Generate Profiles' to ensure freshness.
+    """
+    with st.spinner("Fetching data from BigQuery..."):
+        try:
+            # Server-side Filtering
+            raw_data = load_filtered_data_from_bq(
+                project_id, 
+                dataset_id, 
+                table_id,
+                review_status_filter=review_status_filter,
+                postcode_areas=outcode_filter
+            )
+            
+            df_master = pd.DataFrame(raw_data)
+            if not df_master.empty:
+                # Enrichment
+                df_enriched = enhance_dataframe_with_insights(df_master)
+                
+                # Normalize Columns
+                if 'outcode' not in df_enriched.columns:
+                    if 'PostCode' in df_enriched.columns:
+                        df_enriched['outcode'] = df_enriched['PostCode'].str.split(' ').str[0]
+                    elif 'postcode' in df_enriched.columns:
+                        df_enriched['outcode'] = df_enriched['postcode'].str.split(' ').str[0]
+                
+                if 'manual_review' not in df_enriched.columns:
+                    df_enriched['manual_review'] = 'pending'
+                else:
+                    df_enriched['manual_review'] = df_enriched['manual_review'].fillna('pending')
+
+                st.session_state.df_enriched = df_enriched
+                st.session_state.data_loaded = True
+            else:
+                st.session_state.df_enriched = pd.DataFrame()
+                st.session_state.data_loaded = True
+                st.warning("No data found matching criteria.")
+                
+        except Exception as e:
+            st.error(f"Error loading data: {e}")
+
 def main():
     st.title("🍔 FSA Restaurant Explorer & Profiler")
     
@@ -136,7 +179,6 @@ def main():
         st.header("Discovery Filters")
         
         # 1. Postcode (Server-Side)
-        # Fetch available outcodes from BQ metadata to populate list
         try:
             available_outcodes = get_cached_outcodes(project_id, dataset_id, table_id)
         except Exception as e:
@@ -149,7 +191,7 @@ def main():
         manual_review_filter = st.multiselect(
             "Manual Review",
             options=["accepted", "rejected", "pending", "not reviewed"],
-            default=["pending"] # Default to pending usually makes sense for workflow
+            default=["pending"]
         )
 
         # 3. AI Filters (Client-Side after load)
@@ -165,45 +207,7 @@ def main():
         st.divider()
         # Load Button
         if st.button("Load Data", type="primary"):
-            with st.spinner("Fetching data from BigQuery..."):
-                try:
-                    # Server-side Filtering
-                    raw_data = load_filtered_data_from_bq(
-                        project_id, 
-                        dataset_id, 
-                        table_id,
-                        review_status_filter=manual_review_filter,
-                        postcode_areas=outcode_filter
-                    )
-                    
-                    df_master = pd.DataFrame(raw_data)
-                    if not df_master.empty:
-                        # Enrichment
-                        df_enriched = enhance_dataframe_with_insights(df_master)
-                        
-                        # Normalize Columns
-                        # Ensure 'outcode' column exists
-                        if 'outcode' not in df_enriched.columns:
-                            if 'PostCode' in df_enriched.columns:
-                                df_enriched['outcode'] = df_enriched['PostCode'].str.split(' ').str[0]
-                            elif 'postcode' in df_enriched.columns:
-                                df_enriched['outcode'] = df_enriched['postcode'].str.split(' ').str[0]
-                        
-                        # Ensure 'manual_review'
-                        if 'manual_review' not in df_enriched.columns:
-                            df_enriched['manual_review'] = 'pending'
-                        else:
-                            df_enriched['manual_review'] = df_enriched['manual_review'].fillna('pending')
-
-                        st.session_state.df_enriched = df_enriched
-                        st.session_state.data_loaded = True
-                    else:
-                        st.session_state.df_enriched = pd.DataFrame()
-                        st.session_state.data_loaded = True
-                        st.warning("No data found matching criteria.")
-                        
-                except Exception as e:
-                    st.error(f"Error loading data: {e}")
+            load_data_into_state(project_id, dataset_id, table_id, manual_review_filter, outcode_filter)
 
         st.divider()
         st.header("Data Sync")
@@ -251,7 +255,6 @@ def main():
                 if st.button(f"Generate Profiles for {count} Selected"):
                     # Extract IDs
                     fhrsids = []
-                    # Robust ID extraction
                     col_map = {c.lower(): c for c in selected_rows.columns}
                     id_col = col_map.get('fhrsid')
                     
@@ -267,7 +270,11 @@ def main():
                                 fhrsids=fhrsids
                             )
                             st.success(result_msg)
-                            time.sleep(2)
+                            time.sleep(1) # Brief pause for user to see success
+                            
+                            # Reload data to ensure freshness (fix for stale UI)
+                            load_data_into_state(project_id, dataset_id, table_id, manual_review_filter, outcode_filter)
+                            
                             st.rerun()
                     else:
                         st.error("Could not identify FHRSIDs for selection.")

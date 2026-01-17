@@ -41,7 +41,7 @@ _SYSTEM_INSTRUCTION_TEXT = (
     "  5. CULINARY UNCOMPROMISINGNESS (The ''No Pander'' Test):\n"
     "     - Texture & Ingredients: Does the menu include ''challenging'' authentic items (e.g., offal, bones, cartilage, bitter melon, fermentation)?\n"
     "     - Flavor Profile: Do reviews warn of ''too spicy,'' ''strong funk,'' or ''unusual texture''? (These are POSITIVE signals).\n"
-    "     - Westernization: Penalize for ''fusion,'' ''sweet sauces,'' or ''dumbed-down'' spice levels.\n\n"
+    "     - Westernization: Penalize for ''fusion,'' ''sweet sauces,'' ''overly sweet,'' ''sugary food,'' or ''dumbed-down'' spice levels.\n\n"
     "  6. ESTABLISHMENT INTEGRITY (The ''Proper Meal'' Rule):\n"
     "     - Strict Inclusion: Must be a sit-down restaurant with table service and a full savory menu.\n"
     "     - Strict Exclusion: Disqualify ALL of the following: Cafes, Bakeries, Pastry Shops, Delicatessens, Sandwich Bars, Coffee Shops, Food Stalls, and Fast Food/Fried Chicken joints.\n\n"
@@ -53,8 +53,11 @@ _SYSTEM_INSTRUCTION_TEXT = (
     "      - Reward (add 5-10 points) for ''Hyper-Local'' specificity or ''Uncompromising'' culinary signals.\n"
     "      - The final score must reflect the holistic fit for the ''Healthy and Adventurous Explorer''.\n\n"
     "   ### OUTPUT FORMAT RULES\n"
-    "   - You must strictly output ONLY a valid JSON object.\n"
-    "   - Do NOT include markdown formatting (```json) or introductory text.\n"
+    "   - CRITICAL: You must strictly output ONLY a valid JSON object.\n"
+    "   - ABSOLUTELY NO MARKDOWN FORMATTING (do not use ```json wrappers).\n"
+    "   - ABSOLUTELY NO PREAMBLE or introductory text (e.g. 'Here is the JSON...').\n"
+    "   - ABSOLUTELY NO POSTSCRIPT or explanation.\n"
+    "   - The output must be raw JSON starting with { and ending with }.\n"
     "   - The JSON keys must map to the expanded pillars below.\n\n"
     "   ### EXAMPLE OUTPUT\n"
     "   {\n"
@@ -136,13 +139,11 @@ CREATE OR REPLACE TABLE
 SELECT
   fhrsid,
   AI.GENERATE( ('''
-  ### TASK: ANALYZE RESTAURANT
-  Analyze the restaurant details below against your specific Culinary Anthropologist Persona and Scoring Logic defined in your System Instructions.
-
   ### RESTAURANT DETAILS
   Name: ''',businessname,''',
   Address: ''',COALESCE(addressline1, ''),', ',COALESCE(addressline2, ''),', ',COALESCE(addressline3, ''),''',
   PostCode: ''',postcode,''',
+  Analysis Timestamp: ''',CURRENT_TIMESTAMP(),'''
   '''),
     connection_id => '{connection_id}',
     endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_endpoint}',
@@ -159,7 +160,9 @@ MERGE `{project_id}.{dataset_id}.{target_table_master}` T
 USING `{project_id}.{dataset_id}.{source_table_insights}` S
 ON T.fhrsid = S.fhrsid
 WHEN MATCHED THEN
-  UPDATE SET T.gemini_insights_structured = S.gemini_insights
+  UPDATE SET 
+    T.gemini_insights_structured = S.gemini_insights,
+    T.gemini_insights = NULL
 """
 
 # SCRIPT 4: Bulk Update Manual Reviews
