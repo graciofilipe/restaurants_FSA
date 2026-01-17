@@ -125,9 +125,7 @@ SELECT
                               "systemInstruction": {{
                                 "parts": [
                                   {{
-                                    "text": "
-""" + _SYSTEM_INSTRUCTION_TEXT + """
-                                    "
+                                    "text": " """ + _SYSTEM_INSTRUCTION_TEXT + """ "
                                   }}
                                 ]
                               }},
