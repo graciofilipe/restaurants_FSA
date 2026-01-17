@@ -16,17 +16,16 @@ try:
 except ImportError:
     GenericGBQException = None # Fallback if pandas_gbq is not installed or structure differs
 
-# Define NEW_BQ_SCHEMA directly in the test file
 NEW_BQ_SCHEMA = [
-    bigquery.SchemaField(sanitize_column_name('FHRSID'), 'STRING', mode='NULLABLE'),
-    bigquery.SchemaField(sanitize_column_name('BusinessName'), 'STRING', mode='NULLABLE'),
-    bigquery.SchemaField(sanitize_column_name('AddressLine1'), 'STRING', mode='NULLABLE'),
-    bigquery.SchemaField(sanitize_column_name('AddressLine2'), 'STRING', mode='NULLABLE'),
-    bigquery.SchemaField(sanitize_column_name('AddressLine3'), 'STRING', mode='NULLABLE'),
-    bigquery.SchemaField(sanitize_column_name('PostCode'), 'STRING', mode='NULLABLE'),
-    bigquery.SchemaField(sanitize_column_name('LocalAuthorityName'), 'STRING', mode='NULLABLE'),
-    bigquery.SchemaField(sanitize_column_name('RatingValue'), 'STRING', mode='NULLABLE'),
-    bigquery.SchemaField(sanitize_column_name('NewRatingPending'), 'BOOLEAN', mode='NULLABLE'),
+    bigquery.SchemaField(sanitize_column_name('fhrsid'), 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField(sanitize_column_name('businessname'), 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField(sanitize_column_name('addressline1'), 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField(sanitize_column_name('addressline2'), 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField(sanitize_column_name('addressline3'), 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField(sanitize_column_name('postcode'), 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField(sanitize_column_name('localauthorityname'), 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField(sanitize_column_name('ratingvalue'), 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField(sanitize_column_name('newratingpending'), 'BOOLEAN', mode='NULLABLE'),
     bigquery.SchemaField(sanitize_column_name('first_seen'), 'DATE', mode='NULLABLE'),
     bigquery.SchemaField(sanitize_column_name('manual_review'), 'STRING', mode='NULLABLE'),
     bigquery.SchemaField(sanitize_column_name('gemini_insights'), 'STRING', mode='NULLABLE'),
