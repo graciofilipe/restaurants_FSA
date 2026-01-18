@@ -165,7 +165,8 @@ def load_filtered_data_from_bq(
     excluded_locations: List[str] = None,
     postcode_areas: List[str] = None,
     gemini_insights_status: str = None,
-    first_seen_start_date: Optional[str] = None
+    first_seen_start_date: Optional[str] = None,
+    local_authority_filter: List[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Loads data from BigQuery with optional filters.
@@ -183,6 +184,11 @@ def load_filtered_data_from_bq(
     if review_status_filter:
         statuses_str = ", ".join([f"'{s}'" for s in review_status_filter])
         query += f" AND manual_review IN ({statuses_str})"
+
+    if local_authority_filter:
+        escaped_auths = [auth.replace("'", "''") for auth in local_authority_filter]
+        auths_str = ", ".join([f"'{auth}'" for auth in escaped_auths])
+        query += f" AND localauthorityname IN ({auths_str})"
     
     if excluded_locations:
         # Escape single quotes in location names just in case

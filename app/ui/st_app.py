@@ -115,7 +115,19 @@ def render_insights_details(row):
 def get_cached_outcodes(project_id, dataset_id, table_id):
     return get_distinct_outcodes(project_id, dataset_id, table_id)
 
-def load_data_into_state(project_id, dataset_id, table_id, review_status_filter, outcode_filter, first_seen_start_date=None):
+@st.cache_data
+def get_cached_local_authorities(project_id, dataset_id, table_id):
+    return get_distinct_local_authorities(project_id, dataset_id, table_id)
+
+def load_data_into_state(
+    project_id, 
+    dataset_id, 
+    table_id, 
+    review_status_filter, 
+    outcode_filter, 
+    first_seen_start_date=None,
+    local_authority_filter=None
+):
     """
     Helper to load data into session state.
     Used by 'Load Data' button and after 'Generate Profiles' to ensure freshness.
@@ -129,9 +141,11 @@ def load_data_into_state(project_id, dataset_id, table_id, review_status_filter,
                 table_id,
                 review_status_filter=review_status_filter,
                 postcode_areas=outcode_filter,
-                first_seen_start_date=first_seen_start_date
+                first_seen_start_date=first_seen_start_date,
+                local_authority_filter=local_authority_filter
             )
             
+            df_master = pd.DataFrame(raw_data)
             df_master = pd.DataFrame(raw_data)
             if not df_master.empty:
                 # Enrichment
@@ -187,8 +201,17 @@ def main():
             available_outcodes = []
             
         outcode_filter = st.multiselect("Postcode Area (Outcode)", options=available_outcodes, default=[]) 
+
+        # 2. Local Authority (Server-Side)
+        try:
+            available_authorities = get_cached_local_authorities(project_id, dataset_id, table_id)
+        except Exception as e:
+            st.error(f"Failed to fetch local authorities: {e}")
+            available_authorities = []
         
-        # 2. Review Status (Server-Side)
+        local_authority_filter = st.multiselect("Local Authority", options=available_authorities, default=[])
+        
+        # 3. Review Status (Server-Side)
         manual_review_filter = st.multiselect(
             "Manual Review",
             options=["accepted", "rejected", "pending", "not reviewed"],
@@ -226,7 +249,8 @@ def main():
                 table_id, 
                 manual_review_filter, 
                 outcode_filter,
-                first_seen_start_date=first_seen_date
+                first_seen_start_date=first_seen_date,
+                local_authority_filter=local_authority_filter
             )
 
         st.divider()
@@ -299,7 +323,8 @@ def main():
                                 table_id, 
                                 manual_review_filter, 
                                 outcode_filter,
-                                first_seen_start_date=first_seen_date
+                                first_seen_start_date=first_seen_date,
+                                local_authority_filter=local_authority_filter
                             )
                             
                             st.rerun()

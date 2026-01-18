@@ -620,3 +620,20 @@ def test_load_filtered_data_with_date(mock_read_gbq):
     query = args[0]
     
     assert "AND first_seen >= '2023-01-01'" in query
+
+@patch('pandas_gbq.read_gbq')
+def test_load_filtered_data_with_local_authority(mock_read_gbq):
+    """Test SQL generation for local_authority_filter filtering."""
+    mock_df = pd.DataFrame({'col': [1]})
+    mock_read_gbq.return_value = mock_df
+    
+    load_filtered_data_from_bq(
+        'proj', 'ds', 'tbl',
+        local_authority_filter=['Aberdeen City', "King's Lynn"]
+    )
+    
+    args, kwargs = mock_read_gbq.call_args
+    query = args[0]
+    
+    # Check for inclusion and escaping
+    assert "AND localauthorityname IN ('Aberdeen City', 'King''s Lynn')" in query
