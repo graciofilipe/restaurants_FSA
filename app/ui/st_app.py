@@ -261,9 +261,13 @@ def main():
                     st.success(f"Successfully generated predictions for {num_predicted} restaurants!")
                     # Auto-refresh
                     load_data_into_state(
-                        project_id, dataset_id, table_id, manual_review_filter, outcode_filter,
-                        first_seen_start_date=first_seen_date, first_seen_end_date=first_seen_date_end,
-                        min_rating=min_rating
+                        project_id, 
+                        dataset_id, 
+                        table_id, 
+                        manual_review_filter, 
+                        outcode_filter,
+                        first_seen_start_date=first_seen_date,
+                        local_authority_filter=local_authority_filter
                     )
                 except Exception as e:
                     st.error(f"Prediction failed: {e}")
