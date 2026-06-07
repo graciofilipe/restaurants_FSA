@@ -163,11 +163,11 @@ WHEN MATCHED THEN
 """
 
 # SCRIPT 4: Bulk Update Manual Reviews
-# Parameters: project_id, dataset_id, target_table, source_table_temp
+# Parameters: project_id, dataset_id, target_table, source_table_temp, update_set_clause
 SCRIPT_BULK_UPDATE_MERGE = """
 MERGE `{project_id}.{dataset_id}.{target_table}` T
 USING `{project_id}.{dataset_id}.{source_table_temp}` S
 ON T.fhrsid = S.fhrsid
 WHEN MATCHED THEN
-  UPDATE SET T.manual_review = S.manual_review
+  UPDATE SET {update_set_clause}
 """

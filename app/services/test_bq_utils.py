@@ -686,3 +686,37 @@ class TestBulkUpdateReviews(unittest.TestCase):
         self.assertEqual(len(df_passed), 3)
         self.assertEqual(list(df_passed['fhrsid']), selected_fhrsids)
         self.assertEqual(list(df_passed['manual_review']), [new_status] * 3)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('app.services.bq_utils.write_to_bigquery')
+    def test_bulk_update_reviews_logic_with_user_rating(self, mock_write, mock_client_cls):
+        from app.services.bq_utils import bulk_update_reviews
+        mock_client = mock_client_cls.return_value
+        mock_query_job = MagicMock()
+        mock_client.query.return_value = mock_query_job
+        mock_query_job.result.return_value = None
+        mock_query_job.num_dml_affected_rows = 5
+
+        mock_write.return_value = True
+
+        selected_fhrsids = ['1', '2', '3']
+        new_status = 'accepted'
+        user_rating = 8
+        project_id = 'test-project'
+        dataset_id = 'test-dataset'
+        table_id = 'test-table'
+
+        df_update = pd.DataFrame({
+            'fhrsid': selected_fhrsids,
+            'manual_review': [new_status] * len(selected_fhrsids),
+            'user_rating': [user_rating] * len(selected_fhrsids)
+        })
+
+        success, message = bulk_update_reviews(project_id, dataset_id, table_id, df_update)
+
+        self.assertTrue(success)
+        mock_write.assert_called_once()
+        args, kwargs = mock_write.call_args
+        df_passed = kwargs.get('df') if 'df' in kwargs else args[0]
+
+        self.assertIn('user_rating', df_passed.columns)

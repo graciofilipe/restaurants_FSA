@@ -260,6 +260,9 @@ def bulk_update_reviews(
 
     logger.debug(f"df_updates normalized columns: {df_updates.columns.tolist()}")
     required_cols = ['fhrsid', 'manual_review']
+    if 'user_rating' in df_updates.columns:
+        required_cols.append('user_rating')
+
     if not all(col in df_updates.columns for col in required_cols):
         logger.error(f"DataFrame missing required columns: {required_cols}. Found: {df_updates.columns.tolist()}")
         return False, f"Missing columns. Required: {required_cols}, Found: {df_updates.columns.tolist()}"
@@ -273,7 +276,9 @@ def bulk_update_reviews(
         bigquery.SchemaField("fhrsid", "STRING"),
         bigquery.SchemaField("manual_review", "STRING")
     ]
-    
+    if 'user_rating' in df_updates.columns:
+        temp_schema.append(bigquery.SchemaField("user_rating", "INT64"))
+
     success_upload = write_to_bigquery(
         df=df_updates,
         project_id=project_id,
@@ -290,11 +295,17 @@ def bulk_update_reviews(
     client = bigquery.Client(project=project_id)
     
     try:
+        update_clauses = ['T.manual_review = S.manual_review']
+        if 'user_rating' in df_updates.columns:
+            update_clauses.append('T.user_rating = S.user_rating')
+        update_set_clause = ', '.join(update_clauses)
+
         query = SCRIPT_BULK_UPDATE_MERGE.format(
             project_id=project_id,
             dataset_id=dataset_id,
             target_table=target_table_id,
-            source_table_temp=temp_table_id
+            source_table_temp=temp_table_id,
+            update_set_clause=update_set_clause
         )
         
         logger.debug(f"Executing MERGE query:\n{query}")
@@ -318,6 +329,9 @@ def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_
     """
     Writes a Pandas DataFrame to a BigQuery table.
     """
+    for col in columns_to_select:
+        if col not in df.columns:
+            df[col] = pd.NA
     df_subset = df[columns_to_select].copy()
 
     if 'Geocode.Latitude' in df_subset.columns:
@@ -375,6 +389,9 @@ def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table
     table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
 
     schema_columns = [field.name for field in bq_schema]
+    for col in schema_columns:
+        if col not in df.columns:
+            df[col] = pd.NA
     df_subset = df[schema_columns].copy()
 
     geocode_latitude_col = 'geocode_latitude'
@@ -561,6 +578,7 @@ MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('newratingpending', 'BOOLEAN', mode='NULLABLE'),
     bigquery.SchemaField('first_seen', 'DATE', mode='NULLABLE'),
     bigquery.SchemaField('manual_review', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('user_rating', 'INT64', mode='NULLABLE'),
     bigquery.SchemaField('gemini_insights', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('gemini_insights_structured', 'STRING', mode='NULLABLE'),
 ]

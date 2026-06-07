@@ -17,7 +17,7 @@ DEFAULT_BQ_PATH = "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_mas
 
 DISPLAY_COLUMNS = [
     "fhrsid", "businessname", "addressline1", "addressline2", "addressline3", 
-    "postcode", "localauthorityname", "first_seen", "manual_review", 
+    "postcode", "localauthorityname", "first_seen", "manual_review", "user_rating",
     "gemini_insights", "gemini_insights_structured",
     "match_score",
     "1_value_and_volume_rating", "1_value_and_volume_verdict",
@@ -323,7 +323,8 @@ def main():
 
             # 2. Update Status
             with col_update:
-                st.write("Update Manual Review Status:")
+                st.write("Update Manual Review Status & Rating:")
+                user_rating = st.slider("User Rating (1-10)", min_value=1, max_value=10, value=5, step=1)
                 c_acc, c_rej, c_pend, c_reset = st.columns(4)
                 
                 new_status = None
@@ -344,10 +345,13 @@ def main():
                     if id_col:
                         ids_to_update = selected_rows[id_col].unique().tolist()
                         
+                        rating_to_save = user_rating if new_status != "not reviewed" else None
+                        
                         # Prepare update DataFrame
                         df_updates = pd.DataFrame({
                             'fhrsid': ids_to_update,
-                            'manual_review': [new_status] * len(ids_to_update)
+                            'manual_review': [new_status] * len(ids_to_update),
+                            'user_rating': [rating_to_save] * len(ids_to_update)
                         })
                         
                         with st.spinner(f"Updating {len(ids_to_update)} rows to '{new_status}'..."):
@@ -360,9 +364,15 @@ def main():
                                     s_col_map = {c.lower(): c for c in df_s.columns}
                                     s_id_col = s_col_map.get('fhrsid')
                                     
-                                    if s_id_col and 'manual_review' in df_s.columns:
+                                    if s_id_col:
                                          mask = df_s[s_id_col].astype(str).isin([str(x) for x in ids_to_update])
-                                         st.session_state.df_enriched.loc[mask, 'manual_review'] = new_status
+                                         if 'manual_review' in df_s.columns:
+                                             st.session_state.df_enriched.loc[mask, 'manual_review'] = new_status
+                                         if 'user_rating' in df_s.columns:
+                                             st.session_state.df_enriched.loc[mask, 'user_rating'] = rating_to_save
+                                         elif rating_to_save is not None:
+                                             st.session_state.df_enriched['user_rating'] = None
+                                             st.session_state.df_enriched.loc[mask, 'user_rating'] = rating_to_save
                                 
                                 time.sleep(1)
                                 st.rerun()
