@@ -108,9 +108,7 @@ _MODEL_PARAMS_STRUCT = {
         ]
     },
     "generationConfig": {
-        "temperature": 0.4,
         "maxOutputTokens": 65535,
-        "topP": 0.8,
         "thinkingConfig": {
             "thinkingLevel": "HIGH"
         }
