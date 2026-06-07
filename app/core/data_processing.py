@@ -284,7 +284,7 @@ def parse_insight_row(row: Dict[str, Any]) -> Dict[str, Any]:
             
     # 2. Try V1 (Legacy Text)
     v1_text = row.get('gemini_insights')
-    if v1_text:
+    if isinstance(v1_text, str) and v1_text.strip():
         result["insight_summary"] = v1_text # Full text as summary
         upper_text = v1_text.upper()
         

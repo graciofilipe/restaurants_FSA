@@ -430,3 +430,31 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 if __name__ == '__main__':
     unittest.main()
 
+
+
+from app.core.data_processing import parse_insight_row
+import math
+
+class TestParseInsightRow(unittest.TestCase):
+    def test_parse_insight_row_v1_text_success(self):
+        row = {'gemini_insights': 'Some text here FINAL VERDICT: ACCEPTED'}
+        result = parse_insight_row(row)
+        self.assertEqual(result['insight_summary'], 'Some text here FINAL VERDICT: ACCEPTED')
+        self.assertEqual(result['insight_verdict'], 'ACCEPTED')
+        self.assertEqual(result['insight_score'], 90)
+
+    def test_parse_insight_row_v1_text_nan_safe(self):
+        row = {'gemini_insights': float('nan')}
+        result = parse_insight_row(row)
+        # Should not crash and should return default values
+        self.assertEqual(result['insight_summary'], None)
+        self.assertEqual(result['insight_verdict'], 'PENDING')
+        self.assertEqual(result['insight_score'], None)
+
+    def test_parse_insight_row_v1_text_empty_str(self):
+        row = {'gemini_insights': '   '}
+        result = parse_insight_row(row)
+        # Should not process empty strings
+        self.assertEqual(result['insight_summary'], None)
+        self.assertEqual(result['insight_verdict'], 'PENDING')
+        self.assertEqual(result['insight_score'], None)
