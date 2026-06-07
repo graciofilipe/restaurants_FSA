@@ -584,6 +584,12 @@ MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('price_level', 'INT64', mode='NULLABLE'),
     bigquery.SchemaField('maps_rating', 'FLOAT64', mode='NULLABLE'),
     bigquery.SchemaField('maps_reviews', 'INT64', mode='NULLABLE'),
+    bigquery.SchemaField('latitude', 'FLOAT64', mode='NULLABLE'),
+    bigquery.SchemaField('longitude', 'FLOAT64', mode='NULLABLE'),
+    bigquery.SchemaField('maps_url', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('business_status', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('website_url', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('maps_types', 'STRING', mode='NULLABLE'),
 ]
 
 def upsert_agent_insight(project_id: str, dataset_id: str, table_id: str, insight_data: Dict[str, Any]) -> bool:

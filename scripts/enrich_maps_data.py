@@ -20,7 +20,7 @@ def main():
         SELECT fhrsid, BusinessName, PostCode, AddressLine1
         FROM `{table_ref}`
         WHERE maps_rating IS NULL AND maps_reviews IS NULL AND price_level IS NULL AND BusinessName IS NOT NULL
-        LIMIT 3000
+        LIMIT 100
     """
     
     print(f"Fetching restaurants to enrich from {table_ref}...")
@@ -40,7 +40,7 @@ def main():
     headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": API_KEY,
-        "X-Goog-FieldMask": "places.priceLevel,places.rating,places.userRatingCount"
+        "X-Goog-FieldMask": "places.priceLevel,places.rating,places.userRatingCount,places.location,places.googleMapsUri,places.businessStatus,places.types,places.websiteUri"
     }
     
     updates = []
@@ -66,6 +66,17 @@ def main():
                     maps_rating = place.get("rating", None)
                     maps_reviews = place.get("userRatingCount", None)
                     
+                    location = place.get("location", {})
+                    latitude = location.get("latitude", None)
+                    longitude = location.get("longitude", None)
+
+                    maps_url = place.get("googleMapsUri", None)
+                    business_status = place.get("businessStatus", None)
+                    website_url = place.get("websiteUri", None)
+
+                    types_list = place.get("types", [])
+                    maps_types = ",".join(types_list) if types_list else None
+
                     price_level = None
                     if price_level_raw:
                         pl_map = {
@@ -84,7 +95,13 @@ def main():
                         "fhrsid": row.fhrsid,
                         "price_level": price_level,
                         "maps_rating": maps_rating,
-                        "maps_reviews": maps_reviews
+                        "maps_reviews": maps_reviews,
+                        "latitude": latitude,
+                        "longitude": longitude,
+                        "maps_url": maps_url,
+                        "business_status": business_status,
+                        "website_url": website_url,
+                        "maps_types": maps_types
                     })
                     print(f"Enriched {name} -> rating: {maps_rating}, reviews: {maps_reviews}")
                 else:
@@ -93,7 +110,13 @@ def main():
                         "fhrsid": row.fhrsid,
                         "price_level": None,
                         "maps_rating": -1.0,
-                        "maps_reviews": -1
+                        "maps_reviews": -1,
+                        "latitude": None,
+                        "longitude": None,
+                        "maps_url": None,
+                        "business_status": None,
+                        "website_url": None,
+                        "maps_types": None
                     })
             else:
                 print(f"API Error for {name}: {response.status_code} {response.text}")
@@ -115,7 +138,22 @@ def main():
                 pl = str(u["price_level"]) if u["price_level"] is not None else "NULL"
                 mr = str(u["maps_rating"]) if u["maps_rating"] is not None else "NULL"
                 mrev = str(u["maps_reviews"]) if u["maps_reviews"] is not None else "NULL"
-                values_list.append(f"('{fhrsid}', {pl}, {mr}, {mrev})")
+                
+                lat = str(u["latitude"]) if u["latitude"] is not None else "NULL"
+                lon = str(u["longitude"]) if u["longitude"] is not None else "NULL"
+
+                # Safely escape strings for SQL
+                murl_val = u['maps_url'].replace("'", "\\'") if u["maps_url"] is not None else ""
+                bstat_val = u['business_status'].replace("'", "\\'") if u["business_status"] is not None else ""
+                wurl_val = u['website_url'].replace("'", "\\'") if u["website_url"] is not None else ""
+                mtypes_val = u['maps_types'].replace("'", "\\'") if u["maps_types"] is not None else ""
+
+                murl = f"'{murl_val}'" if u["maps_url"] is not None else "NULL"
+                bstat = f"'{bstat_val}'" if u["business_status"] is not None else "NULL"
+                wurl = f"'{wurl_val}'" if u["website_url"] is not None else "NULL"
+                mtypes = f"'{mtypes_val}'" if u["maps_types"] is not None else "NULL"
+
+                values_list.append(f"('{fhrsid}', {pl}, {mr}, {mrev}, {lat}, {lon}, {murl}, {bstat}, {wurl}, {mtypes})")
                 
             values_str = ",\n".join(values_list)
             
@@ -123,7 +161,7 @@ def main():
             MERGE `{table_ref}` T
             USING (
                 SELECT * FROM UNNEST([
-                    STRUCT<fhrsid STRING, price_level INT64, maps_rating FLOAT64, maps_reviews INT64>
+                    STRUCT<fhrsid STRING, price_level INT64, maps_rating FLOAT64, maps_reviews INT64, latitude FLOAT64, longitude FLOAT64, maps_url STRING, business_status STRING, website_url STRING, maps_types STRING>
                     {values_str}
                 ])
             ) S
@@ -132,7 +170,13 @@ def main():
               UPDATE SET 
                 price_level = S.price_level,
                 maps_rating = S.maps_rating,
-                maps_reviews = S.maps_reviews
+                maps_reviews = S.maps_reviews,
+                latitude = S.latitude,
+                longitude = S.longitude,
+                maps_url = S.maps_url,
+                business_status = S.business_status,
+                website_url = S.website_url,
+                maps_types = S.maps_types
             """
             
             try:
