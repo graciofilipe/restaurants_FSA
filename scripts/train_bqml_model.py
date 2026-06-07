@@ -33,6 +33,13 @@ def train_model(
       localauthorityname,
       ratingvalue,
       user_rating,
+      price_level,
+      maps_rating,
+      maps_reviews,
+      latitude,
+      longitude,
+      business_status,
+      SPLIT(REPLACE(maps_types, ' ', ''), ',') AS maps_types_array,
       CASE
         WHEN gemini_insights IS NOT NULL OR gemini_insights_structured IS NOT NULL THEN 1
         ELSE 0
