@@ -1,6 +1,6 @@
 import pandas as pd
-from unittest.mock import MagicMock
-from app.ui.st_app import get_selected_rows
+from unittest.mock import MagicMock, patch
+from app.ui.st_app import get_selected_rows, display_data
 
 class MockSelection:
     def __init__(self, rows):
@@ -51,3 +51,16 @@ def test_get_selected_rows_none_event():
     selected = get_selected_rows(event, df)
     
     assert selected is None
+
+
+@patch('app.ui.st_app.st')
+def test_display_data_enables_selection(mock_st):
+    data = [{"col1": 1}]
+    
+    display_data(data)
+    
+    mock_st.dataframe.assert_called_once()
+    call_kwargs = mock_st.dataframe.call_args[1]
+    
+    assert call_kwargs.get("on_select") == "rerun"
+    assert call_kwargs.get("selection_mode") == "multi-row"

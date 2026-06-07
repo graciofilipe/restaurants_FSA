@@ -191,40 +191,6 @@ def process_and_update_master_data(
 
     return newly_added_restaurants, summary_msg
 
-def load_data_from_csv(uploaded_file: Any) -> pd.DataFrame:
-    """
-    Loads data from an uploaded CSV file into a Pandas DataFrame.
-    Checks for 'fhrsid' column (case-insensitive) and converts it to string.
-    """
-    try:
-        df = pd.read_csv(uploaded_file, na_filter=False)
-        if df.empty:
-            raise ValueError("The uploaded CSV file is empty or contains no data.")
-
-        fhrsid_col_name = None
-        for col in df.columns:
-            if col.lower() == 'fhrsid':
-                fhrsid_col_name = col
-                break
-
-        if fhrsid_col_name is None:
-            raise ValueError("The required 'fhrsid' column is missing in the uploaded CSV file.")
-
-        df[fhrsid_col_name] = df[fhrsid_col_name].astype(str)
-
-        if fhrsid_col_name != 'fhrsid':
-            df.rename(columns={fhrsid_col_name: 'fhrsid'}, inplace=True)
-
-        return df
-
-    except pd.errors.EmptyDataError:
-        raise ValueError("The uploaded CSV file is empty or contains no data.")
-    except pd.errors.ParserError:
-        raise ValueError("Error parsing the CSV file. Please ensure it's a valid CSV format.")
-    except Exception as e:
-        if isinstance(e, ValueError): raise e
-        raise ValueError(f"An unexpected error occurred while reading the CSV file: {e}")
-
 def parse_bq_path(bq_path: str) -> Tuple[str, str, str]:
     """
     Parses a BigQuery path string in the format 'project.dataset.table'.
@@ -234,48 +200,6 @@ def parse_bq_path(bq_path: str) -> Tuple[str, str, str]:
         return project_id, dataset_id, table_id
     except ValueError:
         raise ValueError(f"Invalid BigQuery Path: '{bq_path}'. Expected format: 'project.dataset.table'")
-
-def run_data_synchronization(
-    valid_coords: List[Tuple[float, float]], 
-    max_results: int, 
-    project_id: str, 
-    dataset_id: str, 
-    table_id: str
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], str]:
-    """
-    Orchestrates the data synchronization process.
-    """
-    
-    # 1. Fetch from API
-    all_api_establishments = fetch_data_for_all_coordinates(valid_coords, max_results)
-    
-    # Construct the dictionary structure expected by process_and_update_master_data
-    combined_api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': all_api_establishments}}}
-
-    # 2. Load Master Data
-    from app.services.bq_utils import load_all_data_from_bq
-
-    master_restaurant_data = load_master_data(project_id, dataset_id, table_id, load_all_data_from_bq)
-    
-    # 3. Process
-    new_restaurants, summary_msg = process_and_update_master_data(master_restaurant_data, combined_api_data)
-    
-    return master_restaurant_data, new_restaurants, summary_msg
-
-def add_outcode_column(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Adds an 'outcode' column to the DataFrame by extracting the first part of the postcode.
-    Logic: Splits by whitespace and takes the first element.
-    """
-    if df.empty or 'PostCode' not in df.columns:
-        if 'outcode' not in df.columns:
-             df['outcode'] = None 
-        return df
-
-    # Use vectorized string split
-    df['outcode'] = df['PostCode'].str.split(' ').str[0]
-
-    return df
 
 def parse_insight_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """

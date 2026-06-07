@@ -9,11 +9,7 @@ from app.services.bq_utils import (
     load_filtered_data_from_bq,
     bulk_update_reviews
 )
-from app.core.data_processing import (
-    load_data_from_csv, 
-    run_data_synchronization, 
-    enhance_dataframe_with_insights
-)
+from app.core.data_processing import enhance_dataframe_with_insights
 
 st.set_page_config(page_title="FSA Restaurant Explorer", layout="wide")
 
@@ -252,12 +248,7 @@ def main():
                 local_authority_filter=local_authority_filter
             )
 
-        st.divider()
-        st.header("Data Sync")
-        uploaded_file = st.file_uploader("Upload FSA Data (CSV)", type="csv")
-        if uploaded_file and st.button("Sync to BigQuery"):
-            st.info("Sync triggered...")
-            # Sync logic...
+
 
     # --- Main Interface ---
     if st.session_state.data_loaded and not st.session_state.df_enriched.empty:
