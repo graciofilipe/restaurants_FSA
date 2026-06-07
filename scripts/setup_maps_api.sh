@@ -1,10 +1,10 @@
 #!/bin/bash
 
 echo "Enabling Places API..."
-gcloud services enable places-backend.googleapis.com
+gcloud services enable places.googleapis.com
 
 echo "Creating API key..."
-gcloud services api-keys create   --display-name="Maps Places API Key for FSA app"   --api-target=service=places-backend.googleapis.com
+gcloud services api-keys create   --display-name="Maps Places API Key for FSA app"   --api-target=service=places.googleapis.com
 
 echo ""
 echo "========================================================"
