@@ -270,159 +270,227 @@ def main():
         m2.metric("Filtered View", len(df_display))
         m3.metric("AI Profiled", len(df_display[df_display['detailed_insights'].notna()]))
 
-        st.subheader("Restaurant Registry")
+        tab_explore, tab_bulk = st.tabs(["🔍 Explore & Profile", "⭐ Bulk Rating Mode"])
         
-        # Main Grid - Multi Selection Mode
-        selection_event = display_data(df_display, key="main_input_grid")
-        selected_rows = get_selected_rows(selection_event, df_display)
-        
-        # Action Bar for Selection
-        if selected_rows is not None and not selected_rows.empty:
-            st.divider()
+        with tab_explore:
+            st.subheader("Restaurant Registry")
             
-            # Action Containers
-            col_gen, col_update = st.columns([1, 1])
+            # Main Grid - Multi Selection Mode
+            selection_event = display_data(df_display, key="main_input_grid")
+            selected_rows = get_selected_rows(selection_event, df_display)
             
-            # 1. Generate Profiles
-            with col_gen:
-                count = len(selected_rows)
-                if st.button(f"Generate Profiles for {count} Selected"):
-                    # Extract IDs
-                    fhrsids = []
-                    col_map = {c.lower(): c for c in selected_rows.columns}
-                    id_col = col_map.get('fhrsid')
-                    
-                    if id_col:
-                        fhrsids = selected_rows[id_col].astype(str).tolist()
-                    
-                    if fhrsids:
-                        with st.spinner(f"Generating profiles for {count} restaurants..."):
-                            result_msg = execute_gemini_enrichment(
-                                project_id, 
-                                dataset_id, 
-                                table_id, 
-                                fhrsids=fhrsids
-                            )
-                            st.success(result_msg)
-                            time.sleep(1) # Brief pause for user to see success
-                            
-                            # Reload data to ensure freshness (fix for stale UI)
-                            load_data_into_state(
-                                project_id, 
-                                dataset_id, 
-                                table_id, 
-                                manual_review_filter, 
-                                outcode_filter,
-                                first_seen_start_date=first_seen_date,
-                                local_authority_filter=local_authority_filter
-                            )
-                            
-                            st.rerun()
-                    else:
-                        st.error("Could not identify FHRSIDs for selection.")
-
-            # 2. Update Status
-            with col_update:
-                st.write("Update Manual Review Status:")
-                c_acc, c_rej, c_pend, c_reset = st.columns(4)
-                
-                new_status = None
-                if c_acc.button("✅ Accept"):
-                    new_status = "accepted"
-                if c_rej.button("❌ Reject"):
-                    new_status = "rejected"
-                if c_pend.button("⏳ Pending"):
-                    new_status = "pending"
-                if c_reset.button("🔄 Reset"):
-                    new_status = "not reviewed"
-                
-                if new_status:
-                    # Extract IDs
-                    col_map = {c.lower(): c for c in selected_rows.columns}
-                    id_col = col_map.get('fhrsid')
-                    
-                    if id_col:
-                        ids_to_update = selected_rows[id_col].unique().tolist()
-                        
-                        # Prepare update DataFrame
-                        df_updates = pd.DataFrame({
-                            'fhrsid': ids_to_update,
-                            'manual_review': [new_status] * len(ids_to_update)
-                        })
-                        
-                        with st.spinner(f"Updating {len(ids_to_update)} rows to '{new_status}'..."):
-                            success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_updates)
-                            if success:
-                                st.success(f"Updated: {msg}")
-                                # Update session state directly to reflect change immediately
-                                if 'df_enriched' in st.session_state:
-                                    df_s = st.session_state.df_enriched
-                                    s_col_map = {c.lower(): c for c in df_s.columns}
-                                    s_id_col = s_col_map.get('fhrsid')
-                                    
-                                    if s_id_col:
-                                         mask = df_s[s_id_col].astype(str).isin([str(x) for x in ids_to_update])
-                                         if 'manual_review' in df_s.columns:
-                                             st.session_state.df_enriched.loc[mask, 'manual_review'] = new_status
-                                
-                                time.sleep(1)
-                                st.rerun()
-                            else:
-                                st.error(f"Update failed: {msg}")
-                    else:
-                         st.error("Could not identify FHRSID for updates.")
-        
-            # 3. Individual User Rating (Only if 1 row selected)
-            if len(selected_rows) == 1:
+            # Action Bar for Selection
+            if selected_rows is not None and not selected_rows.empty:
                 st.divider()
-                st.write("### ⭐ Rate Restaurant")
-                row = selected_rows.iloc[0]
-                col_map = {c.lower(): c for c in row.index}
-                id_col = col_map.get('fhrsid')
-                biz_name = row.get('BusinessName') or row.get('businessname') or "Unknown Restaurant"
-
-                current_rating = row.get('user_rating')
-                if pd.isna(current_rating):
-                    current_rating = 5
-
-                user_rating = st.slider(f"Your Rating for {biz_name} (1-10)", min_value=1, max_value=10, value=int(current_rating), step=1)
-                if st.button("Submit Rating", type="primary"):
-                    if id_col:
-                        fhrsid_to_update = str(row[id_col])
-                        with st.spinner("Saving rating..."):
-                            from app.services.bq_utils import update_rows_in_bigquery
-                            success = update_rows_in_bigquery(
-                                project_id, dataset_id, table_id,
-                                fhrsid_to_update,
-                                {'user_rating': user_rating}
-                            )
-                            if success:
-                                st.success("Rating saved!")
-                                if 'df_enriched' in st.session_state:
-                                    df_s = st.session_state.df_enriched
-                                    s_col_map = {c.lower(): c for c in df_s.columns}
-                                    s_id_col = s_col_map.get('fhrsid')
-                                    if s_id_col:
-                                        mask = df_s[s_id_col].astype(str) == fhrsid_to_update
-                                        if 'user_rating' not in df_s.columns:
-                                            st.session_state.df_enriched['user_rating'] = None
-
-                                        st.session_state.df_enriched.loc[mask, 'user_rating'] = user_rating
-                                time.sleep(1)
+                
+                # Action Containers
+                col_gen, col_update = st.columns([1, 1])
+                
+                # 1. Generate Profiles
+                with col_gen:
+                    count = len(selected_rows)
+                    if st.button(f"Generate Profiles for {count} Selected"):
+                        # Extract IDs
+                        fhrsids = []
+                        col_map = {c.lower(): c for c in selected_rows.columns}
+                        id_col = col_map.get('fhrsid')
+                        
+                        if id_col:
+                            fhrsids = selected_rows[id_col].astype(str).tolist()
+                        
+                        if fhrsids:
+                            with st.spinner(f"Generating profiles for {count} restaurants..."):
+                                result_msg = execute_gemini_enrichment(
+                                    project_id, 
+                                    dataset_id, 
+                                    table_id, 
+                                    fhrsids=fhrsids
+                                )
+                                st.success(result_msg)
+                                time.sleep(1) # Brief pause for user to see success
+                                
+                                # Reload data to ensure freshness (fix for stale UI)
+                                load_data_into_state(
+                                    project_id, 
+                                    dataset_id, 
+                                    table_id, 
+                                    manual_review_filter, 
+                                    outcode_filter,
+                                    first_seen_start_date=first_seen_date,
+                                    local_authority_filter=local_authority_filter
+                                )
+                                
                                 st.rerun()
-                            else:
-                                st.error("Failed to save rating.")
-                    else:
-                        st.error("Could not identify FHRSID.")
+                        else:
+                            st.error("Could not identify FHRSIDs for selection.")
+
+                # 2. Update Status
+                with col_update:
+                    st.write("Update Manual Review Status:")
+                    c_acc, c_rej, c_pend, c_reset = st.columns(4)
+                    
+                    new_status = None
+                    if c_acc.button("✅ Accept"):
+                        new_status = "accepted"
+                    if c_rej.button("❌ Reject"):
+                        new_status = "rejected"
+                    if c_pend.button("⏳ Pending"):
+                        new_status = "pending"
+                    if c_reset.button("🔄 Reset"):
+                        new_status = "not reviewed"
+                    
+                    if new_status:
+                        # Extract IDs
+                        col_map = {c.lower(): c for c in selected_rows.columns}
+                        id_col = col_map.get('fhrsid')
+                        
+                        if id_col:
+                            ids_to_update = selected_rows[id_col].unique().tolist()
+                            
+                            # Prepare update DataFrame
+                            df_updates = pd.DataFrame({
+                                'fhrsid': ids_to_update,
+                                'manual_review': [new_status] * len(ids_to_update)
+                            })
+                            
+                            with st.spinner(f"Updating {len(ids_to_update)} rows to '{new_status}'..."):
+                                success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_updates)
+                                if success:
+                                    st.success(f"Updated: {msg}")
+                                    # Update session state directly to reflect change immediately
+                                    if 'df_enriched' in st.session_state:
+                                        df_s = st.session_state.df_enriched
+                                        s_col_map = {c.lower(): c for c in df_s.columns}
+                                        s_id_col = s_col_map.get('fhrsid')
+                                        
+                                        if s_id_col:
+                                             mask = df_s[s_id_col].astype(str).isin([str(x) for x in ids_to_update])
+                                             if 'manual_review' in df_s.columns:
+                                                 st.session_state.df_enriched.loc[mask, 'manual_review'] = new_status
+                                        
+                                        time.sleep(1)
+                                        st.rerun()
+                                else:
+                                    st.error(f"Update failed: {msg}")
+                        else:
+                             st.error("Could not identify FHRSID for updates.")
         
-        # Deep Dive Section
-        if selected_rows is not None and not selected_rows.empty:
-            st.markdown("### 🔬 Deep Dive Analysis")
-            for idx, row in selected_rows.iterrows():
-                render_insights_details(row)
-        else:
-            st.info("👆 Select one or more restaurants in the table above to view their AI Profile or Generate new ones.")
-    
+                # 3. Individual User Rating (Only if 1 row selected)
+                if len(selected_rows) == 1:
+                    st.divider()
+                    st.write("### ⭐ Rate Restaurant")
+                    row = selected_rows.iloc[0]
+                    col_map = {c.lower(): c for c in row.index}
+                    id_col = col_map.get('fhrsid')
+                    biz_name = row.get('BusinessName') or row.get('businessname') or "Unknown Restaurant"
+
+                    current_rating = row.get('user_rating')
+                    if pd.isna(current_rating):
+                        current_rating = 5
+
+                    user_rating = st.slider(f"Your Rating for {biz_name} (1-10)", min_value=1, max_value=10, value=int(current_rating), step=1)
+                    if st.button("Submit Rating", type="primary"):
+                        if id_col:
+                            fhrsid_to_update = str(row[id_col])
+                            with st.spinner("Saving rating..."):
+                                from app.services.bq_utils import update_rows_in_bigquery
+                                success = update_rows_in_bigquery(
+                                    project_id, dataset_id, table_id,
+                                    fhrsid_to_update,
+                                    {'user_rating': user_rating}
+                                )
+                                if success:
+                                    st.success("Rating saved!")
+                                    if 'df_enriched' in st.session_state:
+                                        df_s = st.session_state.df_enriched
+                                        s_col_map = {c.lower(): c for c in df_s.columns}
+                                        s_id_col = s_col_map.get('fhrsid')
+                                        if s_id_col:
+                                            mask = df_s[s_id_col].astype(str) == fhrsid_to_update
+                                            if 'user_rating' not in df_s.columns:
+                                                st.session_state.df_enriched['user_rating'] = None
+
+                                            st.session_state.df_enriched.loc[mask, 'user_rating'] = user_rating
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to save rating.")
+                        else:
+                            st.error("Could not identify FHRSID.")
+            
+            # Deep Dive Section
+            if selected_rows is not None and not selected_rows.empty:
+                st.markdown("### 🔬 Deep Dive Analysis")
+                for idx, row in selected_rows.iterrows():
+                    render_insights_details(row)
+            else:
+                st.info("👆 Select one or more restaurants in the table above to view their AI Profile or Generate new ones.")
+
+        with tab_bulk:
+            st.write("### Bulk Rating Editor")
+            st.info("Edit user ratings directly below. Click `Save Bulk Ratings` when done to persist changes to BigQuery.")
+            
+            bulk_cols = ["fhrsid", "businessname", "addressline1", "postcode", "localauthorityname", "manual_review", "user_rating"]
+            available_bulk_cols = [c for c in bulk_cols if c in df_display.columns]
+            
+            if "user_rating" not in available_bulk_cols:
+                df_display["user_rating"] = pd.NA
+                available_bulk_cols.append("user_rating")
+
+            df_bulk_reset = df_display[available_bulk_cols].reset_index(drop=True)
+            
+            edited_df = st.data_editor(
+                df_bulk_reset,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[c for c in available_bulk_cols if c != "user_rating"],
+                column_config={
+                    "user_rating": st.column_config.NumberColumn(
+                        "User Rating",
+                        min_value=1,
+                        max_value=10,
+                        step=1,
+                        help="Rate from 1 to 10"
+                    )
+                },
+                key="bulk_editor"
+            )
+            
+            if st.button("Save Bulk Ratings", type="primary"):
+                # Handle NA correctly using fillna to a placeholder for comparison
+                mask = edited_df["user_rating"] != df_bulk_reset["user_rating"]
+                mask = mask & ~(edited_df["user_rating"].isna() & df_bulk_reset["user_rating"].isna())
+                
+                updates = edited_df[mask].copy()
+                
+                if not updates.empty:
+                    with st.spinner(f"Saving {len(updates)} ratings..."):
+                        if "manual_review" not in updates.columns:
+                            updates["manual_review"] = "pending"
+                        
+                        df_to_update = updates[["fhrsid", "manual_review", "user_rating"]].copy()
+                        success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_to_update)
+                        
+                        if success:
+                            st.success(f"Updated: {msg}")
+                            if "df_enriched" in st.session_state:
+                                df_s = st.session_state.df_enriched
+                                s_col_map = {c.lower(): c for c in df_s.columns}
+                                s_id_col = s_col_map.get("fhrsid")
+                                
+                                if s_id_col:
+                                    if "user_rating" not in df_s.columns:
+                                        df_s["user_rating"] = pd.NA
+                                    for idx, row in df_to_update.iterrows():
+                                        update_mask = df_s[s_id_col].astype(str) == str(row["fhrsid"])
+                                        st.session_state.df_enriched.loc[update_mask, "user_rating"] = row["user_rating"]
+                            
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(f"Update failed: {msg}")
+                else:
+                    st.info("No rating changes detected.")
     elif st.session_state.data_loaded and st.session_state.df_enriched.empty:
         st.warning("No data found. Try adjusting filters and clicking 'Load Data'.")
     else:
