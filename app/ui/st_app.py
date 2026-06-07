@@ -324,15 +324,17 @@ def main():
             # 2. Update Status
             with col_update:
                 st.write("Update Manual Review Status:")
-                c_acc, c_rej, c_pend = st.columns(3)
+                c_acc, c_rej, c_pend, c_reset = st.columns(4)
                 
                 new_status = None
                 if c_acc.button("✅ Accept"):
                     new_status = "accepted"
                 if c_rej.button("❌ Reject"):
                     new_status = "rejected"
-                if c_pend.button("🔄 Reset"):
+                if c_pend.button("⏳ Pending"):
                     new_status = "pending"
+                if c_reset.button("🔄 Reset"):
+                    new_status = "not reviewed"
                 
                 if new_status:
                     # Extract IDs
