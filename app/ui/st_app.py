@@ -251,7 +251,22 @@ def main():
                 local_authority_filter=local_authority_filter
             )
 
-
+        st.divider()
+        st.subheader("🤖 ML Predictions")
+        prediction_batch_size = st.number_input("Prediction Batch Size", min_value=10, max_value=500, value=50, step=10)
+        if st.button("Generate ML Predictions", type="secondary"):
+            with st.spinner(f"Auto-enriching and predicting for up to {prediction_batch_size} restaurants..."):
+                try:
+                    num_predicted = generate_predictions(project_id, dataset_id, table_id, "restaurant_preference_model", limit=prediction_batch_size)
+                    st.success(f"Successfully generated predictions for {num_predicted} restaurants!")
+                    # Auto-refresh
+                    load_data_into_state(
+                        project_id, dataset_id, table_id, manual_review_filter, outcode_filter,
+                        first_seen_start_date=first_seen_date, first_seen_end_date=first_seen_date_end,
+                        min_rating=min_rating
+                    )
+                except Exception as e:
+                    st.error(f"Prediction failed: {e}")
 
     # --- Main Interface ---
     if st.session_state.data_loaded and not st.session_state.df_enriched.empty:
