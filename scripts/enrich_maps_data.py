@@ -20,7 +20,7 @@ def main():
         SELECT fhrsid, BusinessName, PostCode, AddressLine1
         FROM `{table_ref}`
         WHERE maps_rating IS NULL AND maps_reviews IS NULL AND price_level IS NULL AND BusinessName IS NOT NULL
-        LIMIT 200
+        LIMIT 3000
     """
     
     print(f"Fetching restaurants to enrich from {table_ref}...")
@@ -106,37 +106,40 @@ def main():
     if updates:
         print(f"Executing batch update of {len(updates)} rows...")
         
-        values_list = []
-        for u in updates:
-            fhrsid = u["fhrsid"].replace("'", "\\'")
-            pl = str(u["price_level"]) if u["price_level"] is not None else "NULL"
-            mr = str(u["maps_rating"]) if u["maps_rating"] is not None else "NULL"
-            mrev = str(u["maps_reviews"]) if u["maps_reviews"] is not None else "NULL"
-            values_list.append(f'(\'{fhrsid}\', {pl}, {mr}, {mrev})')
+        batch_size = 500
+        for i in range(0, len(updates), batch_size):
+            batch = updates[i:i + batch_size]
+            values_list = []
+            for u in batch:
+                fhrsid = u["fhrsid"].replace("'", "\\'")
+                pl = str(u["price_level"]) if u["price_level"] is not None else "NULL"
+                mr = str(u["maps_rating"]) if u["maps_rating"] is not None else "NULL"
+                mrev = str(u["maps_reviews"]) if u["maps_reviews"] is not None else "NULL"
+                values_list.append(f"('{fhrsid}', {pl}, {mr}, {mrev})")
+                
+            values_str = ",\n".join(values_list)
             
-        values_str = ",\n".join(values_list)
-        
-        merge_query = f"""
-        MERGE `{table_ref}` T
-        USING (
-            SELECT * FROM UNNEST([
-                STRUCT<fhrsid STRING, price_level INT64, maps_rating FLOAT64, maps_reviews INT64>
-                {values_str}
-            ])
-        ) S
-        ON T.fhrsid = S.fhrsid
-        WHEN MATCHED THEN
-          UPDATE SET 
-            price_level = S.price_level,
-            maps_rating = S.maps_rating,
-            maps_reviews = S.maps_reviews
-        """
-        
-        try:
-            client.query(merge_query).result()
-            print("Successfully updated BigQuery.")
-        except Exception as e:
-            print(f"Merge error: {e}")
+            merge_query = f"""
+            MERGE `{table_ref}` T
+            USING (
+                SELECT * FROM UNNEST([
+                    STRUCT<fhrsid STRING, price_level INT64, maps_rating FLOAT64, maps_reviews INT64>
+                    {values_str}
+                ])
+            ) S
+            ON T.fhrsid = S.fhrsid
+            WHEN MATCHED THEN
+              UPDATE SET 
+                price_level = S.price_level,
+                maps_rating = S.maps_rating,
+                maps_reviews = S.maps_reviews
+            """
+            
+            try:
+                client.query(merge_query).result()
+                print(f"Successfully updated batch of {len(batch)} rows.")
+            except Exception as e:
+                print(f"Merge error on batch: {e}")
 
 if __name__ == "__main__":
     main()
