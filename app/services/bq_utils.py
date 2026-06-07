@@ -141,16 +141,12 @@ def load_all_data_from_bq(project_id: str, dataset_id: str, table_id: str) -> Li
     logger.info(f"Executing BigQuery query: {query}")
 
     try:
-        df = pandas_gbq.read_gbq(query, project_id=project_id)
-        if df is not None and not df.empty:
-            return df.to_dict(orient='records')
-        else:
-            return []
-    except (pandas_gbq.gbq.GenericGBQException, DefaultCredentialsError) as e:
+        client = bigquery.Client(project=project_id)
+        query_job = client.query(query)
+        results = query_job.result()
+        return [dict(row) for row in results]
+    except DefaultCredentialsError as e:
         logger.error(f"Error loading data from BigQuery table {table_ref_str}: {e}")
-        return []
-    except AttributeError as e:
-        logger.error(f"AttributeError during DataFrame processing for {table_ref_str}: {e}")
         return []
     except Exception as e:
         logger.error(f"An unexpected error occurred while loading data from BigQuery table {table_ref_str}: {e}")
@@ -210,13 +206,16 @@ def load_filtered_data_from_bq(
     logger.info(f"Executing Filtered BigQuery query: {query}")
 
     try:
-        df = pandas_gbq.read_gbq(query, project_id=project_id)
-        if df is not None and not df.empty:
-            if 'first_seen' in df.columns:
-                 df['first_seen'] = df['first_seen'].astype(str)
-            return df.to_dict(orient='records')
-        else:
-            return []
+        client = bigquery.Client(project=project_id)
+        query_job = client.query(query)
+        results = query_job.result()
+        records = []
+        for row in results:
+            record = dict(row)
+            if 'first_seen' in record and record['first_seen'] is not None:
+                record['first_seen'] = str(record['first_seen'])
+            records.append(record)
+        return records
     except Exception as e:
         logger.error(f"Error loading filtered data from {table_ref_str}: {e}")
         return []
@@ -517,12 +516,12 @@ def get_distinct_local_authorities(project_id: str, dataset_id: str, table_id: s
     
     logger.info(f"Fetching distinct Local Authorities from {table_ref}")
     try:
-        df = pandas_gbq.read_gbq(query, project_id=project_id)
-        if df is not None and not df.empty:
-            count = len(df)
-            logger.info(f"Fetched {count} distinct Local Authorities from {table_ref}.")
-            return df['localauthorityname'].tolist()
-        return []
+        client = bigquery.Client(project=project_id)
+        query_job = client.query(query)
+        results = query_job.result()
+        local_authorities = [row.localauthorityname for row in results if row.localauthorityname]
+        logger.info(f"Fetched {len(local_authorities)} distinct Local Authorities from {table_ref}.")
+        return local_authorities
     except Exception as e:
         logger.error(f"Error fetching distinct local authorities: {e}")
         return []
@@ -541,11 +540,11 @@ def get_distinct_outcodes(project_id: str, dataset_id: str, table_id: str) -> Li
     
     logger.info(f"Fetching distinct Outcodes from {table_ref}")
     try:
-        df = pandas_gbq.read_gbq(query, project_id=project_id)
-        if df is not None and not df.empty:
-            outcodes = df['outcode'].dropna().astype(str).tolist()
-            return sorted([o for o in outcodes if o.strip()])
-        return []
+        client = bigquery.Client(project=project_id)
+        query_job = client.query(query)
+        results = query_job.result()
+        outcodes = sorted([str(row.outcode).strip() for row in results if row.outcode and str(row.outcode).strip()])
+        return outcodes
     except Exception as e:
         logger.error(f"Error fetching distinct outcodes: {e}")
         return []

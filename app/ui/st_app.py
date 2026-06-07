@@ -146,7 +146,6 @@ def load_data_into_state(
             )
             
             df_master = pd.DataFrame(raw_data)
-            df_master = pd.DataFrame(raw_data)
             if not df_master.empty:
                 # Enrichment
                 df_enriched = enhance_dataframe_with_insights(df_master)

@@ -33,12 +33,16 @@ NEW_BQ_SCHEMA = [
 
 # --- Tests for load_all_data_from_bq ---
 
-@patch('pandas_gbq.read_gbq')
-def test_load_all_data_from_bq_success(mock_read_gbq):
+@patch('google.cloud.bigquery.Client')
+def test_load_all_data_from_bq_success(mock_client_cls):
     """Test successful data loading and conversion to list of dicts."""
-    sample_data = {'col1': [1, 2], 'col2': ['a', 'b']}
-    mock_df = pd.DataFrame(sample_data)
-    mock_read_gbq.return_value = mock_df
+    mock_client = mock_client_cls.return_value
+    mock_job = mock_client.query.return_value
+    
+    class MockRow(dict):
+        pass
+        
+    mock_job.result.return_value = [MockRow({'col1': 1, 'col2': 'a'}), MockRow({'col1': 2, 'col2': 'b'})]
 
     project_id = 'test-proj'
     dataset_id = 'test-dset'
@@ -48,13 +52,14 @@ def test_load_all_data_from_bq_success(mock_read_gbq):
     expected_result = [{'col1': 1, 'col2': 'a'}, {'col1': 2, 'col2': 'b'}]
 
     assert result == expected_result
-    mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
+    mock_client.query.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`")
 
-@patch('pandas_gbq.read_gbq')
-def test_load_all_data_from_bq_empty_table(mock_read_gbq):
+@patch('google.cloud.bigquery.Client')
+def test_load_all_data_from_bq_empty_table(mock_client_cls):
     """Test loading from an empty table returns an empty list."""
-    mock_df = pd.DataFrame()
-    mock_read_gbq.return_value = mock_df
+    mock_client = mock_client_cls.return_value
+    mock_job = mock_client.query.return_value
+    mock_job.result.return_value = []
 
     project_id = 'test-proj'
     dataset_id = 'test-dset'
@@ -63,59 +68,55 @@ def test_load_all_data_from_bq_empty_table(mock_read_gbq):
     result = load_all_data_from_bq(project_id, dataset_id, table_id)
 
     assert result == []
-    mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
+    mock_client.query.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`")
 
-@patch('pandas_gbq.read_gbq')
-@patch('builtins.print') # Mock print to check error logging
-def test_load_all_data_from_bq_pandas_gbq_exception(mock_print, mock_read_gbq):
-    """Test that GenericGBQException is caught and returns an empty list."""
+@patch('google.cloud.bigquery.Client')
+@patch('builtins.print')
+def test_load_all_data_from_bq_pandas_gbq_exception(mock_print, mock_client_cls):
+    """Test that Exception is caught and returns an empty list."""
     project_id = 'test-proj'
     dataset_id = 'test-dset'
     table_id = 'gbq-exception-tbl'
-    error_message = "Simulated pandas_gbq.gbq.GenericGBQException"
-    if GenericGBQException:
-        mock_read_gbq.side_effect = GenericGBQException(error_message)
-    else: # Fallback if GenericGBQException is not available
-        mock_read_gbq.side_effect = Exception(error_message)
-
+    error_message = "Simulated exception"
+    mock_client_cls.return_value.query.side_effect = Exception(error_message)
 
     result = load_all_data_from_bq(project_id, dataset_id, table_id)
 
     assert result == []
-    mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
+    mock_client_cls.return_value.query.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`")
     # Check if error was printed (optional, but good for verifying logging)
     # mock_print.assert_any_call(f"Error loading data from BigQuery table {project_id}.{dataset_id}.{table_id}: {error_message}")
 
-@patch('pandas_gbq.read_gbq')
+@patch('google.cloud.bigquery.Client')
 @patch('builtins.print')
-def test_load_all_data_from_bq_google_auth_exception(mock_print, mock_read_gbq):
+def test_load_all_data_from_bq_google_auth_exception(mock_print, mock_client_cls):
     """Test that DefaultCredentialsError is caught and returns an empty list."""
     project_id = 'test-proj'
     dataset_id = 'test-dset'
     table_id = 'auth-exception-tbl'
     error_message = "Simulated DefaultCredentialsError"
-    mock_read_gbq.side_effect = DefaultCredentialsError(error_message)
+    mock_client_cls.side_effect = DefaultCredentialsError(error_message)
 
     result = load_all_data_from_bq(project_id, dataset_id, table_id)
 
     assert result == []
-    mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
+    mock_client_cls.assert_called_once_with(project=project_id)
     # mock_print.assert_any_call(f"Error loading data from BigQuery table {project_id}.{dataset_id}.{table_id}: {error_message}")
 
-@patch('pandas_gbq.read_gbq')
+@patch('google.cloud.bigquery.Client')
 @patch('builtins.print')
-def test_load_all_data_from_bq_generic_exception(mock_print, mock_read_gbq):
+def test_load_all_data_from_bq_generic_exception(mock_print, mock_client_cls):
     """Test that a generic Exception is caught and returns an empty list."""
     project_id = 'test-proj'
     dataset_id = 'test-dset'
     table_id = 'generic-exception-tbl'
     error_message = "Simulated generic Exception"
-    mock_read_gbq.side_effect = Exception(error_message)
+    mock_client_cls.side_effect = Exception(error_message)
 
     result = load_all_data_from_bq(project_id, dataset_id, table_id)
 
     assert result == []
-    mock_read_gbq.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`", project_id=project_id)
+    mock_client_cls.assert_called_once_with(project=project_id)
     # mock_print.assert_any_call(f"An unexpected error occurred while loading data from BigQuery table {project_id}.{dataset_id}.{table_id}: {error_message}")
 
 # --- Tests for write_to_bigquery ---
@@ -587,52 +588,55 @@ class TestBqUtilsGeminiSelection(unittest.TestCase):
 
 from app.services.bq_utils import load_filtered_data_from_bq
 
-@patch('pandas_gbq.read_gbq')
-def test_load_filtered_data_with_postcode(mock_read_gbq):
+@patch('google.cloud.bigquery.Client')
+def test_load_filtered_data_with_postcode(mock_client_cls):
     """Test SQL generation for postcode area filtering."""
-    mock_df = pd.DataFrame({'col': [1]})
-    mock_read_gbq.return_value = mock_df
+    mock_client = mock_client_cls.return_value
+    mock_job = mock_client.query.return_value
+    mock_job.result.return_value = []
     
     load_filtered_data_from_bq(
         'proj', 'ds', 'tbl',
         postcode_areas=['SE1', "E'1"] # Test escaping
     )
     
-    args, kwargs = mock_read_gbq.call_args
+    args, kwargs = mock_client.query.call_args
     query = args[0]
     
     # Check for correct SPLIT logic and escaping
     # Note: query string formatting might vary slightly, checking for substring presence
     assert "SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ('SE1', 'E''1')" in query
 
-@patch('pandas_gbq.read_gbq')
-def test_load_filtered_data_with_date(mock_read_gbq):
+@patch('google.cloud.bigquery.Client')
+def test_load_filtered_data_with_date(mock_client_cls):
     """Test SQL generation for first_seen_start_date filtering."""
-    mock_df = pd.DataFrame({'col': [1]})
-    mock_read_gbq.return_value = mock_df
+    mock_client = mock_client_cls.return_value
+    mock_job = mock_client.query.return_value
+    mock_job.result.return_value = []
     
     load_filtered_data_from_bq(
         'proj', 'ds', 'tbl',
         first_seen_start_date='2023-01-01'
     )
     
-    args, kwargs = mock_read_gbq.call_args
+    args, kwargs = mock_client.query.call_args
     query = args[0]
     
     assert "AND first_seen >= '2023-01-01'" in query
 
-@patch('pandas_gbq.read_gbq')
-def test_load_filtered_data_with_local_authority(mock_read_gbq):
+@patch('google.cloud.bigquery.Client')
+def test_load_filtered_data_with_local_authority(mock_client_cls):
     """Test SQL generation for local_authority_filter filtering."""
-    mock_df = pd.DataFrame({'col': [1]})
-    mock_read_gbq.return_value = mock_df
+    mock_client = mock_client_cls.return_value
+    mock_job = mock_client.query.return_value
+    mock_job.result.return_value = []
     
     load_filtered_data_from_bq(
         'proj', 'ds', 'tbl',
         local_authority_filter=['Aberdeen City', "King's Lynn"]
     )
     
-    args, kwargs = mock_read_gbq.call_args
+    args, kwargs = mock_client.query.call_args
     query = args[0]
     
     # Check for inclusion and escaping
