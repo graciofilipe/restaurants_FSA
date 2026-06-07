@@ -225,6 +225,10 @@ def main():
         
         min_match_score = st.slider("Min Match Score", 0, 100, 0)
         min_auth_score = st.slider("Min Authenticity", 0, 5, 0)
+        
+        st.divider()
+        st.write("### 🤖 ML Prediction Filters")
+        show_predicted_only = st.checkbox("Only show restaurants with ML Predictions")
 
         st.divider()
         
@@ -285,6 +289,9 @@ def main():
             
         if "insight_authenticity" in df_display.columns and min_auth_score > 0:
              df_display = df_display[df_display["insight_authenticity"] >= min_auth_score]
+             
+        if show_predicted_only and "predicted_user_rating" in df_display.columns:
+            df_display = df_display[df_display["predicted_user_rating"].notna()]
 
         # Metric Summary
         m1, m2, m3 = st.columns(3)
@@ -405,6 +412,10 @@ def main():
                     col_map = {c.lower(): c for c in row.index}
                     id_col = col_map.get('fhrsid')
                     biz_name = row.get('BusinessName') or row.get('businessname') or "Unknown Restaurant"
+
+                    pred_rating = row.get('predicted_user_rating')
+                    if pd.notna(pred_rating):
+                        st.info(f"🤖 **ML Predicted Rating:** {pred_rating:.1f} / 10")
 
                     current_rating = row.get('user_rating')
                     if pd.isna(current_rating):
