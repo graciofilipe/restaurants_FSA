@@ -57,13 +57,13 @@ def render_insights_details(row):
     biz_name = row.get('BusinessName') or row.get('businessname') or "Unknown Restaurant"
     st.markdown(f"### 🍽️ Profiling: {biz_name}")
     
-    if not row.get('detailed_insights'):
+    insights = row.get('detailed_insights')
+    if not insights or not isinstance(insights, dict):
         st.info("No detailed persona profile available for this restaurant yet.")
-        if row.get('insight_summary'):
+        if row.get('insight_summary') and isinstance(row.get('insight_summary'), str):
              st.write(f"**Legacy Summary:** {row['insight_summary']}")
         return
 
-    insights = row['detailed_insights']
     
     # top level metric
     col1, col2 = st.columns([1, 3])
