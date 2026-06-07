@@ -20,7 +20,8 @@ def main():
         SELECT fhrsid, BusinessName, PostCode, AddressLine1
         FROM `{table_ref}`
         WHERE maps_rating IS NULL AND maps_reviews IS NULL AND price_level IS NULL AND BusinessName IS NOT NULL
-        LIMIT 100
+          AND user_rating IS NOT NULL
+        LIMIT 1000
     """
     
     print(f"Fetching restaurants to enrich from {table_ref}...")
