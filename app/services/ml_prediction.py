@@ -1,23 +1,32 @@
 import logging
 from google.cloud import bigquery
-from typing import Tuple
+from typing import Tuple, List
 from scripts.enrich_maps_data import enrich_restaurants_by_fhrsid
 from app.services.bq_utils import execute_gemini_enrichment
 
 logger = logging.getLogger(__name__)
 
-def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_name: str, limit: int = 50) -> Tuple[bool, str]:
+def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_name: str, limit: int = 50, target_fhrsids: List[str] = None) -> Tuple[bool, str]:
     client = bigquery.Client(project=project_id)
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
     model_ref = f"{project_id}.{dataset_id}.{model_name}"
 
     # Step 1: Identify target batch
-    find_query = f'''
-        SELECT fhrsid, maps_rating, gemini_insights
-        FROM `{table_ref}`
-        WHERE user_rating IS NULL AND predicted_user_rating IS NULL AND BusinessName IS NOT NULL
-        LIMIT {limit}
-    '''
+    if target_fhrsids:
+        escaped_target_ids = [fid.replace("'", "''") for fid in target_fhrsids]
+        target_ids_str = ", ".join([f"'{fid}'" for fid in escaped_target_ids])
+        find_query = f'''
+            SELECT fhrsid, maps_rating, gemini_insights
+            FROM `{table_ref}`
+            WHERE fhrsid IN ({target_ids_str})
+        '''
+    else:
+        find_query = f'''
+            SELECT fhrsid, maps_rating, gemini_insights
+            FROM `{table_ref}`
+            WHERE user_rating IS NULL AND predicted_user_rating IS NULL AND BusinessName IS NOT NULL
+            LIMIT {limit}
+        '''
     try:
         results = client.query(find_query).result()
         rows = list(results)

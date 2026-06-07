@@ -255,26 +255,7 @@ def main():
                 local_authority_filter=local_authority_filter
             )
 
-        st.divider()
-        st.subheader("🤖 ML Predictions")
-        prediction_batch_size = st.number_input("Prediction Batch Size", min_value=10, max_value=500, value=50, step=10)
-        if st.button("Generate ML Predictions", type="secondary"):
-            with st.spinner(f"Auto-enriching and predicting for up to {prediction_batch_size} restaurants..."):
-                try:
-                    num_predicted = generate_predictions(project_id, dataset_id, table_id, "restaurant_preference_model", limit=prediction_batch_size)
-                    st.success(f"Successfully generated predictions for {num_predicted} restaurants!")
-                    # Auto-refresh
-                    load_data_into_state(
-                        project_id, 
-                        dataset_id, 
-                        table_id, 
-                        manual_review_filter, 
-                        outcode_filter,
-                        first_seen_start_date=first_seen_date,
-                        local_authority_filter=local_authority_filter
-                    )
-                except Exception as e:
-                    st.error(f"Prediction failed: {e}")
+
 
     # --- Main Interface ---
     if st.session_state.data_loaded and not st.session_state.df_enriched.empty:
@@ -313,7 +294,7 @@ def main():
                 st.divider()
                 
                 # Action Containers
-                col_gen, col_update = st.columns([1, 1])
+                col_gen, col_predict, col_update = st.columns([1, 1, 2])
                 
                 # 1. Generate Profiles
                 with col_gen:
@@ -350,6 +331,47 @@ def main():
                                 )
                                 
                                 st.rerun()
+                        else:
+                            st.error("Could not identify FHRSIDs for selection.")
+
+                # 1.5 Generate Predictions
+                with col_predict:
+                    count = len(selected_rows)
+                    if st.button(f"Generate Predictions for {count} Selected"):
+                        fhrsids = []
+                        col_map = {c.lower(): c for c in selected_rows.columns}
+                        id_col = col_map.get('fhrsid')
+                        
+                        if id_col:
+                            fhrsids = selected_rows[id_col].astype(str).tolist()
+                        
+                        if fhrsids:
+                            with st.spinner(f"Generating predictions for {count} restaurants..."):
+                                try:
+                                    success, msg = generate_predictions(
+                                        project_id, 
+                                        dataset_id, 
+                                        table_id, 
+                                        "restaurant_preference_model", 
+                                        target_fhrsids=fhrsids
+                                    )
+                                    if success:
+                                        st.success(msg)
+                                        time.sleep(1)
+                                        load_data_into_state(
+                                            project_id, 
+                                            dataset_id, 
+                                            table_id, 
+                                            manual_review_filter, 
+                                            outcode_filter,
+                                            first_seen_start_date=first_seen_date,
+                                            local_authority_filter=local_authority_filter
+                                        )
+                                        st.rerun()
+                                    else:
+                                        st.error(msg)
+                                except Exception as e:
+                                    st.error(f"Prediction failed: {e}")
                         else:
                             st.error("Could not identify FHRSIDs for selection.")
 
