@@ -40,10 +40,12 @@ def train_model(
       longitude,
       business_status,
       SPLIT(REPLACE(maps_types, ' ', ''), ',') AS maps_types_array,
-      CASE
-        WHEN gemini_insights IS NOT NULL OR gemini_insights_structured IS NOT NULL THEN 1
-        ELSE 0
-      END AS has_gemini_insights
+      CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.1_value_and_volume_rating') AS INT64) AS `1_value_and_volume_rating`,
+      CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.2_demographic_community_score') AS INT64) AS `2_demographic_community_score`,
+      CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.3_linguistic_signal_score') AS INT64) AS `3_linguistic_signal_score`,
+      CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.4_geographic_precision_specificity_level') AS INT64) AS `4_geographic_precision_specificity_level`,
+      CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.5_culinary_uncompromisingness_score') AS INT64) AS `5_culinary_uncompromisingness_score`,
+      CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.match_score') AS INT64) AS match_score
     FROM
       `{source_table}`
     WHERE
