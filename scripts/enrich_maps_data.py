@@ -7,21 +7,26 @@ DEFAULT_BQ_PATH = "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_mas
 BQ_PATH = os.environ.get("BQ_PATH", DEFAULT_BQ_PATH)
 API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
 
-def main():
-    if not API_KEY:
-        print("Error: GOOGLE_MAPS_API_KEY is not set.")
-        return
+from typing import List, Optional
+
+def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int = 1000) -> int:
     
     project_id, dataset_id, table_id = BQ_PATH.split(".")
     client = bigquery.Client(project=project_id)
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
     
+    fhrsid_filter = ""
+    if fhrsids:
+        escaped_ids = [str(fid).replace("'", "''") for fid in fhrsids]
+        id_list_str = ", ".join([f"'{fid}'" for fid in escaped_ids])
+        fhrsid_filter = f"AND fhrsid IN ({id_list_str})"
+
     query = f"""
         SELECT fhrsid, BusinessName, PostCode, AddressLine1
         FROM `{table_ref}`
-        WHERE maps_rating IS NULL AND maps_reviews IS NULL AND price_level IS NULL AND BusinessName IS NOT NULL
-          AND user_rating IS NOT NULL
-        LIMIT 1000
+        WHERE maps_rating IS NULL AND maps_reviews IS NULL AND BusinessName IS NOT NULL
+          {fhrsid_filter}
+        LIMIT {limit}
     """
     
     print(f"Fetching restaurants to enrich from {table_ref}...")
@@ -29,13 +34,13 @@ def main():
         results = client.query(query).result()
     except Exception as e:
         print(f"Error fetching from BQ: {e}")
-        return
+        return 0
         
     rows_to_update = list(results)
     print(f"Found {len(rows_to_update)} restaurants to enrich.")
     
     if not rows_to_update:
-        return
+        return 0
 
     url = "https://places.googleapis.com/v1/places:searchText"
     headers = {
@@ -185,6 +190,9 @@ def main():
                 print(f"Successfully updated batch of {len(batch)} rows.")
             except Exception as e:
                 print(f"Merge error on batch: {e}")
+
+def main():
+    enrich_restaurants_by_fhrsid()
 
 if __name__ == "__main__":
     main()

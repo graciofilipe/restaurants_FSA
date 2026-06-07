@@ -579,6 +579,7 @@ MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('first_seen', 'DATE', mode='NULLABLE'),
     bigquery.SchemaField('manual_review', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('user_rating', 'INT64', mode='NULLABLE'),
+    bigquery.SchemaField('predicted_user_rating', 'FLOAT64', mode='NULLABLE'),
     bigquery.SchemaField('gemini_insights', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('gemini_insights_structured', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('price_level', 'INT64', mode='NULLABLE'),

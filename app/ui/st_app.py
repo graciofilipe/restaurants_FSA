@@ -9,6 +9,7 @@ from app.services.bq_utils import (
     load_filtered_data_from_bq,
     bulk_update_reviews
 )
+from app.services.ml_prediction import generate_predictions
 from app.core.data_processing import enhance_dataframe_with_insights
 
 st.set_page_config(page_title="FSA Restaurant Explorer", layout="wide")
@@ -17,7 +18,7 @@ DEFAULT_BQ_PATH = "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_mas
 
 DISPLAY_COLUMNS = [
     "fhrsid", "businessname", "addressline1", "addressline2", "addressline3", 
-    "postcode", "localauthorityname", "first_seen", "manual_review", "user_rating",
+    "postcode", "localauthorityname", "first_seen", "manual_review", "user_rating", "predicted_user_rating",
     "price_level", "maps_rating", "maps_reviews",
     "latitude", "longitude", "maps_url", "business_status", "website_url", "maps_types",
     "gemini_insights", "gemini_insights_structured",
