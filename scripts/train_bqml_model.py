@@ -28,6 +28,13 @@ def train_model(
       model_type='BOOSTED_TREE_REGRESSOR',
       input_label_cols=['user_rating']
     ) AS
+    WITH parsed_data AS (
+      SELECT
+        *,
+        REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]') AS clean_json
+      FROM
+        `{source_table}`
+    )
     SELECT
       postcode,
       localauthorityname,
@@ -36,9 +43,18 @@ def train_model(
       CASE
         WHEN gemini_insights IS NOT NULL OR gemini_insights_structured IS NOT NULL THEN 1
         ELSE 0
-      END AS has_gemini_insights
+      END AS has_gemini_insights,
+      CAST(JSON_VALUE(clean_json, '$."match_score"') AS FLOAT64) AS `match_score`,
+      CAST(JSON_VALUE(clean_json, '$."1_value_and_volume".rating') AS FLOAT64) AS `1_value_and_volume_rating`,
+      CAST(JSON_VALUE(clean_json, '$."2_demographic_community".score') AS FLOAT64) AS `2_demographic_community_score`,
+      CAST(JSON_VALUE(clean_json, '$."3_linguistic_signal".score') AS FLOAT64) AS `3_linguistic_signal_score`,
+      JSON_VALUE(clean_json, '$."4_geographic_precision".region_identified') AS `4_geographic_precision_region_identified`,
+      JSON_VALUE(clean_json, '$."4_geographic_precision".specificity_level') AS `4_geographic_precision_specificity_level`,
+      CAST(JSON_VALUE(clean_json, '$."5_culinary_uncompromisingness".score') AS FLOAT64) AS `5_culinary_uncompromisingness_score`,
+      CAST(JSON_VALUE(clean_json, '$."6_establishment_integrity".is_sit_down_restaurant') AS BOOL) AS `6_establishment_integrity_is_sit_down_restaurant`,
+      JSON_VALUE(clean_json, '$."6_establishment_integrity".type') AS `6_establishment_integrity_type`
     FROM
-      `{source_table}`
+      parsed_data
     WHERE
       user_rating IS NOT NULL
     """
