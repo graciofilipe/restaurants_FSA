@@ -18,6 +18,7 @@ DEFAULT_BQ_PATH = "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_mas
 DISPLAY_COLUMNS = [
     "fhrsid", "businessname", "addressline1", "addressline2", "addressline3", 
     "postcode", "localauthorityname", "first_seen", "manual_review", "user_rating",
+    "price_level", "maps_rating", "maps_reviews",
     "gemini_insights", "gemini_insights_structured",
     "match_score",
     "1_value_and_volume_rating", "1_value_and_volume_verdict",
