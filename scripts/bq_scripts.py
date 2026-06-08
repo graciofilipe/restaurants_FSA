@@ -109,9 +109,8 @@ _MODEL_PARAMS_STRUCT = {
     },
     "generationConfig": {
         "maxOutputTokens": 65535,
-        "thinkingConfig": {
-            "thinkingLevel": "HIGH"
-        }
+        "temperature": 0.6,
+        "topP": 0.72
     },
     "safetySettings": [
         {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF"},

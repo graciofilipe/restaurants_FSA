@@ -337,6 +337,9 @@ def main():
                 # 1.5 Generate Predictions
                 with col_predict:
                     count = len(selected_rows)
+                    st.write("Prediction Options:")
+                    force_maps = st.checkbox("Force Regenerate Maps Data", key="force_maps_chk")
+                    force_gemini = st.checkbox("Force Regenerate Gemini Profiles", key="force_gemini_chk")
                     if st.button(f"Generate Predictions for {count} Selected"):
                         fhrsids = []
                         col_map = {c.lower(): c for c in selected_rows.columns}
@@ -353,7 +356,9 @@ def main():
                                         dataset_id, 
                                         table_id, 
                                         "restaurant_preference_model", 
-                                        target_fhrsids=fhrsids
+                                        target_fhrsids=fhrsids,
+                                        force_maps=force_maps,
+                                        force_gemini=force_gemini
                                     )
                                     if success:
                                         st.success(msg)

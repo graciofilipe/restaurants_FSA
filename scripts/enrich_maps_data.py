@@ -9,7 +9,7 @@ API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
 
 from typing import List, Optional
 
-def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int = 1000) -> int:
+def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int = 1000, force_regen: bool = False) -> int:
     
     project_id, dataset_id, table_id = BQ_PATH.split(".")
     client = bigquery.Client(project=project_id)
@@ -21,10 +21,13 @@ def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int
         id_list_str = ", ".join([f"'{fid}'" for fid in escaped_ids])
         fhrsid_filter = f"AND fhrsid IN ({id_list_str})"
 
+    null_filter = "" if force_regen else "AND maps_rating IS NULL AND maps_reviews IS NULL"
+
     query = f"""
         SELECT fhrsid, BusinessName, PostCode, AddressLine1
         FROM `{table_ref}`
-        WHERE maps_rating IS NULL AND maps_reviews IS NULL AND BusinessName IS NOT NULL
+        WHERE BusinessName IS NOT NULL
+          {null_filter}
           {fhrsid_filter}
         LIMIT {limit}
     """

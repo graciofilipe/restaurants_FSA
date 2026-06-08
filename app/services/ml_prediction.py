@@ -6,7 +6,7 @@ from app.services.bq_utils import execute_gemini_enrichment
 
 logger = logging.getLogger(__name__)
 
-def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_name: str, limit: int = 50, target_fhrsids: List[str] = None) -> Tuple[bool, str]:
+def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_name: str, limit: int = 50, target_fhrsids: List[str] = None, force_maps: bool = False, force_gemini: bool = False) -> Tuple[bool, str]:
     client = bigquery.Client(project=project_id)
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
     model_ref = f"{project_id}.{dataset_id}.{model_name}"
@@ -31,8 +31,15 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
         results = client.query(find_query).result()
         rows = list(results)
         fhrsids = [str(row.fhrsid) for row in rows]
-        maps_missing_fhrsids = [str(row.fhrsid) for row in rows if row.maps_rating is None]
-        gemini_missing_fhrsids = [str(row.fhrsid) for row in rows if row.gemini_insights is None]
+        if force_maps:
+            maps_missing_fhrsids = fhrsids.copy()
+        else:
+            maps_missing_fhrsids = [str(row.fhrsid) for row in rows if row.maps_rating is None]
+        
+        if force_gemini:
+            gemini_missing_fhrsids = fhrsids.copy()
+        else:
+            gemini_missing_fhrsids = [str(row.fhrsid) for row in rows if row.gemini_insights is None]
     except Exception as e:
         logger.error(f"Error finding target batch: {e}")
         return False, f"Failed to identify target batch: {str(e)}"
@@ -44,7 +51,7 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
     if maps_missing_fhrsids:
         logger.info(f"Running maps enrichment for {len(maps_missing_fhrsids)} restaurants.")
         try:
-            enrich_restaurants_by_fhrsid(maps_missing_fhrsids, limit=len(maps_missing_fhrsids))
+            enrich_restaurants_by_fhrsid(maps_missing_fhrsids, limit=len(maps_missing_fhrsids), force_regen=force_maps)
         except Exception as e:
             logger.warning(f"Maps Auto-enrichment encountered an error: {e}")
 
