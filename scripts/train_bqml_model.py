@@ -22,12 +22,40 @@ def train_model(
     full_model_name = f"{project_id}.{dataset_id}.{model_name}"
     source_table = f"{project_id}.{dataset_id}.{table_id}"
     
+    # Pre-flight JIT Enrichment: check all labeled examples for missing features.
+    logger.info("Executing pre-flight JIT check for labeled training examples...")
+    check_query = f"""
+        SELECT fhrsid, maps_rating, gemini_insights_structured
+        FROM `{source_table}`
+        WHERE user_rating IS NOT NULL
+    """
+    try:
+        results = client.query(check_query).result()
+        rows = list(results)
+        
+        maps_missing = [str(row.fhrsid) for row in rows if row.maps_rating is None]
+        gemini_missing = [str(row.fhrsid) for row in rows if row.gemini_insights_structured is None]
+        
+        if maps_missing:
+            logger.info(f"JIT: Found {len(maps_missing)} labeled restaurants missing Maps data. Triggering enrichment...")
+            from scripts.enrich_maps_data import enrich_restaurants_by_fhrsid
+            enrich_restaurants_by_fhrsid(maps_missing, limit=len(maps_missing))
+            
+        if gemini_missing:
+            logger.info(f"JIT: Found {len(gemini_missing)} labeled restaurants missing Gemini insights. Triggering enrichment...")
+            from app.services.bq_utils import execute_gemini_enrichment
+            execute_gemini_enrichment(project_id, dataset_id, table_id, fhrsids=gemini_missing)
+            
+    except Exception as e:
+        logger.warning(f"JIT pre-flight check failed: {e}. Proceeding with existing data.")
+        
     # We omit BusinessType as it is not present in the BigQuery schema for fsa_master.
     query = f"""
     CREATE OR REPLACE MODEL `{full_model_name}`
     OPTIONS(
       model_type='BOOSTED_TREE_REGRESSOR',
-      input_label_cols=['user_rating']
+      input_label_cols=['user_rating'],
+      model_registry='vertex_ai'
     ) AS
     SELECT
       postcode,
