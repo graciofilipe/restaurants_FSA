@@ -230,10 +230,19 @@ def main():
         st.write("### 🤖 ML Prediction Filters")
         show_predicted_only = st.checkbox("Only show restaurants with ML Predictions")
 
-        if st.button("Train BQML Model (Async)"):
+        if "training_lock" not in st.session_state:
+            st.session_state.training_lock = False
+            
+        if st.button("Train BQML Model (Async)", disabled=st.session_state.training_lock):
+            st.session_state.trigger_training = True
+            st.session_state.training_lock = True
+            st.rerun()
+
+        if st.session_state.get('trigger_training', False):
+            st.session_state.trigger_training = False
             try:
                 from scripts.train_bqml_model import train_model
-                with st.spinner("Starting training..."):
+                with st.spinner("Executing JIT check and starting training..."):
                     job_id = train_model(
                         project_id=project_id,
                         dataset_id=dataset_id,
@@ -244,7 +253,9 @@ def main():
                     st.success(f"Started training. Job ID: {job_id}")
             except Exception as e:
                 st.error(f"Failed to start training: {e}")
-
+            finally:
+                st.session_state.training_lock = False
+                
         st.divider()
         
         # 4. Date Filter (Server-Side)
