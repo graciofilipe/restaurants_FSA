@@ -11,7 +11,8 @@ def train_model(
     dataset_id: str, 
     table_id: str, 
     model_name: str,
-    dry_run: bool = False
+    dry_run: bool = False,
+    run_async: bool = False
 ):
     """
     Constructs and executes a BQML model training query.
@@ -67,8 +68,13 @@ def train_model(
         logger.info("Executing query. This may take 10-15 minutes for BOOSTED_TREE_REGRESSOR...")
         try:
             query_job = client.query(query)
+            if run_async:
+                logger.info(f"Started async model training. Job ID: {query_job.job_id}")
+                return query_job.job_id
+
             query_job.result()  # Wait for the job to complete
             logger.info(f"Model {full_model_name} trained successfully.")
+            return query_job.job_id
         except GoogleCloudError as e:
             logger.error(f"BigQuery execution failed: {e}")
             raise

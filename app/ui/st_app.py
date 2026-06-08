@@ -230,6 +230,21 @@ def main():
         st.write("### 🤖 ML Prediction Filters")
         show_predicted_only = st.checkbox("Only show restaurants with ML Predictions")
 
+        if st.button("Train BQML Model (Async)"):
+            try:
+                from scripts.train_bqml_model import train_model
+                with st.spinner("Starting training..."):
+                    job_id = train_model(
+                        project_id=project_id,
+                        dataset_id=dataset_id,
+                        table_id=table_id,
+                        model_name="restaurant_preference_model",
+                        run_async=True
+                    )
+                    st.success(f"Started training. Job ID: {job_id}")
+            except Exception as e:
+                st.error(f"Failed to start training: {e}")
+
         st.divider()
         
         # 4. Date Filter (Server-Side)
