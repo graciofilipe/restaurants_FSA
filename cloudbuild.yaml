@@ -28,6 +28,7 @@ steps:
       - '--image=gcr.io/$PROJECT_ID/python-app:$COMMIT_SHA'
       - '--labels=managed-by=gcp-cloud-build-deploy-cloud-run'
       - '--region=europe-west2'
+      - '--set-secrets=GOOGLE_MAPS_API_KEY=maps-key:latest'
       - '--quiet'
 
 images:
