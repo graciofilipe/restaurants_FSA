@@ -15,3 +15,16 @@ def test_bqml_training_dry_run():
     except Exception as e:
         pytest.fail(f"Dry run failed: {e}")
 
+
+def test_bqml_training_async():
+    try:
+        job_id = train_model(
+            project_id="filipegracio-ai-learning",
+            dataset_id="filipegracio_fsa_restaurants",
+            table_id="fsa_master",
+            model_name="restaurant_preference_model",
+            run_async=True
+        )
+        assert job_id is not None
+    except Exception as e:
+        pytest.fail(f"Async run failed: {e}")
