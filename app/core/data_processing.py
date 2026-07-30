@@ -1,316 +1,176 @@
+import datetime
 import json
 import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import pandas as pd
-import datetime
-from typing import List, Dict, Any, Callable, Tuple, Optional
-from app.services.bq_utils import ORIGINAL_COLUMNS_TO_KEEP
 from app.services.api_client import fetch_api_data
+from app.services.bq_utils import ORIGINAL_COLUMNS_TO_KEEP
 
 def parse_coordinates(coordinate_pairs_str: str) -> Tuple[List[Tuple[float, float]], List[str]]:
-    """
-    Parses a string of coordinate pairs (lon, lat) separated by newlines.
-    Returns a tuple containing:
-    1. List of valid coordinate tuples (float, float).
-    2. List of error messages for invalid lines.
-    """
-    valid_coords = []
-    errors = []
-    coordinate_lines = coordinate_pairs_str.strip().split('\n')
-    for i, line in enumerate(coordinate_lines):
+    """Parses newline-separated coordinate pairs (lon, lat)."""
+    valid_coords, errors = [], []
+    for i, line in enumerate(coordinate_pairs_str.strip().split('\n')):
         line = line.strip()
-        if not line: continue
+        if not line:
+            continue
         try:
-            lon_str, lat_str = line.split(',')
-            valid_coords.append((float(lon_str.strip()), float(lat_str.strip())))
+            lon, lat = line.split(',')
+            valid_coords.append((float(lon.strip()), float(lat.strip())))
         except ValueError:
             errors.append(f"Error parsing coordinate line {i+1}: '{line}'.")
     return valid_coords, errors
 
 def fetch_data_for_all_coordinates(valid_coords: List[Tuple[float, float]], max_results: int) -> List[Dict[str, Any]]:
-    """
-    Fetches data from the API for all provided coordinates.
-    Aggregates results up to max_results per coordinate.
-    """
-    all_api_establishments = []
+    """Fetches and aggregates API data for coordinates."""
+    all_establishments = []
     for lon, lat in valid_coords:
         page = 1
         while True:
-            api_response = fetch_api_data(lon, lat, max_results, page)
+            resp = fetch_api_data(lon, lat, max_results, page)
             time.sleep(1)
-            if api_response:
-                establishments = api_response.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
-                if establishments is None: establishments = []
-                all_api_establishments.extend(establishments)
-                if len(establishments) < max_results: break
-                page += 1
-            else: break
-    return all_api_establishments
+            if not resp:
+                break
+            ests = resp.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', []) or []
+            all_establishments.extend(ests)
+            if len(ests) < max_results:
+                break
+            page += 1
+    return all_establishments
 
 def load_json_from_local_file_path(uri: str) -> Optional[Dict[str, Any]]:
-    """
-    Loads a JSON file from a local file path.
-
-    Args:
-        uri: The local file path of the JSON file (e.g., "/path/to/file.json").
-
-    Returns:
-        A dictionary loaded from the JSON file, or None if an error occurs.
-    """
+    """Loads a JSON file from local disk."""
     try:
         with open(uri, 'r') as f:
             return json.load(f)
-    except FileNotFoundError:
-        # Caller should handle None or we could raise exception
-        return None
-    except json.JSONDecodeError:
-        return None
     except Exception:
         return None
 
-def load_master_data(project_id: str, dataset_id: str, table_id: str, load_bq_func: Callable[[str, str, str], List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-    """
-    Loads master restaurant data from a BigQuery table.
-
-    Args:
-        project_id: The Google Cloud project ID.
-        dataset_id: The BigQuery dataset ID.
-        table_id: The BigQuery table ID.
-        load_bq_func: The function to use for loading data from BigQuery.
-                      Expected to be bq_utils.load_all_data_from_bq.
-
-    Returns:
-        A list of dictionaries representing the master restaurant data.
-    
-    Raises:
-        Exception: If loading fails (propagates from load_bq_func).
-    """
-    # Note: Logic removed logging to UI (st.info/error). Caller must handle logging.
-    
-    loaded_data = load_bq_func(project_id, dataset_id, table_id)
-
-    if loaded_data is None: 
-        # Previously returned [] with a warning. Now we return [] but maybe caller handles warning?
-        # Or let's just return [] as before but without side effect.
+def load_master_data(
+    project_id: str, dataset_id: str, table_id: str,
+    load_bq_func: Callable[[str, str, str], List[Dict[str, Any]]]
+) -> List[Dict[str, Any]]:
+    """Loads master restaurant data from BigQuery."""
+    data = load_bq_func(project_id, dataset_id, table_id)
+    if data is None:
         return []
-    
-    if isinstance(loaded_data, list):
-        # Retain existing logic for default 'manual_review'
-        for restaurant in loaded_data:
-            if isinstance(restaurant, dict) and restaurant.get("manual_review") is None:
-                restaurant["manual_review"] = "not reviewed"
-        return loaded_data
-    else:
-        # Data format issue
-        raise TypeError(f"Data loaded from BigQuery table {project_id}.{dataset_id}.{table_id} is not in the expected list format. Type found: {type(loaded_data)}.")
+    if isinstance(data, list):
+        for r in data:
+            if isinstance(r, dict) and r.get("manual_review") is None:
+                r["manual_review"] = "not reviewed"
+        return data
+    raise TypeError(f"Expected list format from {project_id}.{dataset_id}.{table_id}, found {type(data)}.")
 
 def process_and_update_master_data(
-    master_data: List[Dict[str, Any]], 
-    api_data: Dict[str, Any],
-    today_date: Optional[str] = None
+    master_data: List[Dict[str, Any]], api_data: Dict[str, Any], today_date: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
-    """
-    Processes API data and identifies new establishments not present in the master data.
-
-    Args:
-        master_data: The current list of master restaurant data.
-        api_data: The raw JSON data (as a dict) from the API.
-        today_date: Optional date string (YYYY-MM-DD) to use as 'first_seen'. Defaults to current date.
-
-    Returns:
-        A tuple containing:
-        1. A list of newly added restaurant dictionaries.
-        2. A summary message string suitable for display.
-    """
-    if today_date is None:
-        today_date = datetime.datetime.now().strftime("%Y-%m-%d")
-
-    api_establishments = api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
-    
+    """Processes API data to identify newly added establishments."""
+    today_date = today_date or datetime.datetime.now().strftime("%Y-%m-%d")
+    raw_ests = api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
     messages = []
-    
-    if api_establishments is None: 
-        api_establishments = []
+    if raw_ests is None:
+        api_ests = []
         messages.append("No 'EstablishmentDetail' found in API response or it was None. No new establishments from API to process.")
-    elif not api_establishments: 
-         messages.append("API response contained no establishments in 'EstablishmentDetail'.")
+    elif not raw_ests:
+        api_ests = []
+        messages.append("API response contained no establishments in 'EstablishmentDetail'.")
+    else:
+        api_ests = raw_ests
 
-    existing_fhrsid_set = set()
+    existing_ids = set()
     for est in master_data:
         if isinstance(est, dict):
-            fhrsid_val = None
-            if 'FHRSID' in est and est['FHRSID'] is not None:
-                fhrsid_val = est['FHRSID']
-            elif 'fhrsid' in est and est['fhrsid'] is not None:
-                fhrsid_val = est['fhrsid']
-
-            if fhrsid_val is not None:
+            fid = est.get('FHRSID') or est.get('fhrsid')
+            if fid is not None:
                 try:
-                    canonical_fhrsid = str(int(fhrsid_val))
+                    existing_ids.add(str(int(fid)))
                 except (ValueError, TypeError):
-                    canonical_fhrsid = str(fhrsid_val).strip().lower()
-                    # Warning suppressed or could be collected if needed
-                existing_fhrsid_set.add(canonical_fhrsid)
+                    existing_ids.add(str(fid).strip().lower())
 
-    newly_added_restaurants: List[Dict[str, Any]] = []
-    fhrsids_processed_in_this_batch = set() 
-
-    for api_establishment in api_establishments:
-        if isinstance(api_establishment, dict) and 'FHRSID' in api_establishment and api_establishment['FHRSID'] is not None:
-            original_api_fhrsid = api_establishment['FHRSID']
+    new_records = []
+    processed_ids = set()
+    for est in api_ests:
+        if isinstance(est, dict) and est.get('FHRSID') is not None:
+            raw_id = est['FHRSID']
             try:
-                canonical_api_fhrsid = str(int(original_api_fhrsid))
-            except ValueError:
-                canonical_api_fhrsid = str(original_api_fhrsid).strip().lower()
+                cid = str(int(raw_id))
+            except (ValueError, TypeError):
+                cid = str(raw_id).strip().lower()
 
-            api_establishment['FHRSID'] = canonical_api_fhrsid
+            est['FHRSID'] = cid
+            if cid not in existing_ids and cid not in processed_ids:
+                est['first_seen'] = today_date
+                est['manual_review'] = "not reviewed"
+                new_records.append({k: est.get(k) for k in ORIGINAL_COLUMNS_TO_KEEP})
+                processed_ids.add(cid)
 
-            if canonical_api_fhrsid not in existing_fhrsid_set:
-                if canonical_api_fhrsid not in fhrsids_processed_in_this_batch:
-                    api_establishment['first_seen'] = today_date
-                    api_establishment['manual_review'] = "not reviewed"
-
-                    processed_establishment = {}
-                    for key in ORIGINAL_COLUMNS_TO_KEEP:
-                        if key in api_establishment:
-                            processed_establishment[key] = api_establishment[key]
-                        else:
-                            processed_establishment[key] = None
-
-                    newly_added_restaurants.append(processed_establishment)
-                    fhrsids_processed_in_this_batch.add(canonical_api_fhrsid) 
-
-    count_new_restaurants = len(newly_added_restaurants)
-    if count_new_restaurants > 0:
-        summary_msg = f"Processed API response. Identified {count_new_restaurants} unique new restaurant records to be added."
+    count = len(new_records)
+    if count > 0:
+        summary_msg = f"Processed API response. Identified {count} unique new restaurant records to be added."
+    elif messages:
+        summary_msg = " ".join(messages)
     else:
-        # Combine previous messages if any
-        if messages:
-            summary_msg = " ".join(messages)
-        else:
-            summary_msg = "Processed API response. No new restaurant records identified (or all were duplicates within the batch or already in BigQuery)."
-
-    return newly_added_restaurants, summary_msg
+        summary_msg = "Processed API response. No new restaurant records identified (or all were duplicates within the batch or already in BigQuery)."
+    return new_records, summary_msg
 
 def parse_bq_path(bq_path: str) -> Tuple[str, str, str]:
-    """
-    Parses a BigQuery path string in the format 'project.dataset.table'.
-    """
-    try:
-        project_id, dataset_id, table_id = bq_path.split('.')
-        return project_id, dataset_id, table_id
-    except ValueError:
+    """Parses 'project.dataset.table' format."""
+    parts = bq_path.split('.')
+    if len(parts) != 3:
         raise ValueError(f"Invalid BigQuery Path: '{bq_path}'. Expected format: 'project.dataset.table'")
+    return parts[0], parts[1], parts[2]
 
 def parse_insight_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Parses the insight columns (structured V2 and legacy V1) to extract standardized metrics.
-    
-    Returns a dict with:
-    - insight_score: int (0-100)
-    - insight_authenticity: int (1-5) (Legacy/Compat for filter)
-    - insight_verdict: str (ACCEPTED, REJECTED, etc)
-    - insight_summary: str
-    - detailed_insights: dict (Full JSON for dynamic UI rendering)
-    """
-    # Default values
-    result = {
-        "insight_score": None,
-        "insight_authenticity": None,
-        "insight_verdict": "PENDING",
-        "insight_summary": None,
-        "insight_vibe": None,
-        "detailed_insights": None
+    """Parses structured V2 or legacy text V1 insight columns."""
+    res = {
+        "insight_score": None, "insight_authenticity": None, "insight_verdict": "PENDING",
+        "insight_summary": None, "insight_vibe": None, "detailed_insights": None
     }
-    
-    # 1. Try V2 (Structured)
     v2_json = row.get('gemini_insights_structured')
     if v2_json:
         try:
-            data = json.loads(v2_json)
-            result["detailed_insights"] = data
-            result["insight_score"] = data.get('match_score')
-            # Compat for filters if 'cultural_authenticity_rating' exists, else try to find it in new schema or leave None
-            result["insight_authenticity"] = data.get('cultural_authenticity_rating') 
-            result["insight_summary"] = data.get('summary_reasoning')
-            result["insight_vibe"] = data.get('atmosphere')
-            
-            # Synthesize Verdict from Score
-            score = data.get('match_score', 0)
-            if score >= 85:
-                result["insight_verdict"] = "ACCEPTED"
-            elif score >= 70:
-                result["insight_verdict"] = "MAYBE"
-            else:
-                result["insight_verdict"] = "REJECTED"
+            d = json.loads(v2_json)
+            res["detailed_insights"] = d
+            res["insight_score"] = d.get('match_score')
+            res["insight_authenticity"] = d.get('cultural_authenticity_rating')
+            res["insight_summary"] = d.get('summary_reasoning')
+            res["insight_vibe"] = d.get('atmosphere')
 
-            # Flattened Columns for Display
-            result["match_score"] = data.get("match_score")
-            
-            # 1. Value & Volume
-            val_vol = data.get("1_value_and_volume", {})
-            result["1_value_and_volume_rating"] = val_vol.get("rating")
-            result["1_value_and_volume_verdict"] = val_vol.get("verdict")
-            
-            # 2. Demographic
-            dem = data.get("2_demographic_community", {})
-            result["2_demographic_community_score"] = dem.get("score")
-            result["2_demographic_community_evidence"] = dem.get("evidence")
-            
-            # 3. Linguistic
-            ling = data.get("3_linguistic_signal", {})
-            result["3_linguistic_signal_score"] = ling.get("score")
-            result["3_linguistic_signal_menu_type"] = ling.get("menu_type")
-            
-            # 4. Geographic
-            geo = data.get("4_geographic_precision", {})
-            result["4_geographic_precision_region_identified"] = geo.get("region_identified")
-            result["4_geographic_precision_specificity_level"] = geo.get("specificity_level")
-            
-            # 5. Culinary
-            cul = data.get("5_culinary_uncompromisingness", {})
-            result["5_culinary_uncompromisingness_score"] = cul.get("score")
-            result["5_culinary_uncompromisingness_pander_check"] = cul.get("pander_check")
-            
-            # 6. Integrity
-            integ = data.get("6_establishment_integrity", {})
-            result["6_establishment_integrity_is_sit_down_restaurant"] = integ.get("is_sit_down_restaurant")
-            result["6_establishment_integrity_type"] = integ.get("type")
-            
-            result["summary_reasoning"] = data.get("summary_reasoning")
-                
-            return result
+            score = d.get('match_score', 0)
+            res["insight_verdict"] = "ACCEPTED" if score >= 85 else ("MAYBE" if score >= 70 else "REJECTED")
+
+            res["match_score"] = d.get("match_score")
+            res["1_value_and_volume_rating"] = d.get("1_value_and_volume", {}).get("rating")
+            res["1_value_and_volume_verdict"] = d.get("1_value_and_volume", {}).get("verdict")
+            res["2_demographic_community_score"] = d.get("2_demographic_community", {}).get("score")
+            res["2_demographic_community_evidence"] = d.get("2_demographic_community", {}).get("evidence")
+            res["3_linguistic_signal_score"] = d.get("3_linguistic_signal", {}).get("score")
+            res["3_linguistic_signal_menu_type"] = d.get("3_linguistic_signal", {}).get("menu_type")
+            res["4_geographic_precision_region_identified"] = d.get("4_geographic_precision", {}).get("region_identified")
+            res["4_geographic_precision_specificity_level"] = d.get("4_geographic_precision", {}).get("specificity_level")
+            res["5_culinary_uncompromisingness_score"] = d.get("5_culinary_uncompromisingness", {}).get("score")
+            res["5_culinary_uncompromisingness_pander_check"] = d.get("5_culinary_uncompromisingness", {}).get("pander_check")
+            res["6_establishment_integrity_is_sit_down_restaurant"] = d.get("6_establishment_integrity", {}).get("is_sit_down_restaurant")
+            res["6_establishment_integrity_type"] = d.get("6_establishment_integrity", {}).get("type")
+            res["summary_reasoning"] = d.get("summary_reasoning")
+            return res
         except (json.JSONDecodeError, TypeError):
-            pass # Fallback to V1
-            
-    # 2. Try V1 (Legacy Text)
+            pass
+
     v1_text = row.get('gemini_insights')
     if isinstance(v1_text, str) and v1_text.strip():
-        result["insight_summary"] = v1_text # Full text as summary
-        upper_text = v1_text.upper()
-        
-        if "FINAL VERDICT: ACCEPTED" in upper_text:
-            result["insight_verdict"] = "ACCEPTED"
-            result["insight_score"] = 90 # Proxy score
-        elif "FINAL VERDICT: PROBABLY REJECTED" in upper_text or "FINAL VERDICT: REJECTED" in upper_text:
-             result["insight_verdict"] = "REJECTED"
-             result["insight_score"] = 20
-        elif "FINAL VERDICT: MAYBE" in upper_text or "UNSURE" in upper_text:
-            result["insight_verdict"] = "MAYBE"
-            result["insight_score"] = 50
-    
-    return result
+        res["insight_summary"] = v1_text
+        up = v1_text.upper()
+        if "FINAL VERDICT: ACCEPTED" in up:
+            res["insight_verdict"], res["insight_score"] = "ACCEPTED", 90
+        elif "FINAL VERDICT: PROBABLY REJECTED" in up or "FINAL VERDICT: REJECTED" in up:
+            res["insight_verdict"], res["insight_score"] = "REJECTED", 20
+        elif "FINAL VERDICT: MAYBE" in up or "UNSURE" in up:
+            res["insight_verdict"], res["insight_score"] = "MAYBE", 50
+    return res
 
 def enhance_dataframe_with_insights(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Enriches the dataframe with parsed insight columns.
-    """
+    """Enriches DataFrame with parsed insight columns."""
     if df.empty:
         return df
-        
-    # Apply parsing row by row
-    parsed_data = df.apply(lambda row: pd.Series(parse_insight_row(row)), axis=1)
-    
-    # Concatenate with original DF
-    # We use join (index based)
-    df_enriched = pd.concat([df, parsed_data], axis=1)
-    return df_enriched
+    parsed = df.apply(lambda row: pd.Series(parse_insight_row(row)), axis=1)
+    return pd.concat([df, parsed], axis=1)

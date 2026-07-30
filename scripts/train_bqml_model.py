@@ -27,7 +27,7 @@ def train_model(
     check_query = f"""
         SELECT fhrsid, maps_rating, gemini_insights_structured
         FROM `{source_table}`
-        WHERE user_rating IS NOT NULL
+        WHERE (in_scope = TRUE OR in_scope IS NULL) AND user_rating IS NOT NULL
     """
     try:
         results = client.query(check_query).result()
@@ -78,7 +78,8 @@ def train_model(
     FROM
       `{source_table}`
     WHERE
-      user_rating IS NOT NULL
+      (in_scope = TRUE OR in_scope IS NULL)
+      AND user_rating IS NOT NULL
     """
     
     logger.info(f"Preparing BQML Training Query for {full_model_name}...")

@@ -1,0 +1,102 @@
+{
+  "eval_set_id": "restaurant_culinary_eval",
+  "name": "FSA Restaurant Culinary & Grounding Evaluation",
+  "description": "Evaluation set benchmarking Google Maps grounding and 6-pillar culinary anthropologist scoring for authentic vs generic vs excluded venues.",
+  "eval_cases": [
+    {
+      "eval_id": "sichuan_community_hub",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [
+              {
+                "text": "Research 'Taste of Sichuan' located at 123 High St, London E1 6AN. Ground with Google Maps and score against the 6 culinary anthropologist pillars."
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "app",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "kerala_regional_depth",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [
+              {
+                "text": "Research 'Rasa N16' located at 56 Stoke Newington Church St, London N16 0NB for authentic South Indian Keralan regional depth."
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "app",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "generic_tourist_italian",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [
+              {
+                "text": "Research 'Bella Italia' located at Leicester Square, London WC2H 7NA. Evaluate if it passes the insider community signal or gets penalized as generic tourist dining."
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "app",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "excluded_bakery_cafe",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [
+              {
+                "text": "Research 'Costa Coffee & Bakery' located at Oxford St, London W1D 1BS. Check if establishment integrity strictly disqualifies it."
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "app",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "excluded_fast_food",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [
+              {
+                "text": "Research 'Crispy Fried Chicken Express' located at Commercial Rd, London E1 1RD. Confirm establishment integrity exclusion."
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "app",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    }
+  ]
+}

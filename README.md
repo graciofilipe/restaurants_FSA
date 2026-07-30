@@ -25,15 +25,12 @@ This project is a Streamlit-based web application designed to fetch, analyze, an
 *   Google Cloud SDK (gcloud) configured with Application Default Credentials (ADC) for BigQuery access.
 *   Firebase configuration in `.streamlit/secrets.toml` (for authentication).
 
-### Installation
-1.  Create a virtual environment:
+### Installation & Environment
+All dependencies and tooling are consolidated into `.venv`:
+1.  Activate or synchronize the virtual environment:
     ```bash
-    python -m venv venv
-    source venv/bin/activate
-    ```
-2.  Install dependencies:
-    ```bash
-    pip install -r requirements.txt
+    source .venv/bin/activate
+    uv sync
     ```
 
 ### Running Locally
@@ -43,14 +40,20 @@ streamlit run app/ui/st_app.py
 ```
 The app will be accessible at `http://localhost:8501`.
 
-### Running Tests
-To execute the test suite:
+### Running Tests & Evaluations
+To execute the test suite and agent evaluations:
 ```bash
-pytest app/
+# Run pytest unit and evaluation tests
+pytest
+
+# Run ADK agents-cli evaluation dataset
+agents-cli eval run --evalset tests/eval/evalsets/restaurant_eval.evalset.json
 ```
 
-## AI Agent Prototype (Maps Grounding)
-A prototype AI Agent capable of answering questions about restaurants using Google Maps Grounding is available in `app/maps_agent/`.
+## AI Agents & Evaluation Flywheel
+* **ADK Restaurant Agent**: Grounded culinary profiler in `app/agent.py` and `app/maps_agent/` utilizing `gemini-3.5-flash` and `GoogleMapsGroundingTool`.
+* **Evaluation Flywheel**: Configured in `tests/eval/eval_config.yaml` with canonical test scenarios in `tests/eval/evalsets/restaurant_eval.evalset.json`.
+* **Observability**: Real-time OpenTelemetry span export to Google Cloud Trace via `app/app_utils/telemetry.py`.
 
 ## Cloud Deployment
 The application is deployed to Google Cloud Run via Cloud Build.

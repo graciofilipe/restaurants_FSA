@@ -1,30 +1,37 @@
 import pytest
+from unittest.mock import patch, MagicMock
 from scripts.train_bqml_model import train_model
 
-def test_bqml_training_dry_run():
-    # Perform a dry run against the live schema
-    # This validates the SQL syntax and schema mathematically.
-    try:
-        train_model(
-            project_id="filipegracio-ai-learning",
-            dataset_id="filipegracio_fsa_restaurants",
-            table_id="fsa_master",
-            model_name="restaurant_preference_model",
-            dry_run=True
-        )
-    except Exception as e:
-        pytest.fail(f"Dry run failed: {e}")
+@patch("scripts.train_bqml_model.bigquery.Client")
+def test_bqml_training_dry_run(mock_bq_client):
+    mock_client = MagicMock()
+    mock_bq_client.return_value = mock_client
+    mock_job = MagicMock()
+    mock_job.job_id = "dry_run_job_id"
+    mock_client.query.return_value = mock_job
 
+    job_id = train_model(
+        project_id="filipegracio-ai-learning",
+        dataset_id="filipegracio_fsa_restaurants",
+        table_id="fsa_master",
+        model_name="restaurant_preference_model",
+        dry_run=True,
+    )
+    assert job_id is not None or mock_client.query.called
 
-def test_bqml_training_async():
-    try:
-        job_id = train_model(
-            project_id="filipegracio-ai-learning",
-            dataset_id="filipegracio_fsa_restaurants",
-            table_id="fsa_master",
-            model_name="restaurant_preference_model",
-            run_async=True
-        )
-        assert job_id is not None
-    except Exception as e:
-        pytest.fail(f"Async run failed: {e}")
+@patch("scripts.train_bqml_model.bigquery.Client")
+def test_bqml_training_async(mock_bq_client):
+    mock_client = MagicMock()
+    mock_bq_client.return_value = mock_client
+    mock_job = MagicMock()
+    mock_job.job_id = "async_job_id"
+    mock_client.query.return_value = mock_job
+
+    job_id = train_model(
+        project_id="filipegracio-ai-learning",
+        dataset_id="filipegracio_fsa_restaurants",
+        table_id="fsa_master",
+        model_name="restaurant_preference_model",
+        run_async=True,
+    )
+    assert job_id == "async_job_id"

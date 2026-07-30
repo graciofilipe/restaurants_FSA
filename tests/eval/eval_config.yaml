@@ -1,0 +1,47 @@
+metrics_to_run:
+  - json_schema_validity
+  - culinary_6_pillar_rubric
+
+custom_metrics:
+  - name: json_schema_validity
+    custom_function: |
+      import json
+      def evaluate(instance):
+          resp = instance.get("response") or {}
+          parts = resp.get("parts", []) if isinstance(resp, dict) else []
+          text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+          if not text:
+              return {'score': 0.0, 'explanation': 'Response text is empty'}
+          try:
+              clean = text.strip()
+              if clean.startswith("```"):
+                  clean = clean.split("```")[1]
+                  if clean.startswith("json"):
+                      clean = clean[4:]
+              data = json.loads(clean.strip())
+              req_keys = ["cuisine_type", "average_rating"]
+              pillar_keys = ["match_score", "1_value_and_volume", "2_demographic_community"]
+              has_req = any(k in data for k in req_keys) or any(k in data for k in pillar_keys)
+              if has_req:
+                  return {'score': 1.0, 'explanation': 'Valid JSON adhering to restaurant schema'}
+              return {'score': 0.5, 'explanation': f'JSON valid but missing expected keys: {list(data.keys())}'}
+          except Exception as e:
+              return {'score': 0.0, 'explanation': f'JSON parsing error: {e}'}
+
+  - name: culinary_6_pillar_rubric
+    prompt_template: |
+      You are an expert evaluator grading restaurant profiling output for the 'Healthy Host & Explorer' culinary lens.
+      
+      Pillars to verify:
+      1. Value & Volume (Quality per £, generous portions)
+      2. Demographic & Community Signal (local cultural enclave vs tourist trap)
+      3. Linguistic Signal (untranslated specials, native language)
+      4. Geographic Precision (hyper-local regional specificity e.g. Sichuan/Kerala)
+      5. Culinary Uncompromisingness (authentic offal/spices, penalizes westernized fusion)
+      6. Establishment Integrity (sit-down restaurant; strict exclusion for cafes, bakeries, fast food)
+
+      User Prompt: {prompt}
+      Agent Response: {response}
+
+      Rate the response quality from 1 to 5 (5 = exemplary adherence to the 6 pillars and raw JSON output).
+      Return JSON: {"score": <1|2|3|4|5>, "explanation": "<reason>"}

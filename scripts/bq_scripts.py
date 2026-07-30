@@ -50,7 +50,7 @@ _SYSTEM_INSTRUCTION_TEXT = (
     "      - Calculate the average of the 6 pillar scores (normalized to 100).\n"
     "      - Penalize heavily (subtract 20-30 points) if ANY of the ''Strict Exclusion'' criteria (Establishment Integrity) are violated.\n"
     "      - Penalize (subtract 10-15 points) for ''Generic dishes''  and lacking geographic specificity.\n"
-    "      - Reward (add 5-10 points) for ''culinary focus'' specificity or ''Uncompromising'' culinary signals.\n"
+    "      - Reward (add 5-10 points) for ''culinary focus'' specificity and ''Uncompromising'' culinary signals.\n"
     "      - The final score must reflect the holistic fit for the ''Healthy and Adventurous Explorer''.\n\n"
     "   ### OUTPUT FORMAT RULES\n"
     "   - CRITICAL: You must strictly output ONLY a valid JSON object.\n"

@@ -1,40 +1,31 @@
-import pandas as pd
-from google.cloud import bigquery, exceptions as google_cloud_exceptions
-from google.cloud.bigquery.client import Client
-from typing import List, Dict, Any, Optional, Tuple
-import re
-import pandas_gbq
-from google.auth.exceptions import DefaultCredentialsError
 import logging
+import re
+from typing import Any, Dict, List, Optional, Tuple
+from google.auth.exceptions import DefaultCredentialsError
+from google.cloud import bigquery, exceptions as google_cloud_exceptions
+import pandas as pd
 from scripts.bq_scripts import (
-    SCRIPT_IDENTIFY_RECENTS, 
-    SCRIPT_GENERATE_INSIGHTS, 
-    SCRIPT_MERGE_INSIGHTS,
+    MODEL_PARAMS_JSON,
     SCRIPT_BULK_UPDATE_MERGE,
-    MODEL_PARAMS_JSON
+    SCRIPT_GENERATE_INSIGHTS,
+    SCRIPT_IDENTIFY_RECENTS,
+    SCRIPT_MERGE_INSIGHTS,
 )
 
-# Configure logging
-# In a library/service module, it's better to use getLogger and let the app configure the handlers
 logger = logging.getLogger(__name__)
 
-# Definition of columns to keep for processing new establishments
 ORIGINAL_COLUMNS_TO_KEEP = [
     'FHRSID', 'BusinessName', 'AddressLine1', 'AddressLine2', 'AddressLine3',
     'PostCode', 'LocalAuthorityName', 'RatingValue', 'NewRatingPending',
     'first_seen', 'manual_review', 'gemini_insights', 'gemini_insights_structured'
 ]
 
-# Custom Exceptions
 class BigQueryExecutionError(Exception):
-    """Custom exception for errors during BigQuery query execution."""
     pass
 
 class DataFrameConversionError(Exception):
-    """Custom exception for errors during DataFrame conversion from BigQuery results."""
     pass
 
-# Module-level constant for FHRSID column name
 FHRSID_COLNAME = "fhrsid"
 
 def execute_gemini_enrichment(
@@ -44,526 +35,310 @@ def execute_gemini_enrichment(
     connection_id: str = 'eu.gemini',
     model_endpoint: str = 'gemini-3.5-flash',
     days_recent: int = 33,
-    review_status_filter: List[str] = None,
-    excluded_locations: List[str] = None,
-    fhrsids: List[str] = None
+    review_status_filter: Optional[List[str]] = None,
+    excluded_locations: Optional[List[str]] = None,
+    fhrsids: Optional[List[str]] = None,
 ) -> bool:
-    """
-    Orchestrates the Gemini enrichment process using BigQuery scripts.
-    If 'fhrsids' is provided, it processes only those IDs.
-    Otherwise, it uses 'days_recent', 'review_status_filter', and 'excluded_locations'.
-    """
+    """Orchestrates the Gemini enrichment process using BigQuery SQL scripts."""
     client = bigquery.Client(project=project_id)
-    
-    # Define intermediate table names
-    recents_table_id = "recents"
-    insights_table_id = "genairesults_temp"
-    
+    recents_table_id, insights_table_id = "recents", "genairesults_temp"
     try:
-        # Step 1: Identify Recents (or specific selection)
-        logger.info("Step 1: Identifying target restaurants...")
-        
-        filter_condition = ""
-        
         if fhrsids:
-            # Explicit selection mode
-            escaped_ids = [str(fid).replace("'", "''") for fid in fhrsids]
-            id_list_str = ", ".join([f"'{fid}'" for fid in escaped_ids])
-            # Use CAST to ensure compatibility if fhrsid is stored as INTEGER in BQ
-            filter_condition = f"CAST(fhrsid AS STRING) IN ({id_list_str})"
-            logger.info(f"Targeting {len(fhrsids)} specific FHRSIDs.")
+            escaped = [str(f).replace("'", "''") for f in fhrsids]
+            filter_condition = f"CAST(fhrsid AS STRING) IN ({', '.join(f'\'{f}\'' for f in escaped)})"
         else:
-            # Default filter mode
-            if review_status_filter:
-                status_list_str = ", ".join([f"'{s}'" for s in review_status_filter])
-            else:
-                status_list_str = "'pending', 'not reviewed'"
-            
-            exclusion_clause = ""
+            status_str = ", ".join(f"'{s}'" for s in (review_status_filter or ['pending', 'not reviewed']))
+            excl_clause = ""
             if excluded_locations:
-                escaped_locs = [loc.replace("'", "''") for loc in excluded_locations]
-                locs_str = ", ".join([f"'{loc}'" for loc in escaped_locs])
-                exclusion_clause = f"AND localauthorityname NOT IN ({locs_str})"
-            
-            filter_condition = f"DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent} AND manual_review IN ({status_list_str}) {exclusion_clause}"
-            logger.info("Targeting recent restaurants based on date and status filters.")
+                escaped_locs = [l.replace("'", "''") for l in excluded_locations]
+                excl_clause = f"AND localauthorityname NOT IN ({', '.join(f'\'{l}\'' for l in escaped_locs)})"
+            filter_condition = f"DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent} AND manual_review IN ({status_str}) {excl_clause}"
 
-        query_recents = SCRIPT_IDENTIFY_RECENTS.format(
-            project_id=project_id,
-            dataset_id=dataset_id,
-            source_table=master_table_id,
-            target_table_recents=recents_table_id,
-            filter_condition=filter_condition
+        q_recents = SCRIPT_IDENTIFY_RECENTS.format(
+            project_id=project_id, dataset_id=dataset_id, source_table=master_table_id,
+            target_table_recents=recents_table_id, filter_condition=filter_condition
         )
-        job1 = client.query(query_recents)
-        job1.result()
-        logger.info("Step 1 Complete.")
+        client.query(q_recents).result()
 
-        # Step 2: Generate Insights
-        logger.info("Step 2: Generating Gemini insights (this may take a while)...")
-        query_insights = SCRIPT_GENERATE_INSIGHTS.format(
-            project_id=project_id,
-            dataset_id=dataset_id,
-            source_table_recents=recents_table_id,
-            target_table_insights=insights_table_id,
-            connection_id=connection_id,
-            model_endpoint=model_endpoint,
-            model_params_json=MODEL_PARAMS_JSON
+        q_insights = SCRIPT_GENERATE_INSIGHTS.format(
+            project_id=project_id, dataset_id=dataset_id, source_table_recents=recents_table_id,
+            target_table_insights=insights_table_id, connection_id=connection_id,
+            model_endpoint=model_endpoint, model_params_json=MODEL_PARAMS_JSON
         )
-        job2 = client.query(query_insights)
-        job2.result()
-        logger.info("Step 2 Complete.")
+        client.query(q_insights).result()
 
-        # Step 3: Merge Insights
-        logger.info("Step 3: Merging insights back to master table...")
-        query_merge = SCRIPT_MERGE_INSIGHTS.format(
-            project_id=project_id,
-            dataset_id=dataset_id,
-            source_table_insights=insights_table_id,
+        q_merge = SCRIPT_MERGE_INSIGHTS.format(
+            project_id=project_id, dataset_id=dataset_id, source_table_insights=insights_table_id,
             target_table_master=master_table_id
         )
-        job3 = client.query(query_merge)
-        job3.result()
-        logger.info(f"Step 3 Complete. Rows merged: {job3.num_dml_affected_rows}")
-        
+        job = client.query(q_merge)
+        job.result()
         return True
-
     except Exception as e:
-        logger.error(f"Error during Gemini enrichment process: {e}")
+        logger.error(f"Error during Gemini enrichment: {e}")
         return False
 
 def load_all_data_from_bq(project_id: str, dataset_id: str, table_id: str) -> List[Dict[str, Any]]:
-    """
-    Loads all data from a specified BigQuery table.
-    """
-    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
-    query = f"SELECT * FROM `{table_ref_str}`"
-    logger.info(f"Executing BigQuery query: {query}")
-
+    """Loads all data from a specified BigQuery table."""
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
     try:
         client = bigquery.Client(project=project_id)
-        query_job = client.query(query)
-        results = query_job.result()
+        results = client.query(f"SELECT * FROM `{table_ref}`").result()
         return [dict(row) for row in results]
-    except DefaultCredentialsError as e:
-        logger.error(f"Error loading data from BigQuery table {table_ref_str}: {e}")
-        return []
     except Exception as e:
-        logger.error(f"An unexpected error occurred while loading data from BigQuery table {table_ref_str}: {e}")
+        logger.error(f"Error loading from {table_ref}: {e}")
         return []
 
 def load_filtered_data_from_bq(
     project_id: str,
     dataset_id: str,
     table_id: str,
-    days_filter: int = None,
-    review_status_filter: List[str] = None,
-    excluded_locations: List[str] = None,
-    postcode_areas: List[str] = None,
-    gemini_insights_status: str = None,
+    days_filter: Optional[int] = None,
+    review_status_filter: Optional[List[str]] = None,
+    excluded_locations: Optional[List[str]] = None,
+    postcode_areas: Optional[List[str]] = None,
+    gemini_insights_status: Optional[str] = None,
     first_seen_start_date: Optional[str] = None,
-    local_authority_filter: List[str] = None
+    local_authority_filter: Optional[List[str]] = None,
+    in_scope_filter: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Loads data from BigQuery with optional filters.
-    """
-    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
-    
-    query = f"SELECT * FROM `{table_ref_str}` WHERE 1=1"
-    
+    """Loads filtered restaurant data from BigQuery."""
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+    query = f"SELECT * FROM `{table_ref}` WHERE 1=1"
+
     if days_filter is not None:
         query += f" AND DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_filter}"
-
     if first_seen_start_date:
         query += f" AND first_seen >= '{first_seen_start_date}'"
-    
     if review_status_filter:
-        statuses_str = ", ".join([f"'{s}'" for s in review_status_filter])
-        query += f" AND manual_review IN ({statuses_str})"
-
+        query += f" AND manual_review IN ({', '.join(f'\'{s}\'' for s in review_status_filter)})"
+    if in_scope_filter:
+        scope_clauses = []
+        if 'in_scope' in in_scope_filter:
+            scope_clauses.append("in_scope = TRUE")
+        if 'out_of_scope' in in_scope_filter:
+            scope_clauses.append("in_scope = FALSE")
+        if 'unprocessed' in in_scope_filter:
+            scope_clauses.append("in_scope IS NULL")
+        if scope_clauses:
+            query += f" AND ({' OR '.join(scope_clauses)})"
     if local_authority_filter:
-        escaped_auths = [auth.replace("'", "''") for auth in local_authority_filter]
-        auths_str = ", ".join([f"'{auth}'" for auth in escaped_auths])
-        query += f" AND localauthorityname IN ({auths_str})"
-    
+        escaped = [a.replace("'", "''") for a in local_authority_filter]
+        query += f" AND localauthorityname IN ({', '.join(f'\'{a}\'' for a in escaped)})"
     if excluded_locations:
-        # Escape single quotes in location names just in case
-        escaped_locs = [loc.replace("'", "''") for loc in excluded_locations]
-        locs_str = ", ".join([f"'{loc}'" for loc in escaped_locs])
-        query += f" AND localauthorityname NOT IN ({locs_str})"
-    
+        escaped = [l.replace("'", "''") for l in excluded_locations]
+        query += f" AND localauthorityname NOT IN ({', '.join(f'\'{l}\'' for l in escaped)})"
     if postcode_areas:
-        escaped_pcs = [pc.replace("'", "''") for pc in postcode_areas]
-        pcs_str = ", ".join([f"'{pc}'" for pc in escaped_pcs])
-        query += f" AND SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ({pcs_str})"
-
+        escaped = [p.replace("'", "''") for p in postcode_areas]
+        query += f" AND SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ({', '.join(f'\'{p}\'' for p in escaped)})"
     if gemini_insights_status:
-        if gemini_insights_status.lower() == 'populated':
-            query += " AND gemini_insights IS NOT NULL"
-        elif gemini_insights_status.lower() == 'null':
-            query += " AND gemini_insights IS NULL"
-        
-    logger.info(f"Executing Filtered BigQuery query: {query}")
+        query += " AND gemini_insights IS NOT NULL" if gemini_insights_status.lower() == 'populated' else " AND gemini_insights IS NULL"
 
     try:
         client = bigquery.Client(project=project_id)
-        query_job = client.query(query)
-        results = query_job.result()
+        results = client.query(query).result()
         records = []
         for row in results:
-            record = dict(row)
-            if 'first_seen' in record and record['first_seen'] is not None:
-                record['first_seen'] = str(record['first_seen'])
-            records.append(record)
+            rec = dict(row)
+            if rec.get('first_seen') is not None:
+                rec['first_seen'] = str(rec['first_seen'])
+            records.append(rec)
         return records
     except Exception as e:
-        logger.error(f"Error loading filtered data from {table_ref_str}: {e}")
+        logger.error(f"Error loading filtered data from {table_ref}: {e}")
         return []
 
 def sanitize_column_name(column_name: str) -> str:
-    """
-    Sanitizes a column name for BigQuery compatibility.
-    """
-    name = column_name.replace(' ', '_')
-    name = name.replace('.', '')
-    name = name.replace('@', '')
-    name = name.replace('-', '_')
-    
-    name = name.lower()
-    
+    """Sanitizes a column name for BigQuery compatibility."""
+    name = column_name.replace(' ', '_').replace('.', '').replace('@', '').replace('-', '_').lower()
     if name and not name[0].isalnum() and name[0] != '_':
         name = name[1:]
-
-    name = re.sub(r'[^a-z0-9_]+', '_', name)
-    name = name.strip('_')
-    
-    if not name:
-        return "unnamed_column"
-        
-    return name
+    name = re.sub(r'[^a-z0-9_]+', '_', name).strip('_')
+    return name or "unnamed_column"
 
 def bulk_update_reviews(
-    project_id: str,
-    dataset_id: str,
-    target_table_id: str,
-    df_updates: pd.DataFrame
+    project_id: str, dataset_id: str, target_table_id: str, df_updates: pd.DataFrame
 ) -> Tuple[bool, str]:
-    """
-    Performs a bulk update of the 'manual_review' column using a temporary table and MERGE.
-    """
+    """Performs a bulk update of manual_review, in_scope, user_rating, and/or rating_source columns using a temp table and MERGE."""
     if df_updates.empty:
-        logger.warning("DataFrame for bulk update is empty.")
         return False, "DataFrame is empty."
 
     df_updates = df_updates.copy()
     df_updates.columns = [col.lower() for col in df_updates.columns]
+    if 'fhrsid' not in df_updates.columns:
+        return False, "Missing required column 'fhrsid'."
 
-    logger.debug(f"df_updates normalized columns: {df_updates.columns.tolist()}")
-    required_cols = ['fhrsid', 'manual_review']
-    if 'user_rating' in df_updates.columns:
-        required_cols.append('user_rating')
+    possible_update_cols = ['manual_review', 'user_rating', 'in_scope', 'rating_source']
+    updatable_cols = [c for c in possible_update_cols if c in df_updates.columns]
+    if not updatable_cols:
+        return False, f"No updatable columns provided in DataFrame. Expected at least one of {possible_update_cols}"
 
-    if not all(col in df_updates.columns for col in required_cols):
-        logger.error(f"DataFrame missing required columns: {required_cols}. Found: {df_updates.columns.tolist()}")
-        return False, f"Missing columns. Required: {required_cols}, Found: {df_updates.columns.tolist()}"
+    required_cols = ['fhrsid'] + updatable_cols
 
-    timestamp_str = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-    temp_table_id = f"temp_update_reviews_{timestamp_str}"
-    
-    logger.info(f"Initiating bulk update using temp table: {temp_table_id}")
+    temp_table_id = f"temp_update_reviews_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
+    temp_schema = [bigquery.SchemaField("fhrsid", "STRING")]
+    for col in updatable_cols:
+        if col == 'in_scope':
+            temp_schema.append(bigquery.SchemaField("in_scope", "BOOLEAN"))
+        elif col == 'user_rating':
+            temp_schema.append(bigquery.SchemaField("user_rating", "INT64"))
+        elif col in ['manual_review', 'rating_source']:
+            temp_schema.append(bigquery.SchemaField(col, "STRING"))
 
-    temp_schema = [
-        bigquery.SchemaField("fhrsid", "STRING"),
-        bigquery.SchemaField("manual_review", "STRING")
-    ]
-    if 'user_rating' in df_updates.columns:
-        temp_schema.append(bigquery.SchemaField("user_rating", "INT64"))
-
-    success_upload = write_to_bigquery(
-        df=df_updates,
-        project_id=project_id,
-        dataset_id=dataset_id,
-        table_id=temp_table_id,
-        columns_to_select=required_cols,
-        bq_schema=temp_schema
-    )
-
-    if not success_upload:
-        logger.error(f"Failed to upload temporary update table {temp_table_id}. Aborting bulk update.")
+    if not write_to_bigquery(df_updates, project_id, dataset_id, temp_table_id, required_cols, temp_schema):
         return False, "Failed to upload temporary table to BigQuery."
 
     client = bigquery.Client(project=project_id)
-    
     try:
-        update_clauses = ['T.manual_review = S.manual_review']
-        if 'user_rating' in df_updates.columns:
-            update_clauses.append('T.user_rating = S.user_rating')
-        update_set_clause = ', '.join(update_clauses)
-
+        clauses = [f"T.{col} = S.{col}" for col in updatable_cols]
         query = SCRIPT_BULK_UPDATE_MERGE.format(
-            project_id=project_id,
-            dataset_id=dataset_id,
-            target_table=target_table_id,
-            source_table_temp=temp_table_id,
-            update_set_clause=update_set_clause
+            project_id=project_id, dataset_id=dataset_id, target_table=target_table_id,
+            source_table_temp=temp_table_id, update_set_clause=', '.join(clauses)
         )
-        
-        logger.debug(f"Executing MERGE query:\n{query}")
-        query_job = client.query(query)
-        query_job.result()
-        affected_rows = query_job.num_dml_affected_rows
-        logger.info(f"MERGE query completed. Rows affected: {affected_rows}")
-        
-        table_ref_str = f"{project_id}.{dataset_id}.{temp_table_id}"
-        client.delete_table(table_ref_str, not_found_ok=True)
-        logger.info(f"Temporary table {table_ref_str} deleted.")
-        
-        return True, f"{affected_rows} rows updated."
-
+        job = client.query(query)
+        job.result()
+        affected = job.num_dml_affected_rows
+        client.delete_table(f"{project_id}.{dataset_id}.{temp_table_id}", not_found_ok=True)
+        return True, f"{affected} rows updated."
     except Exception as e:
-        logger.error(f"Error during bulk update execution: {e}")
+        logger.error(f"Error during bulk update: {e}")
         return False, f"Error executing update: {str(e)}"
 
-
-def write_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str, columns_to_select: List[str], bq_schema: List[bigquery.SchemaField]) -> bool:
-    """
-    Writes a Pandas DataFrame to a BigQuery table.
-    """
+def write_to_bigquery(
+    df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str,
+    columns_to_select: List[str], bq_schema: List[bigquery.SchemaField]
+) -> bool:
+    """Writes a Pandas DataFrame to a BigQuery table with WRITE_TRUNCATE."""
     for col in columns_to_select:
         if col not in df.columns:
             df[col] = pd.NA
-    df_subset = df[columns_to_select].copy()
+    df_sub = df[columns_to_select].copy()
 
-    if 'Geocode.Latitude' in df_subset.columns:
-        df_subset['Geocode.Latitude'] = pd.to_numeric(df_subset['Geocode.Latitude'], errors='coerce')
-    if 'Geocode.Longitude' in df_subset.columns:
-        df_subset['Geocode.Longitude'] = pd.to_numeric(df_subset['Geocode.Longitude'], errors='coerce')
+    for geo in ['Geocode.Latitude', 'Geocode.Longitude']:
+        if geo in df_sub.columns:
+            df_sub[geo] = pd.to_numeric(df_sub[geo], errors='coerce')
 
-    original_columns = df_subset.columns.tolist()
-    sanitized_columns = [sanitize_column_name(col) for col in original_columns]
-    df_subset.columns = sanitized_columns
-    
-    original_new_rating_pending_col = 'NewRatingPending'
-    sanitized_new_rating_pending_col = sanitize_column_name(original_new_rating_pending_col)
+    df_sub.columns = [sanitize_column_name(c) for c in df_sub.columns]
+    nrp = sanitize_column_name('NewRatingPending')
+    if nrp in df_sub.columns:
+        df_sub[nrp] = df_sub[nrp].astype(str).str.lower().map({'true': True, 'false': False}).fillna(pd.NA)
 
-    if sanitized_new_rating_pending_col in df_subset.columns:
-        logger.debug(f"Unique values in {sanitized_new_rating_pending_col} before conversion: {df_subset[sanitized_new_rating_pending_col].unique()}")
-        mapping = {'true': True, 'false': False}
-        df_subset[sanitized_new_rating_pending_col] = df_subset[sanitized_new_rating_pending_col].astype(str).str.lower().map(mapping).fillna(pd.NA)
-    else:
-        logger.warning(f"Column {sanitized_new_rating_pending_col} not found in df_subset.")
-
-    client = bigquery.Client(project=project_id)
-    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
-    
-    job_config = bigquery.LoadJobConfig(
-        schema=bq_schema,
-        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-        column_name_character_map="V2",
-    )
-
-    # Detailed logging for debugging
-    # logger.debug(f"BigQuery job_config.schema: {job_config.schema}")
-    
-    sanitized_fhrsid_col = 'fhrsid'
-    if sanitized_fhrsid_col in df_subset.columns:
-        if df_subset[sanitized_fhrsid_col].dtype != 'object':
-            df_subset[sanitized_fhrsid_col] = df_subset[sanitized_fhrsid_col].astype(str)
-    else:
-        logger.warning(f"Column '{sanitized_fhrsid_col}' not found in DataFrame during write operation.")
+    if 'fhrsid' in df_sub.columns and df_sub['fhrsid'].dtype != 'object':
+        df_sub['fhrsid'] = df_sub['fhrsid'].astype(str)
 
     try:
-        job = client.load_table_from_dataframe(df_subset, table_ref_str, job_config=job_config)
-        job.result()
-        logger.info(f"Successfully wrote data to BigQuery table {table_ref_str}.")
+        client = bigquery.Client(project=project_id)
+        job_config = bigquery.LoadJobConfig(schema=bq_schema, write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE, column_name_character_map="V2")
+        client.load_table_from_dataframe(df_sub, f"{project_id}.{dataset_id}.{table_id}", job_config=job_config).result()
         return True
     except Exception as e:
-        logger.error(f"Error writing data to BigQuery table {table_ref_str}: {e}")
+        logger.error(f"Error writing to BigQuery: {e}")
         return False
 
-def append_to_bigquery(df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str, bq_schema: List[bigquery.SchemaField]) -> bool:
-    """
-    Appends a Pandas DataFrame to an existing BigQuery table.
-    """
-    client = bigquery.Client(project=project_id)
-    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
-
-    schema_columns = [field.name for field in bq_schema]
-    for col in schema_columns:
+def append_to_bigquery(
+    df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str, bq_schema: List[bigquery.SchemaField]
+) -> bool:
+    """Appends a Pandas DataFrame to an existing BigQuery table."""
+    schema_cols = [f.name for f in bq_schema]
+    for col in schema_cols:
         if col not in df.columns:
             df[col] = pd.NA
-    df_subset = df[schema_columns].copy()
+    df_sub = df[schema_cols].copy()
 
-    geocode_latitude_col = 'geocode_latitude'
-    geocode_longitude_col = 'geocode_longitude'
-    new_rating_pending_col = 'newratingpending'
+    for geo in ['geocode_latitude', 'geocode_longitude']:
+        if geo in df_sub.columns:
+            df_sub[geo] = pd.to_numeric(df_sub[geo], errors='coerce')
 
-    if geocode_latitude_col in df_subset.columns:
-        df_subset[geocode_latitude_col] = pd.to_numeric(df_subset[geocode_latitude_col], errors='coerce')
-    if geocode_longitude_col in df_subset.columns:
-        df_subset[geocode_longitude_col] = pd.to_numeric(df_subset[geocode_longitude_col], errors='coerce')
+    if 'newratingpending' in df_sub.columns:
+        df_sub['newratingpending'] = df_sub['newratingpending'].astype(str).str.lower().map({'true': True, 'false': False}).astype('boolean')
+    if 'first_seen' in df_sub.columns:
+        df_sub['first_seen'] = pd.to_datetime(df_sub['first_seen'], errors='coerce').dt.date
 
-    if new_rating_pending_col in df_subset.columns:
-        mapping = {'true': True, 'false': False, 'TRUE': True, 'FALSE': False}
-        df_subset[new_rating_pending_col] = df_subset[new_rating_pending_col].astype(str).str.lower().map(mapping)
-        df_subset[new_rating_pending_col] = df_subset[new_rating_pending_col].astype('boolean')
-
-    if 'first_seen' in df_subset.columns:
-        # Convert to datetime then date object for BQ compatibility
-        df_subset['first_seen'] = pd.to_datetime(df_subset['first_seen'], errors='coerce').dt.date
-
-    fhrsid_col_name = 'fhrsid'
-    if fhrsid_col_name in df_subset.columns:
-        fhrsid_bq_type = None
-        for field in bq_schema:
-            if field.name == fhrsid_col_name:
-                fhrsid_bq_type = field.field_type
-                break
-
-        if fhrsid_bq_type:
-            if fhrsid_bq_type in ['INTEGER', 'INT64', 'NUMERIC']:
-                df_subset[fhrsid_col_name] = pd.to_numeric(df_subset[fhrsid_col_name], errors='coerce')
-            elif fhrsid_bq_type == 'STRING':
-                df_subset[fhrsid_col_name] = df_subset[fhrsid_col_name].astype(str)
-        else:
-            logger.warning(f"Column '{fhrsid_col_name}' (for FHRSID) not found in bq_schema.")
-    else:
-        logger.warning(f"Column '{fhrsid_col_name}' (for FHRSID) not found in DataFrame for append_to_bigquery.")
-
-    job_config = bigquery.LoadJobConfig(
-        schema=bq_schema,
-        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-        column_name_character_map="V2",
-    )
+    if 'fhrsid' in df_sub.columns:
+        ftype = next((f.field_type for f in bq_schema if f.name == 'fhrsid'), None)
+        if ftype in ['INTEGER', 'INT64', 'NUMERIC']:
+            df_sub['fhrsid'] = pd.to_numeric(df_sub['fhrsid'], errors='coerce')
+        elif ftype == 'STRING':
+            df_sub['fhrsid'] = df_sub['fhrsid'].astype(str)
 
     try:
-        job = client.load_table_from_dataframe(df_subset, table_ref_str, job_config=job_config)
-        job.result()  # Wait for the job to complete
-        logger.info(f"Successfully appended data to BigQuery table {table_ref_str}.")
+        client = bigquery.Client(project=project_id)
+        job_config = bigquery.LoadJobConfig(schema=bq_schema, write_disposition=bigquery.WriteDisposition.WRITE_APPEND, column_name_character_map="V2")
+        client.load_table_from_dataframe(df_sub, f"{project_id}.{dataset_id}.{table_id}", job_config=job_config).result()
         return True
     except Exception as e:
-        logger.error(f"Error appending data to BigQuery table {table_ref_str}: {e}")
+        logger.error(f"Error appending to BigQuery: {e}")
         return False
 
-def update_rows_in_bigquery(project_id: str, dataset_id: str, table_id: str, fhrsid: str, update_data: Dict[str, Any]) -> bool:
-    """
-    Updates specific rows in a BigQuery table based on FHRSID.
-    """
+def update_rows_in_bigquery(
+    project_id: str, dataset_id: str, table_id: str, fhrsid: str, update_data: Dict[str, Any]
+) -> bool:
+    """Updates specific columns for a restaurant by FHRSID."""
     if not update_data:
-        logger.warning("No data provided for update.")
         return False
-
-    client = bigquery.Client(project=project_id)
-    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
 
     set_clauses = []
-    for column, value in update_data.items():
-        if isinstance(value, str):
-            sanitized_value = value.replace("'", "''").replace('\\', '\\\\')
-            set_clauses.append(f"`{column}` = '{sanitized_value}'")
-        elif isinstance(value, bool):
-            set_clauses.append(f"`{column}` = {str(value).upper()}")
-        elif isinstance(value, (int, float)):
-            set_clauses.append(f"`{column}` = {value}")
-        elif value is None:
-            set_clauses.append(f"`{column}` = NULL")
+    for col, val in update_data.items():
+        if isinstance(val, str):
+            sanitized = val.replace("'", "''")
+            set_clauses.append(f"`{col}` = '{sanitized}'")
+        elif isinstance(val, bool):
+            set_clauses.append(f"`{col}` = {str(val).upper()}")
+        elif isinstance(val, (int, float)):
+            set_clauses.append(f"`{col}` = {val}")
+        elif val is None:
+            set_clauses.append(f"`{col}` = NULL")
         else:
-            sanitized_value = str(value).replace("'", "''").replace('\\', '\\\\')
-            logger.warning(f"Column '{column}' has an unhandled type {type(value)}. Converting to string: '{sanitized_value}'")
-            set_clauses.append(f"`{column}` = '{sanitized_value}'")
-
+            sanitized = str(val).replace("'", "''")
+            set_clauses.append(f"`{col}` = '{sanitized}'")
 
     if not set_clauses:
-        logger.warning("No valid SET clauses generated from update_data.")
         return False
 
-    set_statement = ", ".join(set_clauses)
-    escaped_fhrsid_value = fhrsid.replace("'", "''")
-    query = f"UPDATE `{table_ref_str}` SET {set_statement} WHERE {FHRSID_COLNAME} = '{escaped_fhrsid_value}'"
-
-    logger.info(f"Executing BigQuery UPDATE query: {query}")
-
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+    fhrsid_escaped = fhrsid.replace("'", "''")
+    query = f"UPDATE `{table_ref}` SET {', '.join(set_clauses)} WHERE {FHRSID_COLNAME} = '{fhrsid_escaped}'"
     try:
-        query_job = client.query(query)
-        query_job.result()
-        if query_job.errors:
-            logger.error(f"BigQuery UPDATE failed with errors: {query_job.errors}")
-            return False
-        logger.info(f"Successfully updated rows in {table_ref_str} for {FHRSID_COLNAME} = '{escaped_fhrsid_value}'.")
-        return True
-    except DefaultCredentialsError as e:
-        logger.error(f"BigQuery authentication error: {e}. Ensure your environment is configured correctly for ADC.")
-        return False
+        client = bigquery.Client(project=project_id)
+        job = client.query(query)
+        job.result()
+        return not bool(job.errors)
     except Exception as e:
-        logger.error(f"An error occurred during BigQuery UPDATE: {e}")
+        logger.error(f"Error updating row in BigQuery: {e}")
         return False
 
 def execute_merge_query(merge_query: str, project_id: str) -> bool:
-    """
-    Executes a MERGE SQL query in BigQuery.
-    """
-    logger.info(f"Attempting to execute MERGE query in project '{project_id}':\n{merge_query}")
+    """Executes a MERGE SQL query in BigQuery."""
     try:
         client = bigquery.Client(project=project_id)
-        query_job = client.query(merge_query)
-        query_job.result()
-
-        if query_job.errors:
-            logger.error(f"MERGE query failed with errors: {query_job.errors}")
-            return False
-
-        logger.info("MERGE query executed successfully.")
-        return True
-    except DefaultCredentialsError as e:
-        logger.error(f"BigQuery authentication error during MERGE query execution: {e}. Ensure ADC is configured.")
-        return False
-    except google_cloud_exceptions.GoogleCloudError as e:
-        logger.error(f"A Google Cloud error occurred during MERGE query execution: {e}")
-        return False
+        job = client.query(merge_query)
+        job.result()
+        return not bool(job.errors)
     except Exception as e:
-        logger.error(f"An unexpected error occurred during MERGE query execution: {e}")
+        logger.error(f"Error executing MERGE query: {e}")
         return False
 
 def get_distinct_local_authorities(project_id: str, dataset_id: str, table_id: str) -> List[str]:
-    """
-    Fetches a list of distinct LocalAuthorityName values from the master table.
-    """
+    """Fetches distinct LocalAuthorityName values from the master table."""
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
-    query = f"SELECT DISTINCT localauthorityname FROM `{table_ref}` WHERE localauthorityname IS NOT NULL ORDER BY localauthorityname"
-    
-    logger.info(f"Fetching distinct Local Authorities from {table_ref}")
     try:
         client = bigquery.Client(project=project_id)
-        query_job = client.query(query)
-        results = query_job.result()
-        local_authorities = [row.localauthorityname for row in results if row.localauthorityname]
-        logger.info(f"Fetched {len(local_authorities)} distinct Local Authorities from {table_ref}.")
-        return local_authorities
+        results = client.query(f"SELECT DISTINCT localauthorityname FROM `{table_ref}` WHERE localauthorityname IS NOT NULL ORDER BY localauthorityname").result()
+        return [row.localauthorityname for row in results if row.localauthorityname]
     except Exception as e:
-        logger.error(f"Error fetching distinct local authorities: {e}")
+        logger.error(f"Error fetching local authorities: {e}")
         return []
 
 def get_distinct_outcodes(project_id: str, dataset_id: str, table_id: str) -> List[str]:
-    """
-    Fetches a list of distinct Postcode Areas (outcodes) from the master table.
-    """
+    """Fetches distinct Postcode Areas (outcodes) from the master table."""
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
-    query = f"""
-        SELECT DISTINCT SPLIT(postcode, ' ')[SAFE_OFFSET(0)] as outcode 
-        FROM `{table_ref}` 
-        WHERE postcode IS NOT NULL 
-        ORDER BY outcode
-    """
-    
-    logger.info(f"Fetching distinct Outcodes from {table_ref}")
+    query = f"SELECT DISTINCT SPLIT(postcode, ' ')[SAFE_OFFSET(0)] as outcode FROM `{table_ref}` WHERE postcode IS NOT NULL ORDER BY outcode"
     try:
         client = bigquery.Client(project=project_id)
-        query_job = client.query(query)
-        results = query_job.result()
-        outcodes = sorted([str(row.outcode).strip() for row in results if row.outcode and str(row.outcode).strip()])
-        return outcodes
+        results = client.query(query).result()
+        return sorted([str(r.outcode).strip() for r in results if r.outcode and str(r.outcode).strip()])
     except Exception as e:
-        logger.error(f"Error fetching distinct outcodes: {e}")
+        logger.error(f"Error fetching outcodes: {e}")
         return []
 
 MASTER_BQ_SCHEMA = [
@@ -591,101 +366,60 @@ MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('business_status', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('website_url', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('maps_types', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('in_scope', 'BOOLEAN', mode='NULLABLE'),
+    bigquery.SchemaField('rating_source', 'STRING', mode='NULLABLE'),
 ]
 
 def upsert_agent_insight(project_id: str, dataset_id: str, table_id: str, insight_data: Dict[str, Any]) -> bool:
-    """
-    Upserts agent insights into the specified BigQuery table.
-    """
+    """Upserts agent insights into BigQuery."""
     if not insight_data or 'fhrsid' not in insight_data:
-        logger.error("Invalid insight data provided for upsert.")
         return False
-        
-    client = bigquery.Client(project=project_id)
-    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
-    
-    # Construct MERGE query
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
     query = f"""
-    MERGE `{table_ref_str}` T
-    USING (
-        SELECT 
-            @fhrsid as fhrsid,
-            @raw_insight as raw_insight,
-            @cuisine_type as cuisine_type,
-            @review_count as review_count,
-            @average_rating as average_rating,
-            @updated_at as updated_at
-    ) S
+    MERGE `{table_ref}` T
+    USING (SELECT @fhrsid as fhrsid, @raw_insight as raw_insight, @cuisine_type as cuisine_type,
+                  @review_count as review_count, @average_rating as average_rating, @updated_at as updated_at) S
     ON T.fhrsid = S.fhrsid
     WHEN MATCHED THEN
-      UPDATE SET 
-        raw_insight = S.raw_insight,
-        cuisine_type = S.cuisine_type,
-        review_count = S.review_count,
-        average_rating = S.average_rating,
-        updated_at = S.updated_at
+      UPDATE SET raw_insight = S.raw_insight, cuisine_type = S.cuisine_type, review_count = S.review_count,
+                 average_rating = S.average_rating, updated_at = S.updated_at
     WHEN NOT MATCHED THEN
       INSERT (fhrsid, raw_insight, cuisine_type, review_count, average_rating, updated_at)
       VALUES (S.fhrsid, S.raw_insight, S.cuisine_type, S.review_count, S.average_rating, S.updated_at)
     """
-    
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("fhrsid", "STRING", str(insight_data.get("fhrsid"))),
-            bigquery.ScalarQueryParameter("raw_insight", "STRING", insight_data.get("raw_insight")),
-            bigquery.ScalarQueryParameter("cuisine_type", "STRING", insight_data.get("cuisine_type")),
-            bigquery.ScalarQueryParameter("review_count", "INT64", insight_data.get("review_count")),
-            bigquery.ScalarQueryParameter("average_rating", "FLOAT64", insight_data.get("average_rating")),
-            bigquery.ScalarQueryParameter("updated_at", "TIMESTAMP", insight_data.get("updated_at")),
-        ]
-    )
-
+    job_config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("fhrsid", "STRING", str(insight_data.get("fhrsid"))),
+        bigquery.ScalarQueryParameter("raw_insight", "STRING", insight_data.get("raw_insight")),
+        bigquery.ScalarQueryParameter("cuisine_type", "STRING", insight_data.get("cuisine_type")),
+        bigquery.ScalarQueryParameter("review_count", "INT64", insight_data.get("review_count")),
+        bigquery.ScalarQueryParameter("average_rating", "FLOAT64", insight_data.get("average_rating")),
+        bigquery.ScalarQueryParameter("updated_at", "TIMESTAMP", insight_data.get("updated_at")),
+    ])
     try:
-        query_job = client.query(query, job_config=job_config)
-        query_job.result()
-        logger.info(f"Successfully upserted agent insight for FHRSID {insight_data.get('fhrsid')}.")
+        bigquery.Client(project=project_id).query(query, job_config=job_config).result()
         return True
     except Exception as e:
         logger.error(f"Error upserting agent insight: {e}")
         return False
 
 def load_specific_agent_insights(project_id: str, dataset_id: str, fhrsids: List[str]) -> List[Dict[str, Any]]:
-    """
-    Loads agent insights from BigQuery for a specific list of FHRSIDs.
-    """
+    """Loads agent insights from BigQuery for a specific list of FHRSIDs."""
     if not fhrsids:
         return []
-        
-    client = bigquery.Client(project=project_id)
-    table_id = "restaurant_agent_insights"
-    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
-    
-    query = f"""
-        SELECT *
-        FROM `{table_ref_str}`
-        WHERE fhrsid IN UNNEST(@fhrsids)
-    """
-    
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ArrayQueryParameter("fhrsids", "STRING", [str(fid) for fid in fhrsids])
-        ]
-    )
-
+    table_ref = f"{project_id}.{dataset_id}.restaurant_agent_insights"
+    query = f"SELECT * FROM `{table_ref}` WHERE fhrsid IN UNNEST(@fhrsids)"
+    job_config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ArrayQueryParameter("fhrsids", "STRING", [str(fid) for fid in fhrsids])
+    ])
     try:
-        query_job = client.query(query, job_config=job_config)
-        results = query_job.result()
-        
+        results = bigquery.Client(project=project_id).query(query, job_config=job_config).result()
         records = []
         for row in results:
-            # results object allows dictionary-like access
-            record = {key: value for key, value in row.items()}
-            # Convert timestamp to string for display/session compatibility
-            if 'updated_at' in record and hasattr(record['updated_at'], 'isoformat'):
-                record['updated_at'] = record['updated_at'].isoformat()
-            records.append(record)
-            
+            rec = dict(row.items())
+            if hasattr(rec.get('updated_at'), 'isoformat'):
+                rec['updated_at'] = rec['updated_at'].isoformat()
+            records.append(rec)
         return records
     except Exception as e:
-        logger.error(f"Error loading specific agent insights: {e}")
+        logger.error(f"Error loading agent insights: {e}")
         return []

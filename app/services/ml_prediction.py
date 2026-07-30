@@ -24,7 +24,7 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
         find_query = f'''
             SELECT fhrsid, maps_rating, gemini_insights
             FROM `{table_ref}`
-            WHERE user_rating IS NULL AND predicted_user_rating IS NULL AND BusinessName IS NOT NULL
+            WHERE (in_scope = TRUE OR in_scope IS NULL) AND user_rating IS NULL AND predicted_user_rating IS NULL AND BusinessName IS NOT NULL
             LIMIT {limit}
         '''
     try:
