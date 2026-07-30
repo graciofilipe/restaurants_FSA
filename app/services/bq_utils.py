@@ -28,6 +28,10 @@ class DataFrameConversionError(Exception):
 
 FHRSID_COLNAME = "fhrsid"
 
+def _sql_quote(val: Any) -> str:
+    s = str(val).replace("'", "''")
+    return f"'{s}'"
+
 def execute_gemini_enrichment(
     project_id: str,
     dataset_id: str,
@@ -44,13 +48,13 @@ def execute_gemini_enrichment(
     recents_table_id, insights_table_id = "recents", "genairesults_temp"
     try:
         if fhrsids:
-            escaped = [f"'{str(f).replace('\'', '\'\'')}'" for f in fhrsids]
+            escaped = [_sql_quote(f) for f in fhrsids]
             filter_condition = f"CAST(fhrsid AS STRING) IN ({', '.join(escaped)})"
         else:
-            status_str = ", ".join(f"'{s}'" for s in (review_status_filter or ['pending', 'not reviewed']))
+            status_str = ", ".join(_sql_quote(s) for s in (review_status_filter or ['pending', 'not reviewed']))
             excl_clause = ""
             if excluded_locations:
-                escaped_locs = [f"'{l.replace('\'', '\'\'')}'" for l in excluded_locations]
+                escaped_locs = [_sql_quote(l) for l in excluded_locations]
                 excl_clause = f"AND localauthorityname NOT IN ({', '.join(escaped_locs)})"
             filter_condition = f"DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent} AND manual_review IN ({status_str}) {excl_clause}"
 
@@ -111,7 +115,7 @@ def load_filtered_data_from_bq(
     if first_seen_start_date:
         query += f" AND first_seen >= '{first_seen_start_date}'"
     if review_status_filter:
-        escaped_statuses = [f"'{s}'" for s in review_status_filter]
+        escaped_statuses = [_sql_quote(s) for s in review_status_filter]
         query += f" AND manual_review IN ({', '.join(escaped_statuses)})"
     if in_scope_filter:
         scope_clauses = []
@@ -124,17 +128,14 @@ def load_filtered_data_from_bq(
         if scope_clauses:
             query += f" AND ({' OR '.join(scope_clauses)})"
     if local_authority_filter:
-        escaped = [f"'{a.replace('\'', '\'\'')}'" for a in local_authority_filter]
+        escaped = [_sql_quote(a) for a in local_authority_filter]
         query += f" AND localauthorityname IN ({', '.join(escaped)})"
     if excluded_locations:
-        escaped = [f"'{l.replace('\'', '\'\'')}'" for l in excluded_locations]
+        escaped = [_sql_quote(l) for l in excluded_locations]
         query += f" AND localauthorityname NOT IN ({', '.join(escaped)})"
     if postcode_areas:
-        escaped = [f"'{p.replace('\'', '\'\'')}'" for p in postcode_areas]
-        query += f" AND SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ({', '.join(escaped)})"\'{l}\'' for l in escaped)})"
-    if postcode_areas:
-        escaped = [p.replace("'", "''") for p in postcode_areas]
-        query += f" AND SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ({', '.join(f'\'{p}\'' for p in escaped)})"
+        escaped = [_sql_quote(p) for p in postcode_areas]
+        query += f" AND SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ({', '.join(escaped)})"
     if gemini_insights_status:
         query += " AND gemini_insights IS NOT NULL" if gemini_insights_status.lower() == 'populated' else " AND gemini_insights IS NULL"
 
