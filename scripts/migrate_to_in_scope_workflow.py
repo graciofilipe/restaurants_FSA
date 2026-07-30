@@ -42,9 +42,9 @@ def migrate_schema_and_data(bq_path: str = DEFAULT_BQ_PATH, dry_run: bool = Fals
                 LOWER(maps_types) LIKE '%bakery%'
                 OR LOWER(maps_types) LIKE '%cafe%'
                 OR LOWER(maps_types) LIKE '%supermarket%'
-                OR LOWER(maps_types) LIKE '%meal_takeaway%'
                 OR LOWER(JSON_EXTRACT_SCALAR(gemini_insights_structured, '$.6_establishment_integrity_is_sit_down_restaurant')) = 'false'
               )
+              AND LOWER(maps_types) NOT LIKE '%restaurant%'
         """),
         ("Step 2: Mark remaining legacy rejected restaurants as in-scope (in_scope = TRUE, user_rating unassigned)", f"""
             UPDATE `{bq_path}`
@@ -60,6 +60,15 @@ def migrate_schema_and_data(bq_path: str = DEFAULT_BQ_PATH, dry_run: bool = Fals
             UPDATE `{bq_path}`
             SET in_scope = NULL
             WHERE manual_review IN ('pending', 'not reviewed') OR manual_review IS NULL
+        """),
+        ("Step 5: Restore restaurants offering takeaway back to in-scope (in_scope = TRUE)", f"""
+            UPDATE `{bq_path}`
+            SET in_scope = TRUE
+            WHERE in_scope = FALSE
+              AND (
+                LOWER(maps_types) LIKE '%restaurant%'
+                OR LOWER(JSON_EXTRACT_SCALAR(gemini_insights_structured, '$.6_establishment_integrity_is_sit_down_restaurant')) = 'true'
+              )
         """)
     ]
     
