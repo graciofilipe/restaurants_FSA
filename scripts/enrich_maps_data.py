@@ -17,7 +17,12 @@ def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int
     client = bigquery.Client(project=project_id)
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
 
-    fhrsid_filter = f"AND fhrsid IN ({', '.join(f'\'{str(f).replace(chr(39), chr(39)+chr(39))}\'' for f in fhrsids)})" if fhrsids else ""
+    if fhrsids:
+        escaped_ids = [f"'{str(f).replace(chr(39), chr(39)+chr(39))}'" for f in fhrsids]
+        formatted_ids = ", ".join(escaped_ids)
+        fhrsid_filter = f"AND fhrsid IN ({formatted_ids})"
+    else:
+        fhrsid_filter = ""
     null_filter = "" if force_regen else "AND maps_rating IS NULL AND maps_reviews IS NULL"
 
     query = f"SELECT fhrsid, BusinessName, PostCode, AddressLine1 FROM `{table_ref}` WHERE BusinessName IS NOT NULL {null_filter} {fhrsid_filter} LIMIT {limit}"
