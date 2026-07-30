@@ -44,14 +44,14 @@ def execute_gemini_enrichment(
     recents_table_id, insights_table_id = "recents", "genairesults_temp"
     try:
         if fhrsids:
-            escaped = [str(f).replace("'", "''") for f in fhrsids]
-            filter_condition = f"CAST(fhrsid AS STRING) IN ({', '.join(f'\'{f}\'' for f in escaped)})"
+            escaped = [f"'{str(f).replace('\'', '\'\'')}'" for f in fhrsids]
+            filter_condition = f"CAST(fhrsid AS STRING) IN ({', '.join(escaped)})"
         else:
             status_str = ", ".join(f"'{s}'" for s in (review_status_filter or ['pending', 'not reviewed']))
             excl_clause = ""
             if excluded_locations:
-                escaped_locs = [l.replace("'", "''") for l in excluded_locations]
-                excl_clause = f"AND localauthorityname NOT IN ({', '.join(f'\'{l}\'' for l in escaped_locs)})"
+                escaped_locs = [f"'{l.replace('\'', '\'\'')}'" for l in excluded_locations]
+                excl_clause = f"AND localauthorityname NOT IN ({', '.join(escaped_locs)})"
             filter_condition = f"DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent} AND manual_review IN ({status_str}) {excl_clause}"
 
         q_recents = SCRIPT_IDENTIFY_RECENTS.format(
@@ -111,7 +111,8 @@ def load_filtered_data_from_bq(
     if first_seen_start_date:
         query += f" AND first_seen >= '{first_seen_start_date}'"
     if review_status_filter:
-        query += f" AND manual_review IN ({', '.join(f'\'{s}\'' for s in review_status_filter)})"
+        escaped_statuses = [f"'{s}'" for s in review_status_filter]
+        query += f" AND manual_review IN ({', '.join(escaped_statuses)})"
     if in_scope_filter:
         scope_clauses = []
         if 'in_scope' in in_scope_filter:
@@ -123,11 +124,14 @@ def load_filtered_data_from_bq(
         if scope_clauses:
             query += f" AND ({' OR '.join(scope_clauses)})"
     if local_authority_filter:
-        escaped = [a.replace("'", "''") for a in local_authority_filter]
-        query += f" AND localauthorityname IN ({', '.join(f'\'{a}\'' for a in escaped)})"
+        escaped = [f"'{a.replace('\'', '\'\'')}'" for a in local_authority_filter]
+        query += f" AND localauthorityname IN ({', '.join(escaped)})"
     if excluded_locations:
-        escaped = [l.replace("'", "''") for l in excluded_locations]
-        query += f" AND localauthorityname NOT IN ({', '.join(f'\'{l}\'' for l in escaped)})"
+        escaped = [f"'{l.replace('\'', '\'\'')}'" for l in excluded_locations]
+        query += f" AND localauthorityname NOT IN ({', '.join(escaped)})"
+    if postcode_areas:
+        escaped = [f"'{p.replace('\'', '\'\'')}'" for p in postcode_areas]
+        query += f" AND SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ({', '.join(escaped)})"\'{l}\'' for l in escaped)})"
     if postcode_areas:
         escaped = [p.replace("'", "''") for p in postcode_areas]
         query += f" AND SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ({', '.join(f'\'{p}\'' for p in escaped)})"
