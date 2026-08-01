@@ -173,6 +173,12 @@ def bulk_update_reviews(
     if 'fhrsid' not in df_updates.columns:
         return False, "Missing required column 'fhrsid'."
 
+    df_updates['fhrsid'] = df_updates['fhrsid'].astype(str).str.strip()
+    df_updates = df_updates.drop_duplicates(subset=['fhrsid'], keep='last')
+    df_updates = df_updates[df_updates['fhrsid'].notna() & (df_updates['fhrsid'] != '') & (df_updates['fhrsid'] != 'nan')]
+    if df_updates.empty:
+        return False, "No valid fhrsid values provided."
+
     possible_update_cols = ['manual_review', 'user_rating', 'in_scope', 'rating_source']
     updatable_cols = [c for c in possible_update_cols if c in df_updates.columns]
     if not updatable_cols:
