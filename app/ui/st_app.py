@@ -269,28 +269,66 @@ def main():
             
             if selected_rating_rows is not None and not selected_rating_rows.empty:
                 st.divider()
-                st.write(f"### ⭐ Score {len(selected_rating_rows)} Selected Establishment(s)")
+                st.write(f"### ⭐ Score & Review {len(selected_rating_rows)} Selected Establishment(s)")
+                st.caption("Enter or adjust individual user scores (1-10) and rating source for each selected restaurant below, then click Submit.")
                 
-                col_score, col_source, col_btn = st.columns([2, 2, 2])
-                with col_score:
-                    new_rating = st.slider("User Score (1 to 10)", min_value=1, max_value=10, value=7, step=1)
-                with col_source:
-                    rating_source_type = st.selectbox("Rating Source", options=["desk", "visited"], index=0)
-                with col_btn:
-                    st.write("")
-                    st.write("")
-                    if st.button("Submit Score to BigQuery", type="primary"):
-                        col_map = {c.lower(): c for c in selected_rating_rows.columns}
-                        id_col = col_map.get('fhrsid')
-                        if id_col:
-                            ids = selected_rating_rows[id_col].astype(str).tolist()
+                editor_df = selected_rating_rows.copy()
+                if 'user_rating' not in editor_df.columns:
+                    editor_df['user_rating'] = pd.NA
+                else:
+                    editor_df['user_rating'] = pd.to_numeric(editor_df['user_rating'], errors='coerce')
+                    
+                if 'rating_source' not in editor_df.columns:
+                    editor_df['rating_source'] = "desk"
+                else:
+                    editor_df['rating_source'] = editor_df['rating_source'].fillna("desk")
+                
+                display_cols = ['fhrsid', 'businessname', 'user_rating', 'rating_source', 'postcode', 'localauthorityname']
+                available_cols = [c for c in display_cols if c in editor_df.columns]
+                
+                edited_df = st.data_editor(
+                    editor_df[available_cols],
+                    disabled=['fhrsid', 'businessname', 'postcode', 'localauthorityname'],
+                    column_config={
+                        "user_rating": st.column_config.NumberColumn(
+                            "User Score (1-10)",
+                            min_value=1,
+                            max_value=10,
+                            step=1,
+                            required=True,
+                            help="Rate from 1 to 10"
+                        ),
+                        "rating_source": st.column_config.SelectboxColumn(
+                            "Rating Source",
+                            options=["desk", "visited"],
+                            required=True
+                        ),
+                    },
+                    use_container_width=True,
+                    hide_index=True,
+                    key="rating_editor"
+                )
+                
+                st.write("")
+                if st.button("Submit Scores to BigQuery", type="primary"):
+                    col_map = {c.lower(): c for c in edited_df.columns}
+                    id_col = col_map.get('fhrsid')
+                    score_col = col_map.get('user_rating')
+                    source_col = col_map.get('rating_source')
+                    
+                    if id_col and score_col and source_col:
+                        valid_rows = edited_df[edited_df[score_col].notna()].copy()
+                        if valid_rows.empty:
+                            st.warning("Please enter a User Score (1-10) for at least one selected restaurant.")
+                        else:
+                            ids = valid_rows[id_col].astype(str).tolist()
                             df_up = pd.DataFrame({
                                 'fhrsid': ids,
-                                'user_rating': [new_rating] * len(ids),
-                                'rating_source': [rating_source_type] * len(ids),
+                                'user_rating': valid_rows[score_col].astype(int).tolist(),
+                                'rating_source': valid_rows[source_col].astype(str).tolist(),
                                 'in_scope': [True] * len(ids)
                             })
-                            with st.spinner(f"Saving score {new_rating}/10 for {len(ids)} restaurants..."):
+                            with st.spinner(f"Saving scores for {len(ids)} restaurant(s)..."):
                                 success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_up)
                                 if success:
                                     st.success(f"Saved: {msg}")
