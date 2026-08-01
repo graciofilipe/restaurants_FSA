@@ -47,59 +47,6 @@ def get_selected_rows(event, df):
         return df.iloc[event.selection.rows]
     return None
 
-def render_insights_details(row):
-    """
-    Renders the detailed 6-pillar insights for a single selected row.
-    """
-    biz_name = row.get('BusinessName') or row.get('businessname') or "Unknown Restaurant"
-    st.markdown(f"### 🍽️ Profiling: {biz_name}")
-    
-    insights = row.get('detailed_insights')
-    if not insights or not isinstance(insights, dict):
-        st.info("No detailed persona profile available for this restaurant yet.")
-        if row.get('insight_summary') and isinstance(row.get('insight_summary'), str):
-             st.write(f"**Legacy Summary:** {row['insight_summary']}")
-        return
-
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        st.metric("Persona Match Score", f"{insights.get('match_score', 'N/A')}/100")
-        
-    with col2:
-        if insights.get('summary_reasoning'):
-            st.info(f"**Verdict:** {insights['summary_reasoning']}")
-
-    st.markdown("---")
-    st.markdown("#### 🔬 The 6-Pillar Analysis")
-    
-    pillars = [k for k in insights.keys() if k and k[0].isdigit()]
-    pillars.sort()
-    
-    if not pillars:
-        st.warning("No structured pillar data found in insights.")
-        return
-
-    for pillar_key in pillars:
-        pillar_data = insights[pillar_key]
-        pillar_title = pillar_key.replace('_', ' ').title()
-        
-        with st.expander(f"{pillar_title}", expanded=True):
-            if isinstance(pillar_data, dict):
-                score_val = pillar_data.get('score') or pillar_data.get('rating')
-                
-                c_score, c_details = st.columns([1, 4])
-                
-                with c_score:
-                    if score_val:
-                        st.metric("Score", f"{score_val}/5")
-                    
-                with c_details:
-                    for k, v in pillar_data.items():
-                        if k not in ['score', 'rating']:
-                            nice_key = k.replace('_', ' ').capitalize()
-                            st.write(f"**{nice_key}:** {v}")
-            else:
-                st.write(pillar_data)
 
 @st.cache_data
 def get_cached_outcodes(project_id, dataset_id, table_id):
@@ -351,10 +298,6 @@ def main():
                                     st.rerun()
                                 else:
                                     st.error(msg)
-                                    
-                # Single-row detailed 6-pillar view
-                if len(selected_rating_rows) == 1:
-                    render_insights_details(selected_rating_rows.iloc[0])
 
         # -------------------------------------------------------------
         # TAB 3: ML PREDICTIONS & DISCOVERY
