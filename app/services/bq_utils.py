@@ -275,53 +275,7 @@ def append_to_bigquery(
         logger.error(f"Error appending to BigQuery: {e}")
         return False
 
-def update_rows_in_bigquery(
-    project_id: str, dataset_id: str, table_id: str, fhrsid: str, update_data: Dict[str, Any]
-) -> bool:
-    """Updates specific columns for a restaurant by FHRSID."""
-    if not update_data:
-        return False
 
-    set_clauses = []
-    for col, val in update_data.items():
-        if isinstance(val, str):
-            sanitized = val.replace("'", "''")
-            set_clauses.append(f"`{col}` = '{sanitized}'")
-        elif isinstance(val, bool):
-            set_clauses.append(f"`{col}` = {str(val).upper()}")
-        elif isinstance(val, (int, float)):
-            set_clauses.append(f"`{col}` = {val}")
-        elif val is None:
-            set_clauses.append(f"`{col}` = NULL")
-        else:
-            sanitized = str(val).replace("'", "''")
-            set_clauses.append(f"`{col}` = '{sanitized}'")
-
-    if not set_clauses:
-        return False
-
-    table_ref = f"{project_id}.{dataset_id}.{table_id}"
-    fhrsid_escaped = fhrsid.replace("'", "''")
-    query = f"UPDATE `{table_ref}` SET {', '.join(set_clauses)} WHERE {FHRSID_COLNAME} = '{fhrsid_escaped}'"
-    try:
-        client = bigquery.Client(project=project_id)
-        job = client.query(query)
-        job.result()
-        return not bool(job.errors)
-    except Exception as e:
-        logger.error(f"Error updating row in BigQuery: {e}")
-        return False
-
-def execute_merge_query(merge_query: str, project_id: str) -> bool:
-    """Executes a MERGE SQL query in BigQuery."""
-    try:
-        client = bigquery.Client(project=project_id)
-        job = client.query(merge_query)
-        job.result()
-        return not bool(job.errors)
-    except Exception as e:
-        logger.error(f"Error executing MERGE query: {e}")
-        return False
 
 def get_distinct_local_authorities(project_id: str, dataset_id: str, table_id: str) -> List[str]:
     """Fetches distinct LocalAuthorityName values from the master table."""
@@ -374,57 +328,3 @@ MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('in_scope', 'BOOLEAN', mode='NULLABLE'),
     bigquery.SchemaField('rating_source', 'STRING', mode='NULLABLE'),
 ]
-
-def upsert_agent_insight(project_id: str, dataset_id: str, table_id: str, insight_data: Dict[str, Any]) -> bool:
-    """Upserts agent insights into BigQuery."""
-    if not insight_data or 'fhrsid' not in insight_data:
-        return False
-    table_ref = f"{project_id}.{dataset_id}.{table_id}"
-    query = f"""
-    MERGE `{table_ref}` T
-    USING (SELECT @fhrsid as fhrsid, @raw_insight as raw_insight, @cuisine_type as cuisine_type,
-                  @review_count as review_count, @average_rating as average_rating, @updated_at as updated_at) S
-    ON T.fhrsid = S.fhrsid
-    WHEN MATCHED THEN
-      UPDATE SET raw_insight = S.raw_insight, cuisine_type = S.cuisine_type, review_count = S.review_count,
-                 average_rating = S.average_rating, updated_at = S.updated_at
-    WHEN NOT MATCHED THEN
-      INSERT (fhrsid, raw_insight, cuisine_type, review_count, average_rating, updated_at)
-      VALUES (S.fhrsid, S.raw_insight, S.cuisine_type, S.review_count, S.average_rating, S.updated_at)
-    """
-    job_config = bigquery.QueryJobConfig(query_parameters=[
-        bigquery.ScalarQueryParameter("fhrsid", "STRING", str(insight_data.get("fhrsid"))),
-        bigquery.ScalarQueryParameter("raw_insight", "STRING", insight_data.get("raw_insight")),
-        bigquery.ScalarQueryParameter("cuisine_type", "STRING", insight_data.get("cuisine_type")),
-        bigquery.ScalarQueryParameter("review_count", "INT64", insight_data.get("review_count")),
-        bigquery.ScalarQueryParameter("average_rating", "FLOAT64", insight_data.get("average_rating")),
-        bigquery.ScalarQueryParameter("updated_at", "TIMESTAMP", insight_data.get("updated_at")),
-    ])
-    try:
-        bigquery.Client(project=project_id).query(query, job_config=job_config).result()
-        return True
-    except Exception as e:
-        logger.error(f"Error upserting agent insight: {e}")
-        return False
-
-def load_specific_agent_insights(project_id: str, dataset_id: str, fhrsids: List[str]) -> List[Dict[str, Any]]:
-    """Loads agent insights from BigQuery for a specific list of FHRSIDs."""
-    if not fhrsids:
-        return []
-    table_ref = f"{project_id}.{dataset_id}.restaurant_agent_insights"
-    query = f"SELECT * FROM `{table_ref}` WHERE fhrsid IN UNNEST(@fhrsids)"
-    job_config = bigquery.QueryJobConfig(query_parameters=[
-        bigquery.ArrayQueryParameter("fhrsids", "STRING", [str(fid) for fid in fhrsids])
-    ])
-    try:
-        results = bigquery.Client(project=project_id).query(query, job_config=job_config).result()
-        records = []
-        for row in results:
-            rec = dict(row.items())
-            if hasattr(rec.get('updated_at'), 'isoformat'):
-                rec['updated_at'] = rec['updated_at'].isoformat()
-            records.append(rec)
-        return records
-    except Exception as e:
-        logger.error(f"Error loading agent insights: {e}")
-        return []

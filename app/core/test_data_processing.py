@@ -1,39 +1,10 @@
 import unittest # Changed from pytest to unittest for consistency with TestAppendToBigQuery
 from unittest.mock import MagicMock, patch
-from app.core.data_processing import load_master_data, process_and_update_master_data, load_json_from_local_file_path # Added load_json_from_local_file_path
+from app.core.data_processing import load_master_data, process_and_update_master_data
 from app.services.bq_utils import ORIGINAL_COLUMNS_TO_KEEP # Import ORIGINAL_COLUMNS_TO_KEEP
 from datetime import datetime
 import pandas as pd # Added for potential pd.NA usage if needed by tested functions directly
-import json # For load_json_from_local_file_path tests
 import io
-
-# --- Tests for load_json_from_local_file_path ---
-class TestLoadJsonFromLocalFilePath(unittest.TestCase):
-    @patch('builtins.open', new_callable=unittest.mock.mock_open, read_data='{"key": "value"}')
-    @patch('json.load')
-    def test_load_json_success(self, mock_json_load, mock_file_open):
-        mock_json_load.return_value = {"key": "value"}
-        result = load_json_from_local_file_path("dummy_path.json")
-        self.assertEqual(result, {"key": "value"})
-        mock_file_open.assert_called_once_with("dummy_path.json", 'r')
-        mock_json_load.assert_called_once()
-
-    @patch('app.core.data_processing.open', side_effect=FileNotFoundError("File not found"))
-    def test_load_json_file_not_found(self, mock_file_open):
-        result = load_json_from_local_file_path("non_existent.json")
-        self.assertIsNone(result)
-
-    @patch('app.core.data_processing.open', new_callable=unittest.mock.mock_open, read_data='invalid json')
-    @patch('app.core.data_processing.json.load', side_effect=json.JSONDecodeError("Error decoding", "doc", 0))
-    def test_load_json_decode_error(self, mock_json_load, mock_file_open):
-        result = load_json_from_local_file_path("invalid_format.json")
-        self.assertIsNone(result)
-
-    @patch('app.core.data_processing.open', side_effect=Exception("Some other error"))
-    def test_load_json_other_exception(self, mock_file_open):
-        result = load_json_from_local_file_path("other_error.json")
-        self.assertIsNone(result)
-
 
 # --- Tests for load_master_data (modified) ---
 class TestLoadMasterData(unittest.TestCase):

@@ -1,14 +1,10 @@
 import streamlit as st
-import time
 import pandas as pd
 from app.services.bq_utils import (
-    load_all_data_from_bq, 
-    execute_gemini_enrichment, 
     get_distinct_local_authorities,
     get_distinct_outcodes,
     load_filtered_data_from_bq,
     bulk_update_reviews,
-    update_rows_in_bigquery
 )
 from app.services.ml_prediction import generate_predictions
 from app.core.data_processing import enhance_dataframe_with_insights

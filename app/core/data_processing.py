@@ -37,14 +37,6 @@ def fetch_data_for_all_coordinates(valid_coords: List[Tuple[float, float]], max_
             page += 1
     return all_establishments
 
-def load_json_from_local_file_path(uri: str) -> Optional[Dict[str, Any]]:
-    """Loads a JSON file from local disk."""
-    try:
-        with open(uri, 'r') as f:
-            return json.load(f)
-    except Exception:
-        return None
-
 def load_master_data(
     project_id: str, dataset_id: str, table_id: str,
     load_bq_func: Callable[[str, str, str], List[Dict[str, Any]]]

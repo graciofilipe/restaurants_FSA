@@ -29,8 +29,8 @@ This project is a Streamlit-based web application designed to fetch, analyze, an
 *   **`scripts/migrate_*.py`**: Concise BigQuery column migration scripts (`migrate_user_rating.py`, `migrate_predicted_rating.py`, `migrate_maps_columns.py`, `migrate_more_maps_columns.py`).
 
 ### Testing & Quality Flywheel (`tests/` & `app/**/test_*.py`)
-*   **`app/` Test Suite:** 80 unit and module tests covering UI components, core processing, API clients, and BigQuery utilities.
-*   **`tests/` Test Suite:** 17 integration, evaluation, and BQML regression tests (`test_restaurant_eval.py`, `test_server_e2e.py`, `test_bqml_training.py`, etc.).
+*   **`app/` Test Suite:** 58 unit and module tests covering UI components, core processing, API clients, and BigQuery utilities (pruned tests for dead modules and obsolete UI tabs).
+*   **`tests/` Test Suite:** 16 integration, evaluation, and BQML regression tests (`test_restaurant_eval.py`, `test_server_e2e.py`, `test_bqml_training.py`, etc.).
 
 ## Setup and Usage
 
@@ -77,6 +77,7 @@ The application is deployed to Google Cloud Run via Cloud Build.
 > A Cloud Build trigger is configured to automatically build and deploy the application with every commit and push to the repository. **You must commit and push your changes to the remote repository (`main` branch) to see them reflected in the live application.**
 
 ## Recent Updates
-*   **Codebase Simplification & Bloat Elimination:** Streamlined `app/services/bq_utils.py` (-50%), `app/core/data_processing.py` (-40%), and `scripts/enrich_maps_data.py` (-52%). Removed 8 orphaned root scratch files, eliminating ~993 lines of bloat while maintaining 100% test pass rates across all 97 tests.
+*   **Deep Codebase Refactoring & Bloat Elimination:** Executed an aggressive codebase cleanup across backend modules and root files. Removed the orphaned boilerplate directory `reference_auth/`, scratch scripts (`find_file.sh`, `gemini_config.sh`, `example_results.json`), obsolete ADK wrapper `my_app.py`, and dead service module `agent_orchestrator.py`. Pruned unused BigQuery helper functions (`update_rows_in_bigquery`, `execute_merge_query`, `upsert_agent_insight`, `load_specific_agent_insights`) and their associated dead tests, eliminating ~900+ lines of unused code while maintaining 100% test pass rates across all 74 active tests.
+*   **Previous Codebase Simplification:** Streamlined `app/services/bq_utils.py` (-50%), `app/core/data_processing.py` (-40%), and `scripts/enrich_maps_data.py` (-52%).
 *   **Model Standardization:** Updated all agent configurations and test assertions to `gemini-3.5-flash`.
 *   **FastAPI & Test Suite Hardening:** Added graceful Cloud Logging / Auth fallbacks to `fast_api_app.py`, normalized endpoint URL construction in integration tests, and added BQ mock isolation for deterministic CI testing.
