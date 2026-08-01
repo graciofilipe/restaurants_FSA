@@ -353,9 +353,16 @@ def main():
             df_pred_view = df_display.copy()
             if "predicted_user_rating" in df_pred_view.columns:
                 if show_pred_only:
-                    df_pred_view = df_pred_view[df_pred_view["predicted_user_rating"].notna()]
-                df_pred_view = df_pred_view[df_pred_view["predicted_user_rating"] >= min_pred_score]
-                df_pred_view = df_pred_view.sort_values(by="predicted_user_rating", ascending=False)
+                    df_pred_view = df_pred_view[
+                        df_pred_view["predicted_user_rating"].notna() &
+                        (df_pred_view["predicted_user_rating"] >= min_pred_score)
+                    ]
+                else:
+                    df_pred_view = df_pred_view[
+                        df_pred_view["predicted_user_rating"].isna() |
+                        (df_pred_view["predicted_user_rating"] >= min_pred_score)
+                    ]
+                df_pred_view = df_pred_view.sort_values(by="predicted_user_rating", ascending=False, na_position='last')
                 
             selection_event_pred = display_data(df_pred_view, key="pred_grid")
             selected_pred_rows = get_selected_rows(selection_event_pred, df_pred_view)
