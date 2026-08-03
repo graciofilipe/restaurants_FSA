@@ -16,15 +16,19 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
         escaped_target_ids = [fid.replace("'", "''") for fid in target_fhrsids]
         target_ids_str = ", ".join([f"'{fid}'" for fid in escaped_target_ids])
         find_query = f'''
-            SELECT fhrsid, maps_rating, gemini_insights
-            FROM `{table_ref}`
-            WHERE fhrsid IN ({target_ids_str})
+            SELECT m.fhrsid, m.postcode, m.maps_rating, m.gemini_insights, d.postcode AS d_postcode
+            FROM `{table_ref}` AS m
+            LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
+              ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
+            WHERE m.fhrsid IN ({target_ids_str})
         '''
     else:
         find_query = f'''
-            SELECT fhrsid, maps_rating, gemini_insights
-            FROM `{table_ref}`
-            WHERE (in_scope = TRUE OR in_scope IS NULL) AND user_rating IS NULL AND predicted_user_rating IS NULL AND BusinessName IS NOT NULL
+            SELECT m.fhrsid, m.postcode, m.maps_rating, m.gemini_insights, d.postcode AS d_postcode
+            FROM `{table_ref}` AS m
+            LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
+              ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
+            WHERE (m.in_scope = TRUE OR m.in_scope IS NULL) AND m.user_rating IS NULL AND m.predicted_user_rating IS NULL AND m.BusinessName IS NOT NULL
             LIMIT {limit}
         '''
     try:
@@ -40,6 +44,8 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
             gemini_missing_fhrsids = fhrsids.copy()
         else:
             gemini_missing_fhrsids = [str(row.fhrsid) for row in rows if row.gemini_insights is None]
+            
+        postcodes_missing = [str(row.fhrsid) for row in rows if getattr(row, 'd_postcode', None) is None and getattr(row, 'postcode', None) is not None]
     except Exception as e:
         logger.error(f"Error finding target batch: {e}")
         return False, f"Failed to identify target batch: {str(e)}"
@@ -63,6 +69,15 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
         except Exception as e:
             logger.warning(f"Gemini Auto-enrichment encountered an error: {e}")
 
+    # Step 2c: Auto-enrichment Postcode Demographics
+    if postcodes_missing:
+        logger.info(f"Running Postcode Demographics enrichment for {len(postcodes_missing)} restaurants.")
+        try:
+            from scripts.enrich_postcode_demographics import enrich_postcodes
+            enrich_postcodes(project_id=project_id, dataset_id=dataset_id, master_table=table_id)
+        except Exception as e:
+            logger.warning(f"Postcode Demographics Auto-enrichment encountered an error: {e}")
+
     # Step 3: Run Prediction
     escaped_ids = [fid.replace("'", "''") for fid in fhrsids]
     id_list_str = ", ".join([f"'{fid}'" for fid in escaped_ids])
@@ -73,26 +88,31 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
       SELECT fhrsid, predicted_user_rating FROM ML.PREDICT(MODEL `{model_ref}`,
         (
           SELECT
-            fhrsid,
-            postcode,
-            localauthorityname,
-            ratingvalue,
-            user_rating,
-            price_level,
-            maps_rating,
-            maps_reviews,
-            latitude,
-            longitude,
-            business_status,
-            SPLIT(REPLACE(maps_types, ' ', ''), ',') AS maps_types_array,
-            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.1_value_and_volume_rating') AS INT64), 0) AS score_1_value_and_volume_rating,
-            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.2_demographic_community_score') AS INT64), 0) AS score_2_demographic_community_score,
-            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.3_linguistic_signal_score') AS INT64), 0) AS score_3_linguistic_signal_score,
-            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.4_geographic_precision_specificity_level') AS INT64), 0) AS score_4_geographic_precision_specificity_level,
-            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.5_culinary_uncompromisingness_score') AS INT64), 0) AS score_5_culinary_uncompromisingness_score,
-            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.match_score') AS INT64), 0) AS match_score
-          FROM `{table_ref}`
-          WHERE fhrsid IN ({id_list_str})
+            m.fhrsid,
+            m.postcode,
+            m.localauthorityname,
+            m.ratingvalue,
+            m.user_rating,
+            m.price_level,
+            m.maps_rating,
+            m.maps_reviews,
+            m.latitude,
+            m.longitude,
+            m.business_status,
+            SPLIT(REPLACE(m.maps_types, ' ', ''), ',') AS maps_types_array,
+            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.1_value_and_volume_rating') AS INT64), 0) AS score_1_value_and_volume_rating,
+            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.2_demographic_community_score') AS INT64), 0) AS score_2_demographic_community_score,
+            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.3_linguistic_signal_score') AS INT64), 0) AS score_3_linguistic_signal_score,
+            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.4_geographic_precision_specificity_level') AS INT64), 0) AS score_4_geographic_precision_specificity_level,
+            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.5_culinary_uncompromisingness_score') AS INT64), 0) AS score_5_culinary_uncompromisingness_score,
+            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.match_score') AS INT64), 0) AS match_score,
+            d.lsoa,
+            d.msoa,
+            d.imd_rank
+          FROM `{table_ref}` AS m
+          LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
+            ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
+          WHERE m.fhrsid IN ({id_list_str})
         )
       )
     ) S
