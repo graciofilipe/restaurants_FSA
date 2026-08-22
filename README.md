@@ -51,7 +51,7 @@ agents-cli eval run --evalset tests/eval/evalsets/restaurant_eval.evalset.json
 ```
 
 ## AI Agents & Evaluation Flywheel
-* **ADK Restaurant Agent**: Grounded culinary profiler in `app/agent.py` and `app/maps_agent/` utilizing `gemini-3.5-flash` and `GoogleMapsGroundingTool`.
+* **ADK Restaurant Agent**: Grounded culinary profiler in `app/agent.py` and `app/maps_agent/` utilizing `gemini-3.7-flash` and `GoogleMapsGroundingTool`.
 * **Evaluation Flywheel**: Configured in `tests/eval/eval_config.yaml` with canonical test scenarios in `tests/eval/evalsets/restaurant_eval.evalset.json`.
 * **Observability**: Real-time OpenTelemetry span export to Google Cloud Trace via `app/app_utils/telemetry.py`.
 

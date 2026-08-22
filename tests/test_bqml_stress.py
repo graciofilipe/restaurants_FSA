@@ -4,12 +4,7 @@ from scripts.train_bqml_model import train_model
 
 def test_bqml_training_with_bad_json():
     # We will test the query generation by executing a select statement derived from the script
-    client = bigquery.Client(project="filipegracio-ai-learning")
-    
-    # Extract the SELECT part of the query from the train_model logic
-    project_id = "filipegracio-ai-learning"
-    dataset_id = "filipegracio_fsa_restaurants"
-    table_id = "fsa_master"
+    client = bigquery.Client()
     
     query_template = f"""
     SELECT
@@ -27,7 +22,7 @@ def test_bqml_training_with_bad_json():
         assert "Bad int64 value" in str(e)
 
 def test_bqml_training_with_safe_cast():
-    client = bigquery.Client(project="filipegracio-ai-learning")
+    client = bigquery.Client()
     query_template = f"""
     SELECT
       IFNULL(SAFE_CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.1_value_and_volume_rating') AS INT64), 0) AS score_1_value_and_volume_rating

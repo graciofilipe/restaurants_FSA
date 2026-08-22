@@ -37,7 +37,7 @@ def execute_gemini_enrichment(
     dataset_id: str,
     master_table_id: str,
     connection_id: str = 'eu.gemini',
-    model_endpoint: str = 'gemini-3.5-flash',
+    model_endpoint: str = 'gemini-3.7-flash',
     days_recent: int = 33,
     review_status_filter: Optional[List[str]] = None,
     excluded_locations: Optional[List[str]] = None,

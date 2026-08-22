@@ -7,7 +7,7 @@ def test_restaurant_agent_config():
     
     assert isinstance(agent, Agent)
     assert agent.name == "restaurant_maps_agent"
-    assert agent.model == "gemini-3.5-flash"
+    assert agent.model == "gemini-3.7-flash"
     
     # Check tools
     assert agent.tools is not None

@@ -47,7 +47,7 @@ CULINARY_AGENT_INSTRUCTION = (
 root_agent = Agent(
     name="restaurant_explorer_agent",
     model=Gemini(
-        model="gemini-3.5-flash",
+        model="gemini-3.7-flash",
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
     instruction=CULINARY_AGENT_INSTRUCTION,

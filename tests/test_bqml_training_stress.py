@@ -1,11 +1,14 @@
 import pytest
+import google.auth
 from scripts.train_bqml_model import train_model
 
 def test_sql_injection_model_name():
+    _, default_project = google.auth.default()
+    project = default_project or "filipegracio-genai"
     malicious_model_name = "test_model`; SELECT 1; --"
     try:
         train_model(
-            project_id="filipegracio-ai-learning",
+            project_id=project,
             dataset_id="filipegracio_fsa_restaurants",
             table_id="fsa_master",
             model_name=malicious_model_name,
