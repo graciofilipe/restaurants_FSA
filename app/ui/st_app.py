@@ -18,7 +18,7 @@ st.set_page_config(page_title="FSA Restaurant Explorer", layout="wide")
 DEFAULT_BQ_PATH = "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_master"
 
 DISPLAY_COLUMNS = [
-    "fhrsid", "businessname", "priority_score", "distance_km", "in_scope", "rating_source", "user_rating", "predicted_user_rating",
+    "fhrsid", "businessname", "priority_score", "distance_km", "in_scope", "rating_source", "user_rating", "predicted_user_rating", "predicted_at",
     "addressline1", "addressline2", "addressline3", 
     "postcode", "localauthorityname", "first_seen", "manual_review",
     "price_level", "maps_rating", "maps_reviews",
@@ -707,7 +707,7 @@ def main():
                     st.info(f"📊 **Batch Queue:** {num_candidates} restaurants ranked | 💰 **Estimated New Gemini Calls:** {gem_missing} ({num_candidates - gem_missing} cached) | 📍 **Avg Distance:** {avg_dist:.1f} km from {anchor_pc.upper()}")
                     
                     # Preview table of top candidate restaurants
-                    preview_cols = [c for c in ["fhrsid", "businessname", "priority_score", "distance_km", "staleness_score", "maps_rating", "predicted_user_rating", "postcode"] if c in top_candidates.columns]
+                    preview_cols = [c for c in ["fhrsid", "businessname", "priority_score", "distance_km", "staleness_score", "maps_rating", "predicted_user_rating", "predicted_at", "postcode"] if c in top_candidates.columns]
                     st.dataframe(top_candidates[preview_cols], hide_index=True, use_container_width=True)
                     
                     col_map = {c.lower(): c for c in top_candidates.columns}

@@ -118,7 +118,9 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
     ) S
     ON T.fhrsid = S.fhrsid
     WHEN MATCHED THEN
-      UPDATE SET predicted_user_rating = S.predicted_user_rating
+      UPDATE SET 
+        predicted_user_rating = S.predicted_user_rating,
+        predicted_at = CURRENT_TIMESTAMP()
     '''
 
     try:

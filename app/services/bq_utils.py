@@ -147,6 +147,8 @@ def load_filtered_data_from_bq(
             rec = dict(row)
             if rec.get('first_seen') is not None:
                 rec['first_seen'] = str(rec['first_seen'])
+            if rec.get('predicted_at') is not None:
+                rec['predicted_at'] = str(rec['predicted_at'])
             records.append(rec)
         return records
     except Exception as e:
@@ -320,6 +322,7 @@ MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('manual_review', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('user_rating', 'INT64', mode='NULLABLE'),
     bigquery.SchemaField('predicted_user_rating', 'FLOAT64', mode='NULLABLE'),
+    bigquery.SchemaField('predicted_at', 'TIMESTAMP', mode='NULLABLE'),
     bigquery.SchemaField('gemini_insights', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('gemini_insights_structured', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('price_level', 'INT64', mode='NULLABLE'),

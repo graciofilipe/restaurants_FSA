@@ -281,17 +281,17 @@ def calculate_restaurant_priority(
         if pd.isna(pred_val) or pd.isna(gemini_val) or pred_val is None or gemini_val is None:
             s_stale = 100.0
         else:
-            fs = row.get('first_seen')
+            score_ts = row.get('predicted_at') if pd.notna(row.get('predicted_at')) else row.get('first_seen')
             days_ago = 45 # Default medium staleness
-            if fs and pd.notna(fs):
+            if score_ts and pd.notna(score_ts):
                 try:
-                    if isinstance(fs, str):
-                        fs_date = datetime.datetime.strptime(fs[:10], "%Y-%m-%d").date()
-                    elif isinstance(fs, (datetime.date, datetime.datetime)):
-                        fs_date = fs.date() if isinstance(fs, datetime.datetime) else fs
+                    if isinstance(score_ts, str):
+                        score_date = datetime.datetime.strptime(score_ts[:10], "%Y-%m-%d").date()
+                    elif isinstance(score_ts, (datetime.date, datetime.datetime, pd.Timestamp)):
+                        score_date = score_ts.date() if hasattr(score_ts, 'date') else score_ts
                     else:
-                        fs_date = curr_date
-                    days_ago = max(0, (curr_date - fs_date).days)
+                        score_date = curr_date
+                    days_ago = max(0, (curr_date - score_date).days)
                 except Exception:
                     days_ago = 45
 

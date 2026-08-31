@@ -73,11 +73,12 @@ def test_calculate_restaurant_priority_stale_rescore():
         "longitude": -0.1294,
         "in_scope": True,
         "predicted_user_rating": 6.5,
+        "predicted_at": "2026-06-20 12:00:00 UTC",
         "gemini_insights": "Old insight",
         "gemini_insights_structured": '{"match_score": 75}',
         "maps_rating": 4.2,
         "maps_reviews": 80,
-        "first_seen": "2026-06-20"
+        "first_seen": "2026-01-01"
     }])
 
     res = calculate_restaurant_priority(df, today_date=today)
@@ -85,6 +86,30 @@ def test_calculate_restaurant_priority_stale_rescore():
     # Stale score for >=60 days should be 80.0
     assert row["staleness_score"] == 80.0
     assert row["priority_score"] > 70.0
+
+def test_calculate_restaurant_priority_recent_prediction():
+    today = datetime.date(2026, 8, 31)
+    # Restaurant scored 2 days ago (predicted_at 2026-08-29)
+    df = pd.DataFrame([{
+        "fhrsid": "205",
+        "businessname": "Fresh Diner",
+        "postcode": "SW16 2BB",
+        "latitude": 51.4277,
+        "longitude": -0.1294,
+        "in_scope": True,
+        "predicted_user_rating": 8.5,
+        "predicted_at": "2026-08-29 12:00:00 UTC",
+        "gemini_insights": "Fresh insight",
+        "gemini_insights_structured": '{"match_score": 90}',
+        "maps_rating": 4.5,
+        "maps_reviews": 100,
+        "first_seen": "2026-01-01"
+    }])
+
+    res = calculate_restaurant_priority(df, today_date=today)
+    row = res.iloc[0]
+    # Stale score for <14 days should be 15.0
+    assert row["staleness_score"] == 15.0
 
 def test_calculate_restaurant_priority_out_of_scope_penalty():
     today = datetime.date(2026, 8, 31)
