@@ -133,6 +133,28 @@ def test_calculate_restaurant_priority_out_of_scope_penalty():
     # Out of scope gets 0 scope score
     assert row["priority_score"] < 80.0
 
+def test_calculate_restaurant_priority_user_rating_penalty():
+    today = datetime.date(2026, 8, 31)
+    df = pd.DataFrame([{
+        "fhrsid": "401",
+        "businessname": "Visited Steakhouse",
+        "postcode": "SW16 1AA",
+        "latitude": 51.4277,
+        "longitude": -0.1294,
+        "in_scope": True,
+        "user_rating": 9.0,
+        "predicted_user_rating": None,
+        "gemini_insights": None,
+        "gemini_insights_structured": None,
+        "maps_rating": 4.8,
+        "maps_reviews": 150,
+        "first_seen": "2026-08-01"
+    }])
+
+    res = calculate_restaurant_priority(df, today_date=today)
+    row = res.iloc[0]
+    assert row["priority_score"] <= 10.0
+
 def test_calculate_restaurant_priority_empty_df():
     res = calculate_restaurant_priority(pd.DataFrame())
     assert res.empty

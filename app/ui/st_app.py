@@ -682,9 +682,13 @@ def main():
                 if target_mode == "Unscored Candidates Only":
                     if "predicted_user_rating" in df_candidates.columns:
                         df_candidates = df_candidates[df_candidates["predicted_user_rating"].isna()]
+                    if "user_rating" in df_candidates.columns:
+                        df_candidates = df_candidates[df_candidates["user_rating"].isna()]
                 elif target_mode == "Stale Rescores Only":
                     if "predicted_user_rating" in df_candidates.columns:
                         df_candidates = df_candidates[df_candidates["predicted_user_rating"].notna()]
+                    if "user_rating" in df_candidates.columns:
+                        df_candidates = df_candidates[df_candidates["user_rating"].isna()]
 
                 df_ranked = df_candidates.sort_values(by="priority_score", ascending=False)
 

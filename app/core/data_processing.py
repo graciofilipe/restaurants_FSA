@@ -337,6 +337,11 @@ def calculate_restaurant_priority(
             p = 0.0
         else:
             p = round((w_prox * s_prox) + (w_stale * s_stale) + (w_prior * s_prior) + (w_scope * s_scope), 1)
+            # If restaurant already has a human user_rating, lower priority for ML scoring
+            user_rt = row.get('user_rating')
+            if pd.notna(user_rt) and str(user_rt).strip() != "":
+                p = round(p * 0.1, 1)
+
         priority_scores.append(p)
 
     res_df['distance_km'] = distances
