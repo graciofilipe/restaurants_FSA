@@ -42,9 +42,24 @@ def display_data(df, key=None):
     )
     return event
 
+def reset_selection_state(key: str = "master_grid"):
+    """Clears the master grid selection state from session state to avoid stale index issues."""
+    if key in st.session_state:
+        st.session_state.pop(key, None)
+
 def get_selected_rows(event, df):
-    if event and event.selection and event.selection.rows:
-        return df.iloc[event.selection.rows]
+    """
+    Safely retrieves the selected rows from the Streamlit dataframe selection event.
+    Guards against out-of-bounds positional indices and non-DataFrame inputs.
+    """
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return None
+    if event and hasattr(event, "selection") and event.selection:
+        rows = getattr(event.selection, "rows", None)
+        if rows:
+            valid_indices = [idx for idx in rows if isinstance(idx, int) and 0 <= idx < len(df)]
+            if valid_indices:
+                return df.iloc[valid_indices]
     return None
 
 
@@ -206,9 +221,11 @@ def load_data_into_state(
 
                 st.session_state.df_enriched = df_enriched
                 st.session_state.data_loaded = True
+                reset_selection_state()
             else:
                 st.session_state.df_enriched = pd.DataFrame()
                 st.session_state.data_loaded = True
+                reset_selection_state()
                 st.warning("No data found matching criteria.")
                 
         except Exception as e:

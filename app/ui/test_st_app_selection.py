@@ -1,6 +1,6 @@
 import pandas as pd
 from unittest.mock import MagicMock, patch
-from app.ui.st_app import get_selected_rows, display_data
+from app.ui.st_app import get_selected_rows, display_data, reset_selection_state
 
 class MockSelection:
     def __init__(self, rows):
@@ -52,6 +52,46 @@ def test_get_selected_rows_none_event():
     
     assert selected is None
 
+def test_get_selected_rows_out_of_bounds_indices():
+    """Verifies that out-of-bounds indices (e.g. after table shrinks) do not raise IndexError."""
+    df = pd.DataFrame([{"id": 1, "name": "A"}, {"id": 2, "name": "B"}])
+    # Event with stale row indices 5 and 10 on a 2-row table
+    event = MockEvent(selection_rows=[5, 10])
+    
+    selected = get_selected_rows(event, df)
+    
+    assert selected is None
+
+def test_get_selected_rows_mixed_valid_and_out_of_bounds():
+    """Verifies that mixed valid and out-of-bounds indices filter down to only valid rows."""
+    df = pd.DataFrame([{"id": 1, "name": "A"}, {"id": 2, "name": "B"}])
+    event = MockEvent(selection_rows=[1, 99])
+    
+    selected = get_selected_rows(event, df)
+    
+    assert selected is not None
+    assert len(selected) == 1
+    assert selected.iloc[0]["name"] == "B"
+
+def test_get_selected_rows_empty_dataframe():
+    df = pd.DataFrame()
+    event = MockEvent(selection_rows=[0, 1])
+    
+    selected = get_selected_rows(event, df)
+    
+    assert selected is None
+
+def test_get_selected_rows_none_dataframe():
+    event = MockEvent(selection_rows=[0])
+    selected = get_selected_rows(event, None)
+    assert selected is None
+
+@patch('app.ui.st_app.st')
+def test_reset_selection_state(mock_st):
+    mock_st.session_state = {"master_grid": {"selection": {"rows": [0]}}, "other_key": 123}
+    reset_selection_state("master_grid")
+    assert "master_grid" not in mock_st.session_state
+    assert mock_st.session_state["other_key"] == 123
 
 @patch('app.ui.st_app.st')
 def test_display_data_enables_selection(mock_st):
