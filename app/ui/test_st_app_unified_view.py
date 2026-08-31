@@ -144,3 +144,17 @@ def test_sorting_options(sample_restaurants_df):
     sorted_date = filter_and_sort_restaurants(sample_restaurants_df, sort_by="First Seen (Newest)")
     assert sorted_date.iloc[0]["fhrsid"] == "104" # 2026-04-01
 
+def test_sorting_priority_and_distance():
+    df = pd.DataFrame([
+        {"fhrsid": "1", "priority_score": 45.0, "distance_km": 10.2},
+        {"fhrsid": "2", "priority_score": 92.5, "distance_km": 1.1},
+        {"fhrsid": "3", "priority_score": 78.0, "distance_km": 4.5},
+    ])
+
+    sorted_p = filter_and_sort_restaurants(df, sort_by="Priority Score (High to Low)")
+    assert list(sorted_p["fhrsid"]) == ["2", "3", "1"]
+
+    sorted_d = filter_and_sort_restaurants(df, sort_by="Distance (Nearest First)")
+    assert list(sorted_d["fhrsid"]) == ["2", "3", "1"]
+
+

@@ -166,3 +166,183 @@ def enhance_dataframe_with_insights(df: pd.DataFrame) -> pd.DataFrame:
         return df
     parsed = df.apply(lambda row: pd.Series(parse_insight_row(row)), axis=1)
     return pd.concat([df, parsed], axis=1)
+
+import math
+
+LONDON_OUTCODE_CENTROIDS: Dict[str, Tuple[float, float]] = {
+    "SW16": (51.4277, -0.1294),
+    "SW2": (51.4500, -0.1200),
+    "SW4": (51.4600, -0.1400),
+    "SW8": (51.4750, -0.1300),
+    "SW9": (51.4650, -0.1150),
+    "SW11": (51.4650, -0.1650),
+    "SW12": (51.4450, -0.1500),
+    "SW17": (51.4300, -0.1650),
+    "SW19": (51.4200, -0.2050),
+    "SE1": (51.4990, -0.0900),
+    "SE5": (51.4700, -0.0900),
+    "SE11": (51.4880, -0.1100),
+    "SE15": (51.4700, -0.0650),
+    "SE24": (51.4550, -0.1000),
+    "SE27": (51.4350, -0.1050),
+    "EC1": (51.5230, -0.0980),
+    "EC2": (51.5180, -0.0850),
+    "WC1": (51.5220, -0.1220),
+    "WC2": (51.5120, -0.1240),
+    "W1": (51.5150, -0.1420),
+    "W2": (51.5160, -0.1780),
+    "N1": (51.5380, -0.1020),
+    "E1": (51.5150, -0.0600),
+    "E2": (51.5300, -0.0600),
+    "E8": (51.5450, -0.0750),
+}
+
+def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculates the great-circle distance between two points in kilometers."""
+    try:
+        lat1, lon1, lat2, lon2 = float(lat1), float(lon1), float(lat2), float(lon2)
+    except (ValueError, TypeError):
+        return 5.0
+    r = 6371.0 # Earth's radius in km
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    a = math.sin(delta_phi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0) ** 2
+    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+    return round(r * c, 2)
+
+def get_outcode_coordinates(outcode: str) -> Tuple[float, float]:
+    """Retrieves centroid coordinates (lat, lon) for a UK outcode."""
+    if not outcode:
+        return LONDON_OUTCODE_CENTROIDS.get("SW16", (51.4277, -0.1294))
+    clean_outcode = outcode.strip().upper()
+    if clean_outcode in LONDON_OUTCODE_CENTROIDS:
+        return LONDON_OUTCODE_CENTROIDS[clean_outcode]
+    for k, v in LONDON_OUTCODE_CENTROIDS.items():
+        if clean_outcode.startswith(k):
+            return v
+    return LONDON_OUTCODE_CENTROIDS.get("SW16", (51.4277, -0.1294))
+
+def calculate_restaurant_priority(
+    df: pd.DataFrame,
+    anchor_lat: float = 51.4277,
+    anchor_lon: float = -0.1294,
+    weights: Optional[Dict[str, float]] = None,
+    today_date: Optional[datetime.date] = None
+) -> pd.DataFrame:
+    """
+    Computes distance, proximity score, staleness score, Google Maps prior, and composite priority score.
+    Returns the DataFrame augmented with 'distance_km' and 'priority_score'.
+    """
+    if df is None or df.empty:
+        return df
+
+    weights = weights or {"prox": 0.35, "stale": 0.35, "prior": 0.20, "scope": 0.10}
+    w_prox = weights.get("prox", 0.35)
+    w_stale = weights.get("stale", 0.35)
+    w_prior = weights.get("prior", 0.20)
+    w_scope = weights.get("scope", 0.10)
+    total_w = w_prox + w_stale + w_prior + w_scope
+    if total_w > 0:
+        w_prox, w_stale, w_prior, w_scope = w_prox / total_w, w_stale / total_w, w_prior / total_w, w_scope / total_w
+
+    curr_date = today_date or datetime.date.today()
+    res_df = df.copy()
+
+    distances = []
+    prox_scores = []
+    stale_scores = []
+    prior_scores = []
+    scope_scores = []
+    priority_scores = []
+
+    for _, row in res_df.iterrows():
+        # 1. Proximity & Distance
+        lat = row.get('latitude')
+        lon = row.get('longitude')
+        if pd.notna(lat) and pd.notna(lon):
+            try:
+                dist = haversine_distance_km(lat, lon, anchor_lat, anchor_lon)
+            except Exception:
+                dist = 5.0
+        else:
+            pc = row.get('postcode') or row.get('PostCode') or ""
+            outcode = str(pc).strip().split(' ')[0] if pc else "SW16"
+            c_lat, c_lon = get_outcode_coordinates(outcode)
+            dist = haversine_distance_km(c_lat, c_lon, anchor_lat, anchor_lon)
+        distances.append(dist)
+        s_prox = round(100.0 * math.exp(-0.20 * dist), 1)
+        prox_scores.append(s_prox)
+
+        # 2. Staleness & Re-scoring (100 for unscored, 80 for >=60d, 60 for >=30d, 40 for >=14d, 15 for recent)
+        pred_val = row.get('predicted_user_rating')
+        gemini_val = row.get('gemini_insights') or row.get('gemini_insights_structured')
+        if pd.isna(pred_val) or pd.isna(gemini_val) or pred_val is None or gemini_val is None:
+            s_stale = 100.0
+        else:
+            fs = row.get('first_seen')
+            days_ago = 45 # Default medium staleness
+            if fs and pd.notna(fs):
+                try:
+                    if isinstance(fs, str):
+                        fs_date = datetime.datetime.strptime(fs[:10], "%Y-%m-%d").date()
+                    elif isinstance(fs, (datetime.date, datetime.datetime)):
+                        fs_date = fs.date() if isinstance(fs, datetime.datetime) else fs
+                    else:
+                        fs_date = curr_date
+                    days_ago = max(0, (curr_date - fs_date).days)
+                except Exception:
+                    days_ago = 45
+
+            if days_ago >= 60:
+                s_stale = 80.0
+            elif days_ago >= 30:
+                s_stale = 60.0
+            elif days_ago >= 14:
+                s_stale = 40.0
+            else:
+                s_stale = 15.0
+        stale_scores.append(s_stale)
+
+        # 3. Google Maps Quality Prior (FSA excluded)
+        mr = row.get('maps_rating')
+        if pd.notna(mr):
+            try:
+                base_mr = max(0.0, (float(mr) - 3.0) * 50.0)
+                mrev = row.get('maps_reviews')
+                rev_num = float(mrev) if pd.notna(mrev) else 0.0
+                boost = min(15.0, math.log10(max(1.0, rev_num + 1.0)) * 5.0)
+                s_prior = round(min(100.0, base_mr + boost), 1)
+            except Exception:
+                s_prior = 50.0
+        else:
+            s_prior = 50.0
+        prior_scores.append(s_prior)
+
+        # 4. Scope Confidence
+        in_sc = row.get('in_scope')
+        is_out_of_scope = False
+        if in_sc is True or in_sc == 1 or str(in_sc).lower() in ("true", "1"):
+            s_scope = 100.0
+        elif in_sc is False or in_sc == 0 or str(in_sc).lower() in ("false", "0"):
+            s_scope = 0.0
+            is_out_of_scope = True
+        else:
+            s_scope = 50.0
+        scope_scores.append(s_scope)
+
+        # Composite Priority Score
+        if is_out_of_scope:
+            p = 0.0
+        else:
+            p = round((w_prox * s_prox) + (w_stale * s_stale) + (w_prior * s_prior) + (w_scope * s_scope), 1)
+        priority_scores.append(p)
+
+    res_df['distance_km'] = distances
+    res_df['priority_score'] = priority_scores
+    res_df['proximity_score'] = prox_scores
+    res_df['staleness_score'] = stale_scores
+    res_df['maps_prior_score'] = prior_scores
+
+    return res_df

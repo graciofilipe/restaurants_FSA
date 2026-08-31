@@ -7,14 +7,18 @@ from app.services.bq_utils import (
     bulk_update_reviews,
 )
 from app.services.ml_prediction import generate_predictions
-from app.core.data_processing import enhance_dataframe_with_insights
+from app.core.data_processing import (
+    enhance_dataframe_with_insights,
+    calculate_restaurant_priority,
+    get_outcode_coordinates,
+)
 
 st.set_page_config(page_title="FSA Restaurant Explorer", layout="wide")
 
 DEFAULT_BQ_PATH = "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_master"
 
 DISPLAY_COLUMNS = [
-    "fhrsid", "businessname", "in_scope", "rating_source", "user_rating", "predicted_user_rating",
+    "fhrsid", "businessname", "priority_score", "distance_km", "in_scope", "rating_source", "user_rating", "predicted_user_rating",
     "addressline1", "addressline2", "addressline3", 
     "postcode", "localauthorityname", "first_seen", "manual_review",
     "price_level", "maps_rating", "maps_reviews",
@@ -155,7 +159,11 @@ def filter_and_sort_restaurants(
             filtered = filtered[match_mask]
 
     # 7. Sorting
-    if sort_by == "Predicted Rating (High to Low)" and "predicted_user_rating" in filtered.columns:
+    if sort_by == "Priority Score (High to Low)" and "priority_score" in filtered.columns:
+        filtered = filtered.sort_values(by="priority_score", ascending=False, na_position="last")
+    elif sort_by == "Distance (Nearest First)" and "distance_km" in filtered.columns:
+        filtered = filtered.sort_values(by="distance_km", ascending=True, na_position="last")
+    elif sort_by == "Predicted Rating (High to Low)" and "predicted_user_rating" in filtered.columns:
         filtered = filtered.sort_values(by="predicted_user_rating", ascending=False, na_position="last")
     elif sort_by == "User Rating (High to Low)" and "user_rating" in filtered.columns:
         filtered = filtered.sort_values(by="user_rating", ascending=False, na_position="last")
@@ -218,6 +226,8 @@ def load_data_into_state(
                 
                 if 'in_scope' not in df_enriched.columns:
                     df_enriched['in_scope'] = None
+
+                df_enriched = calculate_restaurant_priority(df_enriched)
 
                 st.session_state.df_enriched = df_enriched
                 st.session_state.data_loaded = True
@@ -351,6 +361,8 @@ def main():
         sort_by = st.selectbox(
             "Sort Order",
             options=[
+                "Priority Score (High to Low)",
+                "Distance (Nearest First)",
                 "Predicted Rating (High to Low)",
                 "User Rating (High to Low)",
                 "Maps Rating (High to Low)",
@@ -625,24 +637,101 @@ def main():
                         else:
                             st.error(msg)
             else:
-                st.write("**Batch Discovery Mode (No Selection):**")
-                batch_limit = st.slider("Batch Size for Unrated Restaurants", min_value=10, max_value=100, value=50, step=10, key="batch_pred_limit")
-                if st.button(f"⚡ Generate Batch Predictions (Top {batch_limit} Unrated)", type="primary", key="btn_gen_pred_batch"):
-                    with st.spinner(f"Generating ML predictions for top {batch_limit} unrated restaurants..."):
-                        success, msg = generate_predictions(
-                            project_id, dataset_id, table_id,
-                            "restaurant_preference_model",
-                            limit=batch_limit,
-                            target_fhrsids=None,
-                            force_maps=force_maps,
-                            force_gemini=force_gemini
-                        )
-                        if success:
-                            st.success(msg)
-                            load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
-                            st.rerun()
-                        else:
-                            st.error(msg)
+                st.write("#### 🎯 Smart Prioritized Batch Scoring (Budget Allocator)")
+                st.caption("Heuristically prioritizes which restaurants to score or re-score to maximize Gemini API value and recommendation accuracy.")
+
+                c_hq1, c_hq2, c_hq3 = st.columns([1, 1, 1])
+                with c_hq1:
+                    anchor_pc = st.text_input("📍 Anchor Postcode", value="SW16", key="anchor_postcode_input", help="Distance is measured from this London postcode.")
+                    c_lat, c_lon = get_outcode_coordinates(anchor_pc)
+                with c_hq2:
+                    strategy_preset = st.selectbox(
+                        "⚡ Strategy Preset",
+                        options=[
+                            "Balanced Active Discovery",
+                            "Local Priority (SW16 & Nearby)",
+                            "Model Refresh (Stale Re-scoring)",
+                            "Top Maps Prior"
+                        ],
+                        index=0,
+                        key="strategy_preset_select"
+                    )
+                with c_hq3:
+                    target_mode = st.selectbox(
+                        "🎯 Target Candidates",
+                        options=["All (New & Stale Rescores)", "Unscored Candidates Only", "Stale Rescores Only"],
+                        index=0,
+                        key="target_mode_select"
+                    )
+
+                preset_weights = {
+                    "Balanced Active Discovery": {"prox": 0.35, "stale": 0.35, "prior": 0.20, "scope": 0.10},
+                    "Local Priority (SW16 & Nearby)": {"prox": 0.55, "stale": 0.25, "prior": 0.15, "scope": 0.05},
+                    "Model Refresh (Stale Re-scoring)": {"prox": 0.25, "stale": 0.55, "prior": 0.15, "scope": 0.05},
+                    "Top Maps Prior": {"prox": 0.30, "stale": 0.25, "prior": 0.40, "scope": 0.05},
+                }
+                active_weights = preset_weights.get(strategy_preset, preset_weights["Balanced Active Discovery"])
+
+                # Recompute priorities based on current anchor & weights
+                df_candidates = calculate_restaurant_priority(df_master, anchor_lat=c_lat, anchor_lon=c_lon, weights=active_weights)
+
+                # Filter candidate pool based on target_mode and scope (exclude confirmed out_of_scope)
+                if "in_scope" in df_candidates.columns:
+                    df_candidates = df_candidates[df_candidates["in_scope"] != False]
+
+                if target_mode == "Unscored Candidates Only":
+                    if "predicted_user_rating" in df_candidates.columns:
+                        df_candidates = df_candidates[df_candidates["predicted_user_rating"].isna()]
+                elif target_mode == "Stale Rescores Only":
+                    if "predicted_user_rating" in df_candidates.columns:
+                        df_candidates = df_candidates[df_candidates["predicted_user_rating"].notna()]
+
+                df_ranked = df_candidates.sort_values(by="priority_score", ascending=False)
+
+                batch_limit = st.slider("Batch Size (Budget of Restaurants to Score)", min_value=5, max_value=100, value=25, step=5, key="batch_pred_limit")
+
+                top_candidates = df_ranked.head(batch_limit)
+                num_candidates = len(top_candidates)
+
+                if num_candidates > 0:
+                    # Calculate estimated gemini calls (how many are missing gemini_insights)
+                    gem_missing = 0
+                    for _, r in top_candidates.iterrows():
+                        v_str = r.get("gemini_insights_structured")
+                        v_leg = r.get("gemini_insights")
+                        if (pd.isna(v_str) or not str(v_str).strip()) and (pd.isna(v_leg) or not str(v_leg).strip()):
+                            gem_missing += 1
+
+                    avg_dist = top_candidates["distance_km"].mean()
+                    
+                    st.info(f"📊 **Batch Queue:** {num_candidates} restaurants ranked | 💰 **Estimated New Gemini Calls:** {gem_missing} ({num_candidates - gem_missing} cached) | 📍 **Avg Distance:** {avg_dist:.1f} km from {anchor_pc.upper()}")
+                    
+                    # Preview table of top candidate restaurants
+                    preview_cols = [c for c in ["fhrsid", "businessname", "priority_score", "distance_km", "staleness_score", "maps_rating", "predicted_user_rating", "postcode"] if c in top_candidates.columns]
+                    st.dataframe(top_candidates[preview_cols], hide_index=True, use_container_width=True)
+                    
+                    col_map = {c.lower(): c for c in top_candidates.columns}
+                    id_col = col_map.get('fhrsid')
+                    
+                    if st.button(f"⚡ Score Top {num_candidates} Prioritized Restaurants", type="primary", key="btn_gen_pred_batch"):
+                        target_ids = top_candidates[id_col].astype(str).tolist() if id_col else None
+                        with st.spinner(f"Generating ML predictions for top {num_candidates} prioritized restaurants..."):
+                            success, msg = generate_predictions(
+                                project_id, dataset_id, table_id,
+                                "restaurant_preference_model",
+                                limit=num_candidates,
+                                target_fhrsids=target_ids,
+                                force_maps=force_maps,
+                                force_gemini=force_gemini
+                            )
+                            if success:
+                                st.success(msg)
+                                load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                else:
+                    st.warning("No candidate restaurants found matching the selected target criteria.")
 
         # -------------------------------------------------------------
         # SUB-TAB 4: MODEL TRAINING & OPERATIONS
