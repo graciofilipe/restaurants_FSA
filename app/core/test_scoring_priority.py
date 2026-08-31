@@ -4,6 +4,7 @@ import pytest
 from app.core.data_processing import (
     haversine_distance_km,
     get_outcode_coordinates,
+    extract_outcode,
     calculate_restaurant_priority,
     LONDON_OUTCODE_CENTROIDS,
 )
@@ -18,28 +19,62 @@ def test_haversine_distance_km_zero_and_known():
     dist = haversine_distance_km(lat, lon, lat_ec1, lon_ec1)
     assert 10.0 <= dist <= 12.0
 
+def test_extract_outcode():
+    assert extract_outcode("SW4 7UL") == "SW4"
+    assert extract_outcode("SW19 6NW") == "SW19"
+    assert extract_outcode("EC2A 3DU") == "EC2A"
+    assert extract_outcode("EC2A3DU") == "EC2A"
+    assert extract_outcode("E27DJ") == "E2"
+    assert extract_outcode("WD17 1AA") == "WD17"
+    assert extract_outcode("") == "SW16"
+
 def test_get_outcode_coordinates():
+    sw16_c = LONDON_OUTCODE_CENTROIDS["SW16"]
     sw16_coords = get_outcode_coordinates("SW16")
-    assert sw16_coords == (51.4277, -0.1294)
+    assert sw16_coords == sw16_c
 
     sw16_full = get_outcode_coordinates("SW16 1AA")
-    assert sw16_full == (51.4277, -0.1294)
+    assert sw16_full == sw16_c
 
     ec1_coords = get_outcode_coordinates("EC1")
-    assert ec1_coords == (51.5230, -0.0980)
+    assert ec1_coords == LONDON_OUTCODE_CENTROIDS["EC1"]
 
-    # Empty fallback
-    assert get_outcode_coordinates("") == (51.4277, -0.1294)
+    # Distant outcodes should not resolve to SW16
+    wd17_coords = get_outcode_coordinates("WD17 1AA")
+    assert wd17_coords != sw16_c
+
+    cr7_coords = get_outcode_coordinates("CR7 8AA")
+    assert cr7_coords != sw16_c
+
+def test_outcode_distances_from_sw16():
+    sw16_lat, sw16_lon = LONDON_OUTCODE_CENTROIDS["SW16"]
+    df = pd.DataFrame([
+        {"fhrsid": "1", "postcode": "SW16 1AA", "in_scope": True}, # 0 km
+        {"fhrsid": "2", "postcode": "SE24 0JT", "in_scope": True}, # ~3.7 km
+        {"fhrsid": "3", "postcode": "SW19 6NW", "in_scope": True}, # ~5.5 km
+        {"fhrsid": "4", "postcode": "EC2A 3DU", "in_scope": True}, # ~10 km
+        {"fhrsid": "5", "postcode": "WD17 1AA", "in_scope": True}, # ~30 km
+    ])
+
+    res = calculate_restaurant_priority(df, anchor_lat=sw16_lat, anchor_lon=sw16_lon)
+    dists = dict(zip(res["fhrsid"], res["distance_km"]))
+    
+    assert dists["1"] == 0.0
+    assert 2.0 <= dists["2"] <= 6.0
+    assert 4.0 <= dists["3"] <= 8.0
+    assert 9.0 <= dists["4"] <= 14.0
+    assert dists["5"] >= 20.0
 
 def test_calculate_restaurant_priority_unscored_nearby():
     today = datetime.date(2026, 8, 31)
-    # Restaurant right in SW16, unscored, high maps rating, in_scope
+    sw16_lat, sw16_lon = LONDON_OUTCODE_CENTROIDS["SW16"]
+    # Restaurant right at SW16 centroid, unscored, high maps rating, in_scope
     df = pd.DataFrame([{
         "fhrsid": "101",
         "businessname": "Local Star Bistro",
         "postcode": "SW16 1AA",
-        "latitude": 51.4277,
-        "longitude": -0.1294,
+        "latitude": sw16_lat,
+        "longitude": sw16_lon,
         "in_scope": True,
         "predicted_user_rating": None,
         "gemini_insights": None,

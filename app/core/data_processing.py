@@ -168,34 +168,62 @@ def enhance_dataframe_with_insights(df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([df, parsed], axis=1)
 
 import math
+import os
+import re
 
-LONDON_OUTCODE_CENTROIDS: Dict[str, Tuple[float, float]] = {
-    "SW16": (51.4277, -0.1294),
-    "SW2": (51.4500, -0.1200),
-    "SW4": (51.4600, -0.1400),
-    "SW8": (51.4750, -0.1300),
-    "SW9": (51.4650, -0.1150),
-    "SW11": (51.4650, -0.1650),
-    "SW12": (51.4450, -0.1500),
-    "SW17": (51.4300, -0.1650),
-    "SW19": (51.4200, -0.2050),
-    "SE1": (51.4990, -0.0900),
-    "SE5": (51.4700, -0.0900),
-    "SE11": (51.4880, -0.1100),
-    "SE15": (51.4700, -0.0650),
-    "SE24": (51.4550, -0.1000),
-    "SE27": (51.4350, -0.1050),
-    "EC1": (51.5230, -0.0980),
-    "EC2": (51.5180, -0.0850),
-    "WC1": (51.5220, -0.1220),
-    "WC2": (51.5120, -0.1240),
-    "W1": (51.5150, -0.1420),
-    "W2": (51.5160, -0.1780),
-    "N1": (51.5380, -0.1020),
-    "E1": (51.5150, -0.0600),
-    "E2": (51.5300, -0.0600),
-    "E8": (51.5450, -0.0750),
-}
+# Load comprehensive UK / Greater London outcode centroids
+_OUTCODES_JSON_PATH = os.path.join(os.path.dirname(__file__), "london_outcodes.json")
+LONDON_OUTCODE_CENTROIDS: Dict[str, Tuple[float, float]] = {}
+
+if os.path.exists(_OUTCODES_JSON_PATH):
+    try:
+        with open(_OUTCODES_JSON_PATH, "r", encoding="utf-8") as _f:
+            _raw_coords = json.load(_f)
+            LONDON_OUTCODE_CENTROIDS = {k.upper(): (float(v[0]), float(v[1])) for k, v in _raw_coords.items()}
+    except Exception as _e:
+        pass
+
+# Core fallbacks if json missing
+if not LONDON_OUTCODE_CENTROIDS:
+    LONDON_OUTCODE_CENTROIDS = {
+        "SW16": (51.4277, -0.1294),
+        "SW2": (51.4500, -0.1200),
+        "SW4": (51.4600, -0.1400),
+        "SW8": (51.4750, -0.1300),
+        "SW9": (51.4650, -0.1150),
+        "SW11": (51.4650, -0.1650),
+        "SW12": (51.4450, -0.1500),
+        "SW17": (51.4300, -0.1650),
+        "SW19": (51.4200, -0.2050),
+        "SE1": (51.4990, -0.0900),
+        "SE5": (51.4700, -0.0900),
+        "SE11": (51.4880, -0.1100),
+        "SE15": (51.4700, -0.0650),
+        "SE24": (51.4550, -0.1000),
+        "SE27": (51.4350, -0.1050),
+        "EC1": (51.5230, -0.0980),
+        "EC2": (51.5180, -0.0850),
+        "WC1": (51.5220, -0.1220),
+        "WC2": (51.5120, -0.1240),
+        "W1": (51.5150, -0.1420),
+        "W2": (51.5160, -0.1780),
+        "N1": (51.5380, -0.1020),
+        "E1": (51.5150, -0.0600),
+        "E2": (51.5300, -0.0600),
+        "E8": (51.5450, -0.0750),
+    }
+
+def extract_outcode(postcode_str: str) -> str:
+    """Extracts the UK outcode from a postcode string (e.g. 'SW4 7UL' -> 'SW4', 'SW196NW' -> 'SW19')."""
+    if not postcode_str or pd.isna(postcode_str):
+        return "SW16"
+    s = str(postcode_str).strip().upper()
+    if ' ' in s:
+        return s.split(' ')[0].strip()
+    clean = re.sub(r'[^A-Z0-9]', '', s)
+    if len(clean) >= 5 and re.match(r'^[A-Z0-9]+[0-9][A-Z]{2}$', clean):
+        return clean[:-3]
+    return clean
 
 def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculates the great-circle distance between two points in kilometers."""
@@ -213,21 +241,27 @@ def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) ->
     return round(r * c, 2)
 
 def get_outcode_coordinates(outcode: str) -> Tuple[float, float]:
-    """Retrieves centroid coordinates (lat, lon) for a UK outcode."""
-    if not outcode:
-        return LONDON_OUTCODE_CENTROIDS.get("SW16", (51.4277, -0.1294))
-    clean_outcode = outcode.strip().upper()
-    if clean_outcode in LONDON_OUTCODE_CENTROIDS:
-        return LONDON_OUTCODE_CENTROIDS[clean_outcode]
-    for k, v in LONDON_OUTCODE_CENTROIDS.items():
-        if clean_outcode.startswith(k):
-            return v
-    return LONDON_OUTCODE_CENTROIDS.get("SW16", (51.4277, -0.1294))
+    """Retrieves centroid coordinates (lat, lon) for a UK outcode or postcode."""
+    sw16_c = LONDON_OUTCODE_CENTROIDS.get("SW16", (51.4212, -0.1292))
+    if not outcode or pd.isna(outcode):
+        return sw16_c
+    
+    clean_oc = extract_outcode(outcode)
+    if clean_oc in LONDON_OUTCODE_CENTROIDS:
+        return tuple(LONDON_OUTCODE_CENTROIDS[clean_oc])
+    
+    # Try longest prefix match (e.g. EC2A -> EC2, SW1A -> SW1)
+    for k in sorted(LONDON_OUTCODE_CENTROIDS.keys(), key=len, reverse=True):
+        if clean_oc.startswith(k):
+            return tuple(LONDON_OUTCODE_CENTROIDS[k])
+            
+    # Default fallback to Central London (Trafalgar Square)
+    return (51.5074, -0.1278)
 
 def calculate_restaurant_priority(
     df: pd.DataFrame,
-    anchor_lat: float = 51.4277,
-    anchor_lon: float = -0.1294,
+    anchor_lat: Optional[float] = None,
+    anchor_lon: Optional[float] = None,
     weights: Optional[Dict[str, float]] = None,
     today_date: Optional[datetime.date] = None
 ) -> pd.DataFrame:
@@ -237,6 +271,13 @@ def calculate_restaurant_priority(
     """
     if df is None or df.empty:
         return df
+
+    sw16_c = LONDON_OUTCODE_CENTROIDS.get("SW16", (51.4212, -0.1292))
+    try:
+        anchor_lat = float(anchor_lat) if anchor_lat is not None else sw16_c[0]
+        anchor_lon = float(anchor_lon) if anchor_lon is not None else sw16_c[1]
+    except (ValueError, TypeError):
+        anchor_lat, anchor_lon = sw16_c
 
     weights = weights or {"prox": 0.35, "stale": 0.35, "prior": 0.20, "scope": 0.10}
     w_prox = weights.get("prox", 0.35)
@@ -261,16 +302,21 @@ def calculate_restaurant_priority(
         # 1. Proximity & Distance
         lat = row.get('latitude')
         lon = row.get('longitude')
+        has_exact = False
         if pd.notna(lat) and pd.notna(lon):
             try:
-                dist = haversine_distance_km(lat, lon, anchor_lat, anchor_lon)
-            except Exception:
-                dist = 5.0
-        else:
+                lat_f, lon_f = float(lat), float(lon)
+                if 45.0 <= lat_f <= 60.0 and -10.0 <= lon_f <= 5.0:
+                    dist = haversine_distance_km(lat_f, lon_f, anchor_lat, anchor_lon)
+                    has_exact = True
+            except (ValueError, TypeError):
+                has_exact = False
+
+        if not has_exact:
             pc = row.get('postcode') or row.get('PostCode') or ""
-            outcode = str(pc).strip().split(' ')[0] if pc else "SW16"
-            c_lat, c_lon = get_outcode_coordinates(outcode)
+            c_lat, c_lon = get_outcode_coordinates(str(pc))
             dist = haversine_distance_km(c_lat, c_lon, anchor_lat, anchor_lon)
+
         distances.append(dist)
         s_prox = round(100.0 * math.exp(-0.20 * dist), 1)
         prox_scores.append(s_prox)
