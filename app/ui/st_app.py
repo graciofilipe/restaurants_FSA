@@ -48,6 +48,79 @@ def get_selected_rows(event, df):
     return None
 
 
+def filter_and_sort_restaurants(
+    df: pd.DataFrame,
+    scope_filter: str = "All Loaded",
+    rating_filter: str = "All",
+    pred_filter: str = "All",
+    min_pred_score: float = 1.0,
+    search_query: str = "",
+    sort_by: str = "Predicted Rating (High to Low)",
+) -> pd.DataFrame:
+    """
+    Applies in-memory filtering and sorting to the restaurant DataFrame.
+    """
+    if df.empty:
+        return df.copy()
+
+    filtered = df.copy()
+
+    # 1. Scope Filter
+    if "in_scope" in filtered.columns:
+        if scope_filter == "In-Scope (Restaurants)":
+            filtered = filtered[filtered["in_scope"] == True]
+        elif scope_filter == "Out-of-Scope":
+            filtered = filtered[filtered["in_scope"] == False]
+        elif scope_filter == "Unprocessed / Triage":
+            filtered = filtered[filtered["in_scope"].isna()]
+
+    # 2. Rating Status Filter
+    if "user_rating" in filtered.columns:
+        if rating_filter == "Unrated Only":
+            filtered = filtered[filtered["user_rating"].isna()]
+        elif rating_filter == "User Rated Only":
+            filtered = filtered[filtered["user_rating"].notna()]
+
+    # 3. ML Prediction Filter
+    if "predicted_user_rating" in filtered.columns:
+        if pred_filter == "Predicted Only":
+            filtered = filtered[
+                filtered["predicted_user_rating"].notna() &
+                (filtered["predicted_user_rating"] >= min_pred_score)
+            ]
+        elif pred_filter == "Unpredicted Only":
+            filtered = filtered[filtered["predicted_user_rating"].isna()]
+        elif pred_filter == "All" and min_pred_score > 1.0:
+            filtered = filtered[
+                filtered["predicted_user_rating"].isna() |
+                (filtered["predicted_user_rating"] >= min_pred_score)
+            ]
+
+    # 4. Search Query (businessname, postcode, localauthorityname)
+    if search_query:
+        query = search_query.strip().lower()
+        search_cols = [c for c in ["businessname", "BusinessName", "postcode", "PostCode", "localauthorityname", "LocalAuthorityName"] if c in filtered.columns]
+        if search_cols:
+            match_mask = pd.Series(False, index=filtered.index)
+            for col in search_cols:
+                match_mask = match_mask | filtered[col].astype(str).str.lower().str.contains(query, na=False)
+            filtered = filtered[match_mask]
+
+    # 5. Sorting
+    if sort_by == "Predicted Rating (High to Low)" and "predicted_user_rating" in filtered.columns:
+        filtered = filtered.sort_values(by="predicted_user_rating", ascending=False, na_position="last")
+    elif sort_by == "User Rating (High to Low)" and "user_rating" in filtered.columns:
+        filtered = filtered.sort_values(by="user_rating", ascending=False, na_position="last")
+    elif sort_by == "First Seen (Newest)" and "first_seen" in filtered.columns:
+        filtered = filtered.sort_values(by="first_seen", ascending=False, na_position="last")
+    elif sort_by == "Business Name (A-Z)":
+        name_col = "businessname" if "businessname" in filtered.columns else "BusinessName"
+        if name_col in filtered.columns:
+            filtered = filtered.sort_values(by=name_col, ascending=True, na_position="last")
+
+    return filtered
+
+
 @st.cache_data
 def get_cached_outcodes(project_id, dataset_id, table_id):
     return get_distinct_outcodes(project_id, dataset_id, table_id)
@@ -172,39 +245,118 @@ def main():
 
     # --- Main Interface ---
     if st.session_state.data_loaded and not st.session_state.df_enriched.empty:
-        df_display = st.session_state.df_enriched.copy()
+        df_master = st.session_state.df_enriched.copy()
         
-        # Summary Metrics
+        # Top Summary Metrics
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Loaded", len(df_display))
-        m2.metric("In-Scope", len(df_display[df_display['in_scope'] == True]) if 'in_scope' in df_display.columns else 0)
-        m3.metric("User Rated", len(df_display[df_display['user_rating'].notna()]) if 'user_rating' in df_display.columns else 0)
-        m4.metric("ML Predicted", len(df_display[df_display['predicted_user_rating'].notna()]) if 'predicted_user_rating' in df_display.columns else 0)
+        m1.metric("Total Loaded", len(df_master))
+        m2.metric("In-Scope", len(df_master[df_master['in_scope'] == True]) if 'in_scope' in df_master.columns else 0)
+        m3.metric("User Rated", len(df_master[df_master['user_rating'].notna()]) if 'user_rating' in df_master.columns else 0)
+        m4.metric("ML Predicted", len(df_master[df_master['predicted_user_rating'].notna()]) if 'predicted_user_rating' in df_master.columns else 0)
 
-        tab_triage, tab_rating, tab_predictions = st.tabs(["📥 1. Scope Triage Inbox", "✍️ 2. Desk & Visit Rating Hub", "🤖 3. ML Predictions & Discovery"])
+        # --- In-Page Quick Filters & Slicers ---
+        st.write("### 🔍 Explorer View & Filters")
+        f_col1, f_col2, f_col3, f_col4 = st.columns(4)
         
+        with f_col1:
+            scope_view = st.selectbox(
+                "Scope Filter",
+                options=["All Loaded", "In-Scope (Restaurants)", "Out-of-Scope", "Unprocessed / Triage"],
+                index=0,
+                key="filter_scope_view"
+            )
+        with f_col2:
+            rating_view = st.selectbox(
+                "Rating Status",
+                options=["All", "Unrated Only", "User Rated Only"],
+                index=0,
+                key="filter_rating_view"
+            )
+        with f_col3:
+            pred_view = st.selectbox(
+                "ML Prediction Status",
+                options=["All", "Predicted Only", "Unpredicted Only"],
+                index=0,
+                key="filter_pred_view"
+            )
+        with f_col4:
+            min_pred_score = st.slider(
+                "Min Predicted Score",
+                min_value=1.0,
+                max_value=10.0,
+                value=1.0,
+                step=0.5,
+                key="filter_min_pred_score"
+            )
+
+        f_search_col, f_sort_col = st.columns([2, 1])
+        with f_search_col:
+            search_query = st.text_input("🔎 Search by Business Name or Postcode", "", key="filter_search_text")
+        with f_sort_col:
+            sort_by = st.selectbox(
+                "Sort By",
+                options=[
+                    "Predicted Rating (High to Low)",
+                    "User Rating (High to Low)",
+                    "First Seen (Newest)",
+                    "Business Name (A-Z)",
+                    "Natural / BQ Order"
+                ],
+                index=0,
+                key="filter_sort_by"
+            )
+
+        # Filter & Sort Data
+        df_filtered = filter_and_sort_restaurants(
+            df_master,
+            scope_filter=scope_view,
+            rating_filter=rating_view,
+            pred_filter=pred_view,
+            min_pred_score=min_pred_score,
+            search_query=search_query,
+            sort_by=sort_by
+        )
+
+        st.caption(f"Showing **{len(df_filtered)}** of **{len(df_master)}** loaded restaurants.")
+
+        # --- Master Interactive Table ---
+        selection_event = display_data(df_filtered, key="master_grid")
+        selected_rows = get_selected_rows(selection_event, df_filtered)
+        num_selected = len(selected_rows) if (selected_rows is not None and not selected_rows.empty) else 0
+
+        st.divider()
+
+        # Selection Status Indicator
+        if num_selected > 0:
+            st.info(f"📌 **{num_selected} restaurant(s) selected** in the master table above. Choose an action sub-tab below to operate on them:")
+        else:
+            st.info("💡 Tip: Select one or more restaurants from the master table above to triage scope, assign ratings, or generate predictions.")
+
+        # --- Action Sub-Tabs Under Table ---
+        tab_triage, tab_rating, tab_predictions, tab_model = st.tabs([
+            "📥 1. Scope Triage",
+            "✍️ 2. Manual Rating",
+            "🤖 3. ML Predictions",
+            "⚙️ 4. Model Training"
+        ])
+
         # -------------------------------------------------------------
-        # TAB 1: SCOPE TRIAGE INBOX
+        # SUB-TAB 1: SCOPE TRIAGE
         # -------------------------------------------------------------
         with tab_triage:
-            st.subheader("Scope Triage Inbox")
-            st.caption("Classify new or existing establishments into In-Scope (Restaurants) vs Out-of-Scope (Cafes, Bakeries, Supermarkets).")
-            
-            selection_event_triage = display_data(df_display, key="triage_grid")
-            selected_triage = get_selected_rows(selection_event_triage, df_display)
-            
-            if selected_triage is not None and not selected_triage.empty:
-                st.divider()
-                count = len(selected_triage)
-                col_map = {c.lower(): c for c in selected_triage.columns}
+            st.subheader("Scope Triage")
+            st.caption("Classify establishments into In-Scope (Restaurants) vs Out-of-Scope (Cafes, Bakeries, Supermarkets).")
+
+            if num_selected > 0:
+                col_map = {c.lower(): c for c in selected_rows.columns}
                 id_col = col_map.get('fhrsid')
                 
-                st.write(f"**Batch Scope Triage for {count} Selected Establishments:**")
+                st.write(f"**Batch Scope Triage for {num_selected} Selected Establishment(s):**")
                 c_in, c_out, c_reset = st.columns(3)
-                
-                if c_in.button("✅ Mark as In-Scope (Restaurant)"):
+
+                if c_in.button("✅ Mark as In-Scope (Restaurant)", key="btn_triage_in"):
                     if id_col:
-                        ids = selected_triage[id_col].astype(str).tolist()
+                        ids = selected_rows[id_col].astype(str).tolist()
                         df_up = pd.DataFrame({'fhrsid': ids, 'in_scope': [True] * len(ids)})
                         with st.spinner(f"Updating {len(ids)} rows to In-Scope..."):
                             success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_up)
@@ -214,10 +366,10 @@ def main():
                                 st.rerun()
                             else:
                                 st.error(msg)
-                                
-                if c_out.button("🚫 Mark as Out-of-Scope (Bakery/Cafe)"):
+
+                if c_out.button("🚫 Mark as Out-of-Scope (Bakery/Cafe)", key="btn_triage_out"):
                     if id_col:
-                        ids = selected_triage[id_col].astype(str).tolist()
+                        ids = selected_rows[id_col].astype(str).tolist()
                         df_up = pd.DataFrame({'fhrsid': ids, 'in_scope': [False] * len(ids)})
                         with st.spinner(f"Updating {len(ids)} rows to Out-of-Scope..."):
                             success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_up)
@@ -228,9 +380,9 @@ def main():
                             else:
                                 st.error(msg)
 
-                if c_reset.button("🔄 Reset to Unprocessed"):
+                if c_reset.button("🔄 Reset to Unprocessed", key="btn_triage_reset"):
                     if id_col:
-                        ids = selected_triage[id_col].astype(str).tolist()
+                        ids = selected_rows[id_col].astype(str).tolist()
                         df_up = pd.DataFrame({'fhrsid': ids, 'in_scope': [None] * len(ids)})
                         with st.spinner(f"Resetting {len(ids)} rows..."):
                             success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_up)
@@ -240,39 +392,65 @@ def main():
                                 st.rerun()
                             else:
                                 st.error(msg)
+            else:
+                st.info("👆 Select one or more establishments in the table above to triage their scope.")
 
         # -------------------------------------------------------------
-        # TAB 2: DESK & VISIT RATING HUB
+        # SUB-TAB 2: MANUAL RATING HUB
         # -------------------------------------------------------------
         with tab_rating:
-            st.subheader("Desk & Visit Rating Hub (1 to 10 Scale)")
-            st.caption("Assign user scores (1-10) for in-scope restaurants from desk evaluation (unvisited) or post-visit ground truth.")
-            
-            # Filter in-scope items for rating
-            df_in_scope = df_display[df_display['in_scope'] == True] if 'in_scope' in df_display.columns else df_display.copy()
-            
-            rating_view = st.radio(
-                "Filter View",
-                options=["All In-Scope", "Unrated Only (Desk Rating Opportunities)", "User Rated Only"],
-                horizontal=True
-            )
-            
-            if rating_view == "Unrated Only (Desk Rating Opportunities)" and "user_rating" in df_in_scope.columns:
-                df_rating_view = df_in_scope[df_in_scope["user_rating"].isna()]
-            elif rating_view == "User Rated Only" and "user_rating" in df_in_scope.columns:
-                df_rating_view = df_in_scope[df_in_scope["user_rating"].notna()]
-            else:
-                df_rating_view = df_in_scope.copy()
-                
-            selection_event_rating = display_data(df_rating_view, key="rating_grid")
-            selected_rating_rows = get_selected_rows(selection_event_rating, df_rating_view)
-            
-            if selected_rating_rows is not None and not selected_rating_rows.empty:
+            st.subheader("Manual Rating Hub (1 to 10 Scale)")
+            st.caption("Assign user scores (1-10) and rating sources (desk evaluation or post-visit ground truth).")
+
+            if num_selected > 0:
+                col_map = {c.lower(): c for c in selected_rows.columns}
+                id_col = col_map.get('fhrsid')
+
+                # Section A: Quick Batch Score Tool
+                st.write(f"#### ⚡ Quick-Apply Score to All {num_selected} Selected")
+                qb_col1, qb_col2, qb_col3 = st.columns([1, 1, 2])
+                with qb_col1:
+                    batch_score = st.number_input(
+                        "User Score (1-10)",
+                        min_value=1,
+                        max_value=10,
+                        value=7,
+                        step=1,
+                        key="quick_score_input"
+                    )
+                with qb_col2:
+                    batch_source = st.selectbox(
+                        "Rating Source",
+                        options=["desk", "visited"],
+                        index=0,
+                        key="quick_source_input"
+                    )
+                with qb_col3:
+                    st.write("")
+                    st.write("")
+                    if st.button(f"⚡ Apply Score {batch_score} to All ({num_selected})", type="primary", key="btn_quick_apply_score"):
+                        if id_col:
+                            ids = selected_rows[id_col].astype(str).tolist()
+                            df_up = pd.DataFrame({
+                                'fhrsid': ids,
+                                'user_rating': [int(batch_score)] * len(ids),
+                                'rating_source': [str(batch_source)] * len(ids),
+                                'in_scope': [True] * len(ids)
+                            })
+                            with st.spinner(f"Saving score {batch_score} for {len(ids)} restaurant(s)..."):
+                                success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_up)
+                                if success:
+                                    st.success(f"Saved: {msg}")
+                                    load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+
                 st.divider()
-                st.write(f"### ⭐ Score & Review {len(selected_rating_rows)} Selected Establishment(s)")
-                st.caption("Enter or adjust individual user scores (1-10) and rating source for each selected restaurant below, then click Submit.")
-                
-                editor_df = selected_rating_rows.copy()
+
+                # Section B: Interactive Data Editor for Individual Adjustments
+                st.write(f"#### 📝 Individual Scores & Review Details")
+                editor_df = selected_rows.copy()
                 if 'user_rating' not in editor_df.columns:
                     editor_df['user_rating'] = pd.NA
                 else:
@@ -309,23 +487,22 @@ def main():
                     key="rating_editor"
                 )
                 
-                st.write("")
-                if st.button("Submit Scores to BigQuery", type="primary"):
-                    col_map = {c.lower(): c for c in edited_df.columns}
-                    id_col = col_map.get('fhrsid')
-                    score_col = col_map.get('user_rating')
-                    source_col = col_map.get('rating_source')
+                if st.button("💾 Submit Individual Scores to BigQuery", key="btn_submit_individual_scores"):
+                    ed_col_map = {c.lower(): c for c in edited_df.columns}
+                    ed_id_col = ed_col_map.get('fhrsid')
+                    ed_score_col = ed_col_map.get('user_rating')
+                    ed_source_col = ed_col_map.get('rating_source')
                     
-                    if id_col and score_col and source_col:
-                        valid_rows = edited_df[edited_df[score_col].notna()].copy()
+                    if ed_id_col and ed_score_col and ed_source_col:
+                        valid_rows = edited_df[edited_df[ed_score_col].notna()].copy()
                         if valid_rows.empty:
                             st.warning("Please enter a User Score (1-10) for at least one selected restaurant.")
                         else:
-                            ids = valid_rows[id_col].astype(str).tolist()
+                            ids = valid_rows[ed_id_col].astype(str).tolist()
                             df_up = pd.DataFrame({
                                 'fhrsid': ids,
-                                'user_rating': valid_rows[score_col].astype(int).tolist(),
-                                'rating_source': valid_rows[source_col].astype(str).tolist(),
+                                'user_rating': valid_rows[ed_score_col].astype(int).tolist(),
+                                'rating_source': valid_rows[ed_source_col].astype(str).tolist(),
                                 'in_scope': [True] * len(ids)
                             })
                             with st.spinner(f"Saving scores for {len(ids)} restaurant(s)..."):
@@ -336,62 +513,34 @@ def main():
                                     st.rerun()
                                 else:
                                     st.error(msg)
+            else:
+                st.info("👆 Select one or more establishments in the table above to assign manual scores.")
 
         # -------------------------------------------------------------
-        # TAB 3: ML PREDICTIONS & DISCOVERY
+        # SUB-TAB 3: ML PREDICTIONS
         # -------------------------------------------------------------
         with tab_predictions:
-            st.subheader("🤖 ML Preference Predictions & Discovery")
-            st.caption("Sort and filter restaurants by continuous predicted preference score (1 to 10 scale).")
-            
-            col_p1, col_p2 = st.columns(2)
-            with col_p1:
-                show_pred_only = st.checkbox("Only Show Restaurants with ML Predictions", value=True)
-            with col_p2:
-                min_pred_score = st.slider("Minimum Predicted Rating", min_value=1.0, max_value=10.0, value=6.0, step=0.5)
+            st.subheader("ML Predictions & Auto-Enrichment")
+            st.caption("Generate preference ratings using BigQuery ML with automatic Maps & Gemini enrichment.")
+
+            col_opt1, col_opt2 = st.columns(2)
+            with col_opt1:
+                force_maps = st.checkbox("Force Regenerate Maps Data", key="force_maps_unified")
+            with col_opt2:
+                force_gemini = st.checkbox("Force Regenerate Gemini Profiles", key="force_gemini_unified")
+
+            if num_selected > 0:
+                st.write(f"**Targeting {num_selected} Selected Restaurant(s):**")
+                col_map = {c.lower(): c for c in selected_rows.columns}
+                id_col = col_map.get('fhrsid')
                 
-            df_pred_view = df_display.copy()
-            if "predicted_user_rating" in df_pred_view.columns:
-                if show_pred_only:
-                    df_pred_view = df_pred_view[
-                        df_pred_view["predicted_user_rating"].notna() &
-                        (df_pred_view["predicted_user_rating"] >= min_pred_score)
-                    ]
-                else:
-                    df_pred_view = df_pred_view[
-                        df_pred_view["predicted_user_rating"].isna() |
-                        (df_pred_view["predicted_user_rating"] >= min_pred_score)
-                    ]
-                df_pred_view = df_pred_view.sort_values(by="predicted_user_rating", ascending=False, na_position='last')
-                
-            selection_event_pred = display_data(df_pred_view, key="pred_grid")
-            selected_pred_rows = get_selected_rows(selection_event_pred, df_pred_view)
-            
-            st.divider()
-            st.write("### ⚙️ ML Operations")
-            col_gen_p, col_train_p = st.columns(2)
-            
-            with col_gen_p:
-                st.write("**Generate Predictions for Unrated Restaurants:**")
-                force_maps = st.checkbox("Force Regenerate Maps Data", key="force_maps_p")
-                force_gemini = st.checkbox("Force Regenerate Gemini Profiles", key="force_gemini_p")
-                
-                target_count = len(selected_pred_rows) if (selected_pred_rows is not None and not selected_pred_rows.empty) else 50
-                btn_label = f"Generate Predictions ({target_count} selected)" if (selected_pred_rows is not None and not selected_pred_rows.empty) else "Generate Batch Predictions (Top 50 Unrated)"
-                
-                if st.button(btn_label):
-                    fhrsids = None
-                    if selected_pred_rows is not None and not selected_pred_rows.empty:
-                        col_map = {c.lower(): c for c in selected_pred_rows.columns}
-                        id_col = col_map.get('fhrsid')
-                        if id_col:
-                            fhrsids = selected_pred_rows[id_col].astype(str).tolist()
-                    
-                    with st.spinner("Generating ML predictions..."):
+                if st.button(f"⚡ Generate Predictions for {num_selected} Selected", type="primary", key="btn_gen_pred_selected"):
+                    fhrsids = selected_rows[id_col].astype(str).tolist() if id_col else None
+                    with st.spinner(f"Generating ML predictions for {num_selected} restaurants..."):
                         success, msg = generate_predictions(
                             project_id, dataset_id, table_id,
                             "restaurant_preference_model",
-                            limit=50,
+                            limit=len(fhrsids) if fhrsids else 50,
                             target_fhrsids=fhrsids,
                             force_maps=force_maps,
                             force_gemini=force_gemini
@@ -402,28 +551,50 @@ def main():
                             st.rerun()
                         else:
                             st.error(msg)
-                            
-            with col_train_p:
-                st.write("**Train BQML Boosted Tree Model:**")
-                st.caption("Trains regression model using all in-scope rated restaurants (`user_rating` 1-10).")
+            else:
+                st.write("**Batch Discovery Mode (No Selection):**")
+                batch_limit = st.slider("Batch Size for Unrated Restaurants", min_value=10, max_value=100, value=50, step=10, key="batch_pred_limit")
+                if st.button(f"⚡ Generate Batch Predictions (Top {batch_limit} Unrated)", type="primary", key="btn_gen_pred_batch"):
+                    with st.spinner(f"Generating ML predictions for top {batch_limit} unrated restaurants..."):
+                        success, msg = generate_predictions(
+                            project_id, dataset_id, table_id,
+                            "restaurant_preference_model",
+                            limit=batch_limit,
+                            target_fhrsids=None,
+                            force_maps=force_maps,
+                            force_gemini=force_gemini
+                        )
+                        if success:
+                            st.success(msg)
+                            load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+
+        # -------------------------------------------------------------
+        # SUB-TAB 4: MODEL TRAINING & OPERATIONS
+        # -------------------------------------------------------------
+        with tab_model:
+            st.subheader("Train BQML Boosted Tree Regressor")
+            st.caption("Trains continuous preference regression model using all in-scope rated restaurants (`user_rating` 1-10).")
+
+            if "training_lock" not in st.session_state:
+                st.session_state.training_lock = False
                 
-                if "training_lock" not in st.session_state:
-                    st.session_state.training_lock = False
-                    
-                if st.button("Train BQML Model (Async)", disabled=st.session_state.training_lock, key="btn_train_model"):
-                    try:
-                        from scripts.train_bqml_model import train_model
-                        with st.spinner("Starting BQML model training..."):
-                            job_id = train_model(
-                                project_id=project_id,
-                                dataset_id=dataset_id,
-                                table_id=table_id,
-                                model_name="restaurant_preference_model",
-                                run_async=True
-                            )
-                            st.success(f"Started model training. Job ID: {job_id}")
-                    except Exception as e:
-                        st.error(f"Failed to start training: {e}")
+            if st.button("🚀 Train BQML Model (Async)", disabled=st.session_state.training_lock, key="btn_train_model_unified"):
+                try:
+                    from scripts.train_bqml_model import train_model
+                    with st.spinner("Starting BQML model training..."):
+                        job_id = train_model(
+                            project_id=project_id,
+                            dataset_id=dataset_id,
+                            table_id=table_id,
+                            model_name="restaurant_preference_model",
+                            run_async=True
+                        )
+                        st.success(f"Started model training. Job ID: {job_id}")
+                except Exception as e:
+                    st.error(f"Failed to start training: {e}")
 
     elif st.session_state.data_loaded and st.session_state.df_enriched.empty:
         st.warning("No data found. Try adjusting filters in the sidebar and clicking 'Load Data'.")
