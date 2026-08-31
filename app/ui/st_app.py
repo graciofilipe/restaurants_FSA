@@ -51,11 +51,15 @@ def get_selected_rows(event, df):
 def filter_and_sort_restaurants(
     df: pd.DataFrame,
     scope_filter: str = "All Loaded",
-    rating_filter: str = "All",
-    pred_filter: str = "All",
+    user_rating_filter: str = "All",
+    pred_rating_filter: str = "All",
+    gemini_match_filter: str = "All",
+    maps_rating_filter: str = "All",
     min_pred_score: float = 1.0,
     search_query: str = "",
     sort_by: str = "Predicted Rating (High to Low)",
+    rating_filter: str = None,
+    pred_filter: str = None,
 ) -> pd.DataFrame:
     """
     Applies in-memory filtering and sorting to the restaurant DataFrame.
@@ -65,52 +69,86 @@ def filter_and_sort_restaurants(
 
     filtered = df.copy()
 
+    # Handle legacy parameter aliases
+    if rating_filter is not None and user_rating_filter == "All":
+        user_rating_filter = rating_filter
+    if pred_filter is not None and pred_rating_filter == "All":
+        pred_rating_filter = pred_filter
+
     # 1. Scope Filter
     if "in_scope" in filtered.columns:
-        if scope_filter == "In-Scope (Restaurants)":
+        if scope_filter in ["In-Scope (Restaurants)", "in_scope"]:
             filtered = filtered[filtered["in_scope"] == True]
-        elif scope_filter == "Out-of-Scope":
+        elif scope_filter in ["Out-of-Scope", "out_of_scope"]:
             filtered = filtered[filtered["in_scope"] == False]
-        elif scope_filter == "Unprocessed / Triage":
+        elif scope_filter in ["Unprocessed / Triage", "unprocessed"]:
             filtered = filtered[filtered["in_scope"].isna()]
 
-    # 2. Rating Status Filter
+    # 2. User Rating Filter
     if "user_rating" in filtered.columns:
-        if rating_filter == "Unrated Only":
-            filtered = filtered[filtered["user_rating"].isna()]
-        elif rating_filter == "User Rated Only":
+        if user_rating_filter in ["Has User Rating (Rated)", "User Rated Only", "Has Rating"]:
             filtered = filtered[filtered["user_rating"].notna()]
+        elif user_rating_filter in ["No User Rating (Unrated)", "Unrated Only", "No Rating"]:
+            filtered = filtered[filtered["user_rating"].isna()]
 
     # 3. ML Prediction Filter
     if "predicted_user_rating" in filtered.columns:
-        if pred_filter == "Predicted Only":
+        if pred_rating_filter in ["Has Predicted Rating", "Predicted Only", "Has Prediction"]:
             filtered = filtered[
                 filtered["predicted_user_rating"].notna() &
                 (filtered["predicted_user_rating"] >= min_pred_score)
             ]
-        elif pred_filter == "Unpredicted Only":
+        elif pred_rating_filter in ["No Predicted Rating", "Unpredicted Only", "No Prediction"]:
             filtered = filtered[filtered["predicted_user_rating"].isna()]
-        elif pred_filter == "All" and min_pred_score > 1.0:
+        elif pred_rating_filter == "All" and min_pred_score > 1.0:
             filtered = filtered[
                 filtered["predicted_user_rating"].isna() |
                 (filtered["predicted_user_rating"] >= min_pred_score)
             ]
 
-    # 4. Search Query (businessname, postcode, localauthorityname)
+    # 4. Gemini Match Score Filter
+    match_col = "match_score" if "match_score" in filtered.columns else ("insight_score" if "insight_score" in filtered.columns else None)
+    if match_col:
+        has_gemini = filtered[match_col].notna()
+        if "gemini_insights_structured" in filtered.columns:
+            has_gemini = has_gemini | filtered["gemini_insights_structured"].notna()
+        if gemini_match_filter in ["Has Gemini Match Score", "Has Match Score", "Has Gemini Score"]:
+            filtered = filtered[has_gemini]
+        elif gemini_match_filter in ["No Gemini Match Score", "No Match Score", "No Gemini Score"]:
+            filtered = filtered[~has_gemini]
+    elif "gemini_insights_structured" in filtered.columns:
+        if gemini_match_filter in ["Has Gemini Match Score", "Has Match Score", "Has Gemini Score"]:
+            filtered = filtered[filtered["gemini_insights_structured"].notna()]
+        elif gemini_match_filter in ["No Gemini Match Score", "No Match Score", "No Gemini Score"]:
+            filtered = filtered[filtered["gemini_insights_structured"].isna()]
+
+    # 5. Google Maps Rating Filter
+    if "maps_rating" in filtered.columns:
+        if maps_rating_filter in ["Has Google Maps Rating", "Has Maps Rating", "Has Rating"]:
+            filtered = filtered[filtered["maps_rating"].notna()]
+        elif maps_rating_filter in ["No Google Maps Rating", "No Maps Rating", "No Rating"]:
+            filtered = filtered[filtered["maps_rating"].isna()]
+
+    # 6. Search Query (businessname, postcode, localauthorityname, fhrsid)
     if search_query:
         query = search_query.strip().lower()
-        search_cols = [c for c in ["businessname", "BusinessName", "postcode", "PostCode", "localauthorityname", "LocalAuthorityName"] if c in filtered.columns]
+        search_cols = [c for c in ["businessname", "BusinessName", "postcode", "PostCode", "localauthorityname", "LocalAuthorityName", "fhrsid", "FHRSID"] if c in filtered.columns]
         if search_cols:
             match_mask = pd.Series(False, index=filtered.index)
             for col in search_cols:
                 match_mask = match_mask | filtered[col].astype(str).str.lower().str.contains(query, na=False)
             filtered = filtered[match_mask]
 
-    # 5. Sorting
+    # 7. Sorting
     if sort_by == "Predicted Rating (High to Low)" and "predicted_user_rating" in filtered.columns:
         filtered = filtered.sort_values(by="predicted_user_rating", ascending=False, na_position="last")
     elif sort_by == "User Rating (High to Low)" and "user_rating" in filtered.columns:
         filtered = filtered.sort_values(by="user_rating", ascending=False, na_position="last")
+    elif sort_by == "Maps Rating (High to Low)" and "maps_rating" in filtered.columns:
+        filtered = filtered.sort_values(by="maps_rating", ascending=False, na_position="last")
+    elif sort_by == "Gemini Match Score (High to Low)" and ("match_score" in filtered.columns or "insight_score" in filtered.columns):
+        sort_col = "match_score" if "match_score" in filtered.columns else "insight_score"
+        filtered = filtered.sort_values(by=sort_col, ascending=False, na_position="last")
     elif sort_by == "First Seen (Newest)" and "first_seen" in filtered.columns:
         filtered = filtered.sort_values(by="first_seen", ascending=False, na_position="last")
     elif sort_by == "Business Name (A-Z)":
@@ -189,10 +227,10 @@ def main():
     
     # --- Sidebar Filters ---
     with st.sidebar:
-        st.header("Configuration")
+        st.header("⚙️ Configuration")
         bq_path_input = st.text_input("BigQuery Table Path", value=bq_path)
         
-        st.header("Scope & Location Filters")
+        st.header("📥 BigQuery Data Loader")
         
         scope_options_map = {
             "In Scope (Restaurants)": "in_scope",
@@ -201,7 +239,7 @@ def main():
         }
         
         selected_scope_labels = st.multiselect(
-            "Establishment Scope",
+            "Establishment Scope (BQ Query)",
             options=list(scope_options_map.keys()),
             default=["In Scope (Restaurants)", "Unprocessed / Needs Triage"]
         )
@@ -223,8 +261,6 @@ def main():
         
         local_authority_filter = st.multiselect("Local Authority", options=available_authorities, default=[])
 
-        st.divider()
-        st.write("### 📅 Date Filter")
         first_seen_date = st.date_input(
             "First Seen After",
             value=None,
@@ -232,7 +268,7 @@ def main():
             help="Load restaurants first seen ON or AFTER this date."
         )
 
-        if st.button("Load Data", type="primary"):
+        if st.button("Load Data from BigQuery", type="primary", use_container_width=True):
             load_data_into_state(
                 project_id, 
                 dataset_id, 
@@ -243,81 +279,101 @@ def main():
                 local_authority_filter=local_authority_filter
             )
 
-    # --- Main Interface ---
-    if st.session_state.data_loaded and not st.session_state.df_enriched.empty:
-        df_master = st.session_state.df_enriched.copy()
-        
-        # Top Summary Metrics
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Loaded", len(df_master))
-        m2.metric("In-Scope", len(df_master[df_master['in_scope'] == True]) if 'in_scope' in df_master.columns else 0)
-        m3.metric("User Rated", len(df_master[df_master['user_rating'].notna()]) if 'user_rating' in df_master.columns else 0)
-        m4.metric("ML Predicted", len(df_master[df_master['predicted_user_rating'].notna()]) if 'predicted_user_rating' in df_master.columns else 0)
+        st.divider()
+        st.header("🎯 Master Table Slicers")
+        st.caption("Instantly filter and slice loaded restaurants in real-time:")
 
-        # --- In-Page Quick Filters & Slicers ---
-        st.write("### 🔍 Explorer View & Filters")
-        f_col1, f_col2, f_col3, f_col4 = st.columns(4)
-        
-        with f_col1:
-            scope_view = st.selectbox(
-                "Scope Filter",
-                options=["All Loaded", "In-Scope (Restaurants)", "Out-of-Scope", "Unprocessed / Triage"],
-                index=0,
-                key="filter_scope_view"
-            )
-        with f_col2:
-            rating_view = st.selectbox(
-                "Rating Status",
-                options=["All", "Unrated Only", "User Rated Only"],
-                index=0,
-                key="filter_rating_view"
-            )
-        with f_col3:
-            pred_view = st.selectbox(
-                "ML Prediction Status",
-                options=["All", "Predicted Only", "Unpredicted Only"],
-                index=0,
-                key="filter_pred_view"
-            )
-        with f_col4:
+        user_rating_slicer = st.selectbox(
+            "User Rating",
+            options=["All", "Has User Rating (Rated)", "No User Rating (Unrated)"],
+            index=0,
+            key="slicer_user_rating"
+        )
+
+        pred_rating_slicer = st.selectbox(
+            "ML Predicted Rating",
+            options=["All", "Has Predicted Rating", "No Predicted Rating"],
+            index=0,
+            key="slicer_pred_rating"
+        )
+
+        min_pred_score = 1.0
+        if pred_rating_slicer != "No Predicted Rating":
             min_pred_score = st.slider(
                 "Min Predicted Score",
                 min_value=1.0,
                 max_value=10.0,
                 value=1.0,
                 step=0.5,
-                key="filter_min_pred_score"
+                key="slicer_min_pred_score"
             )
 
-        f_search_col, f_sort_col = st.columns([2, 1])
-        with f_search_col:
-            search_query = st.text_input("🔎 Search by Business Name or Postcode", "", key="filter_search_text")
-        with f_sort_col:
-            sort_by = st.selectbox(
-                "Sort By",
-                options=[
-                    "Predicted Rating (High to Low)",
-                    "User Rating (High to Low)",
-                    "First Seen (Newest)",
-                    "Business Name (A-Z)",
-                    "Natural / BQ Order"
-                ],
-                index=0,
-                key="filter_sort_by"
-            )
+        gemini_match_slicer = st.selectbox(
+            "Gemini Match Score",
+            options=["All", "Has Gemini Match Score", "No Gemini Match Score"],
+            index=0,
+            key="slicer_gemini_match"
+        )
 
-        # Filter & Sort Data
+        maps_rating_slicer = st.selectbox(
+            "Google Maps Rating",
+            options=["All", "Has Google Maps Rating", "No Google Maps Rating"],
+            index=0,
+            key="slicer_maps_rating"
+        )
+
+        scope_slicer = st.selectbox(
+            "Scope View",
+            options=["All Loaded", "In-Scope (Restaurants)", "Out-of-Scope", "Unprocessed / Triage"],
+            index=0,
+            key="slicer_scope_view"
+        )
+
+        search_query = st.text_input("🔎 Quick Search", "", placeholder="Name, postcode, authority...", key="slicer_search_text")
+
+        sort_by = st.selectbox(
+            "Sort Order",
+            options=[
+                "Predicted Rating (High to Low)",
+                "User Rating (High to Low)",
+                "Maps Rating (High to Low)",
+                "Gemini Match Score (High to Low)",
+                "First Seen (Newest)",
+                "Business Name (A-Z)",
+                "Natural / BQ Order"
+            ],
+            index=0,
+            key="slicer_sort_by"
+        )
+
+    # --- Main Interface ---
+    if st.session_state.data_loaded and not st.session_state.df_enriched.empty:
+        df_master = st.session_state.df_enriched.copy()
+        
+        # Filter & Sort Data using Left-Panel Slicers
         df_filtered = filter_and_sort_restaurants(
             df_master,
-            scope_filter=scope_view,
-            rating_filter=rating_view,
-            pred_filter=pred_view,
+            scope_filter=scope_slicer,
+            user_rating_filter=user_rating_slicer,
+            pred_rating_filter=pred_rating_slicer,
+            gemini_match_filter=gemini_match_slicer,
+            maps_rating_filter=maps_rating_slicer,
             min_pred_score=min_pred_score,
             search_query=search_query,
             sort_by=sort_by
         )
 
-        st.caption(f"Showing **{len(df_filtered)}** of **{len(df_master)}** loaded restaurants.")
+        # Top Summary Metrics
+        m1, m2, m3, m4, m5, m6 = st.columns(6)
+        m1.metric("Total Loaded", len(df_master))
+        m2.metric("Filtered / Active", len(df_filtered))
+        m3.metric("User Rated", len(df_master[df_master['user_rating'].notna()]) if 'user_rating' in df_master.columns else 0)
+        m4.metric("ML Predicted", len(df_master[df_master['predicted_user_rating'].notna()]) if 'predicted_user_rating' in df_master.columns else 0)
+        m5.metric("Google Maps", len(df_master[df_master['maps_rating'].notna()]) if 'maps_rating' in df_master.columns else 0)
+        match_col = "match_score" if "match_score" in df_master.columns else ("insight_score" if "insight_score" in df_master.columns else None)
+        m6.metric("Gemini Evaluated", len(df_master[df_master[match_col].notna()]) if match_col else 0)
+
+        st.caption(f"Displaying **{len(df_filtered)}** of **{len(df_master)}** loaded restaurants.")
 
         # --- Master Interactive Table ---
         selection_event = display_data(df_filtered, key="master_grid")
