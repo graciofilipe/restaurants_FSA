@@ -28,7 +28,7 @@ try:
     logger.info("Instantiating Agent...")
     root_agent = Agent(
         name="restaurant_maps_agent",
-        model="gemini-3.7-flash",
+        model="gemini-3.8-flash",
         instruction=AGENT_INSTRUCTION,
         tools=[google_maps]
     )
