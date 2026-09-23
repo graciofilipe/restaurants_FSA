@@ -1,0 +1,25 @@
+Task: Stop a Places miss from erasing coordinates (D5) — Phase 1
+
+Summary of changes
+- scripts/enrich_maps_data.py: MERGE now sets latitude/longitude via
+  IFNULL(S.x, T.x) instead of assigning the incoming value unconditionally.
+- scripts/test_enrich_maps_data.py (new): first tests for this script. Covers
+  the Places miss, a hit with a location, and a hit with no location block.
+- cloudbuild.yaml: test step runs 'pytest app/ scripts/'.
+
+Why
+The miss payload sets latitude/longitude to None and the MERGE wrote them
+straight through, clearing any stored coordinates. Latent today because nothing
+populates those columns; destructive once Phase 8 stores FSA Geocode at ingest.
+
+Deviation from plan wording
+The plan said to remove latitude/longitude from the miss payload. That is not
+workable: the payload feeds a positional STRUCT whose field list must stay
+intact. Guarding in the MERGE is the correct fix and additionally covers a
+Places hit that returns no location, which the plan had not identified.
+
+Verification
+pytest app/ scripts/ -> 90 passed. Red phase confirmed 2 failures first.
+requirements.txt already carries requests and google-cloud-bigquery, and the
+module creates no BigQuery client at import, so the widened CI step stays
+offline.
