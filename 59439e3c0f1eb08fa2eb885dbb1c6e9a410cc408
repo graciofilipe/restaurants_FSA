@@ -1,0 +1,67 @@
+PHASE 1 VERIFICATION REPORT -- 'Stop the Bleeding'
+Date: 2026-09-23
+Scope: 21de8a1 (branch point from main) .. 59439e3
+
+AUTOMATED VERIFICATION
+Command announced and run: .venv/bin/python -m pytest app/ scripts/
+Result: 106 passed, 0 failed.
+
+This is the exact command cloudbuild.yaml:11 gates the deploy on, so a green
+run here is the same gate the trigger applies. Supplementary check: every .py
+file in the repo parsed with ast feature_version=(3,11) -- CI builds on
+python:3.11-slim while the local .venv is 3.13, and CLAUDE.md records prior
+breakage from exactly that gap. No incompatible syntax.
+
+Test count moved 82 -> 106 across the phase. Not all of that is new coverage:
++24 new tests, -10 removed with the two dead loaders D6 deleted.
+
+TASKS COMPLETED
+D1  3147fb0  ml_prediction.py tested gemini_insights, which every successful
+             merge sets to NULL, so the just-in-time guard never saw a cached
+             profile and re-paid for Gemini on every prediction run. Now reads
+             gemini_insights_structured in both query branches.
+D5  3e5f0c5  A Places miss wrote latitude/longitude as NULL unconditionally.
+             Guarded with IFNULL(S.x, T.x) in the MERGE. Prerequisite for R4
+             (storing FSA coordinates at ingest) -- without it the first Maps
+             sweep would erase them.
+D6  73e039c  The weekly cron ran SELECT * over fsa_master to build a set of
+             FHRSID strings. Replaced with a single-column loader that raises
+             rather than returning an empty set.
+D7  d3cdddb  fetch_data_for_all_coordinates had no page bound; an API that
+             never returns a short page looped until the job was killed.
+             max_pages=50 per coordinate, with a warning when reached.
+D10 96196fc  recents/genairesults_temp were fixed names in the production
+             dataset under CREATE OR REPLACE, so overlapping runs profiled each
+             other's selections. Per-run uuid suffix, one-day expiry, and a
+             finally that drops both. bulk_update_reviews got the same finally.
+    56a1181  Added scripts/test_bq_scripts.py -- bq_scripts.py had no test file
+             and holds format strings executed against production.
+    (d-log)  D-07 recorded in decision_log.md.
+    59439e3  CLAUDE.md corrected for what this phase changed.
+
+MANUAL VERIFICATION PLAN PRESENTED TO USER
+1. streamlit run app/ui/st_app.py
+2. Filter to restaurants that already have a Gemini profile.
+3. Click Generate Predictions; click it again on the same selection.
+4. Expect: the second run reports no new Gemini calls and is faster.
+5. Confirm against INFORMATION_SCHEMA.JOBS_BY_PROJECT (region-europe-west2),
+   filtering query LIKE '%AI.GENERATE%' over the last hour. Expect zero rows
+   attributable to the second run.
+6. Confirm no recents_* or genairesults_temp_* tables survive the run.
+
+USER CONFIRMATION
+Confirmed 2026-09-23.
+
+PHASE EXIT CRITERION
+'A second consecutive Generate Predictions over the same selection issues zero
+AI.GENERATE calls -- verified against INFORMATION_SCHEMA.JOBS, not by
+inspection.' Met, per the user's confirmation of step 5.
+
+OUTSTANDING, CARRIED FORWARD
+- The pre-existing production tables 'recents' and 'genairesults_temp' are now
+  orphaned. Dropping them is destructive and awaits explicit go-ahead.
+- Coverage could not be measured: pytest-cov is not in .venv or
+  requirements.txt, so the >80% quality gate in workflow.md was not evaluated
+  numerically for this phase. Folded into D11/D12 (Phase 11, test tooling).
+- Phase 0 (snapshot + recon) is still outstanding and gates Phases 3 onward.
+  Phase 1 was explicitly independent of it.
