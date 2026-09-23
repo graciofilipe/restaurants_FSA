@@ -11,7 +11,7 @@ source .venv/bin/activate && uv sync    # setup / re-sync deps from pyproject.to
 
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest app/ scripts/                    # 321 offline unit tests — this is what Cloud Build runs
+pytest app/ scripts/                    # 337 offline unit tests — this is what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest tests/                           # NOT offline-safe (see below)
 
@@ -32,6 +32,7 @@ python -m scripts.enrich_maps_data                # Google Places backfill (need
 python -m scripts.enrich_postcode_demographics    # postcodes.io → uk_postcode_demographics
 python -m scripts.evaluate_model --execute        # held-out MAE/RMSE/ρ vs the match_score baseline
 python -m scripts.invalidate_stale_predictions    # dry run; --execute clears pre-retrain scores
+python -m scripts.retire_v1_insights --drop       # done; the drop refuses without a full archive
 python -m app.cron.fetch_weekly                   # the weekly FSA ingest, run as a Cloud Run Job
 ```
 
@@ -78,8 +79,10 @@ a one-day expiry as a backstop).
    `train_bqml_model.py`; all three must agree or permanent misses get re-queried at cost.
 3. **Gemini profiling** — `execute_gemini_enrichment` in `bq_utils.py` runs three SQL steps
    (identify recents → `AI.GENERATE` → MERGE) using the templates in `scripts/bq_scripts.py`. The
-   result lands in `gemini_insights_structured` as raw JSON; the legacy text column
-   `gemini_insights` is nulled on merge.
+   result lands in `gemini_insights_structured` as raw JSON. Beware the name collision: the scratch
+   table aliases the raw `AI.GENERATE` output as `gemini_insights`, and so does the default
+   `column=` of `sql_conformance_check` — the *master* column of that name (the pre-V2 free text)
+   was archived to `gemini_insights_v1_archive_20260923` and dropped.
 4. **Demographics** — `scripts/enrich_postcode_demographics.py` fills LSOA/MSOA/IMD from postcodes.io.
 5. **Predict** — `app/services/ml_prediction.py` runs steps 2–4 just-in-time for whatever is missing,
    then `ML.PREDICT` into `predicted_user_rating` + `predicted_at`. Whether step 3 is "missing" is

@@ -671,9 +671,23 @@ would spend it on.
           with an `in_scope`-based predicate — a behaviour change, not a deletion.
     - [ ] Sub-task: Remove from ingest, `bulk_update_reviews`, `DISPLAY_COLUMNS`, filter signatures.
     - [ ] Sub-task: Update the affected tests.
-- [ ] Task: Retire `gemini_insights` (V1 text)
-    - [ ] Sub-task: Remove the `gemini_insights_status` filter branch and stop nulling the column.
-    - [ ] Sub-task: Remove from `ORIGINAL_COLUMNS_TO_KEEP`.
+- [x] Task: Retire `gemini_insights` (V1 text) — ec3e56d, ef6a002
+    - [x] Sub-task: Characterise what would be lost. **1,116 rows, median 1,379 characters, all
+          distinct; 1,090 in scope; 0 labelled; 0 that also hold a V2 structured profile — the two
+          sets are exactly disjoint.** So it is not a duplicate of anything (D-21).
+    - [x] Sub-task: Archive first. `scripts/retire_v1_insights.py`, dry run then `--archive
+          --execute` → `gemini_insights_v1_archive_20260923`, **1,116 rows**. Verified by row
+          count, `BIT_XOR(FARM_FINGERPRINT(...))` and total character count: identical on both
+          sides. The drop is gated on that count matching and refuses without it.
+    - [x] Sub-task: Remove the `gemini_insights_status` filter branch and stop nulling the column.
+    - [x] Sub-task: Remove from `ORIGINAL_COLUMNS_TO_KEEP` **and from `MASTER_BQ_SCHEMA`** — the
+          latter was not in the plan and is the one that matters: it is the weekly cron's load
+          schema, so naming a column the table lacks fails the scheduled ingest.
+    - [x] Sub-task: Deploy the code **before** the drop. Merge 6917678, build
+          fb2fec3a-90fb-47dc-bb20-1e5546835933 SUCCESS, revision `restaurants-fsa-00228-lp4`.
+    - [x] Sub-task: `ALTER TABLE ... DROP COLUMN gemini_insights`, on the go-ahead of 2026-09-23.
+          **44 → 43 columns; 11,268 rows and 411 labels unchanged.** `MASTER_BQ_SCHEMA` and the
+          live table now agree on all 43 names, re-checked after the drop.
 - [ ] Task: Remove the non-functional sidebar path input
     - [ ] Sub-task: Also closes the SQL-injection path recorded in the teamwork handoff note; the
           broader f-string SQL interpolation stays out of scope.
@@ -681,10 +695,13 @@ would spend it on.
     - [ ] Sub-task: Delete the package and its test.
     - [ ] Sub-task: Remove its assertions from `tests/test_model_upgrades.py` and eval config refs.
     - [ ] Sub-task: Confirm `app/agent.py` still loads and the ADK server still starts.
-- [ ] Task: Drop the retired columns (destructive — separate approval)
-    - [ ] Sub-task: Confirm by grep that nothing reads them.
+- [ ] Task: Drop `manual_review` (destructive — separate approval)
+    - [ ] Sub-task: Confirm by grep that nothing reads it.
     - [ ] Sub-task: Confirm the Phase 0 snapshot still exists.
     - [ ] Sub-task: `ALTER TABLE ... DROP COLUMN` only on explicit go-ahead.
+    - *Note:* `gemini_insights` is already dropped, under its own task above. The two were one task
+      in the plan; they separated because the V1 text needed archiving and `manual_review` needs a
+      replacement predicate written first, which is a behaviour change and not a deletion.
 
 ## Phase 11: Errors, Performance, Hygiene
 
