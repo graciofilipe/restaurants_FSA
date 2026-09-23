@@ -113,8 +113,13 @@ class TestFingerprint(unittest.TestCase):
 
     def test_the_fingerprint_still_covers_the_original_table(self):
         """The subtraction above must not quietly empty the list -- a
-        fingerprint over nothing would pass every comparison."""
-        self.assertEqual(len(PRE_EXISTING_COLUMNS), 27)
+        fingerprint over nothing would pass every comparison.
+
+        26, not the original 27: Phase 10 retired the V1 `gemini_insights`
+        text column. The count moving when a column is deliberately dropped
+        is the tripwire working, not failing.
+        """
+        self.assertEqual(len(PRE_EXISTING_COLUMNS), 26)
         self.assertIn('user_rating', PRE_EXISTING_COLUMNS)
         self.assertIn('gemini_insights_structured', PRE_EXISTING_COLUMNS)
 

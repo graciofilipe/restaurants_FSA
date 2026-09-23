@@ -135,7 +135,6 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
                     self.assertEqual(set(r_new.keys()), set(ORIGINAL_COLUMNS_TO_KEEP))
                     self.assertEqual(r_new['first_seen'], mock_datetime_str)
                     self.assertEqual(r_new['manual_review'], "not reviewed")
-                    self.assertIsNone(r_new.get('gemini_insights')) # Should be None as it's not in API mock
                     
                     if r_new['FHRSID'] == "2": # api_restaurant_2_new
                         self.assertEqual(r_new['BusinessName'], 'Cafe Terra')
@@ -193,7 +192,6 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         self.assertEqual(r_new['NewRatingPending'], 'false') # Preserved as string
         self.assertEqual(r_new['first_seen'], mock_date_str)
         self.assertEqual(r_new['manual_review'], "not reviewed")
-        self.assertIsNone(r_new.get('gemini_insights'))
         # Optional fields from ORIGINAL_COLUMNS_TO_KEEP not provided in API mock
         self.assertIsNone(r_new.get('AddressLine2'))
         self.assertIsNone(r_new.get('AddressLine3'))
@@ -259,7 +257,6 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
                 self.assertIsInstance(r_new['FHRSID'], str)
                 self.assertEqual(r_new['first_seen'], mock_date_str)
             self.assertEqual(r_new['manual_review'], "not reviewed")
-            self.assertIsNone(r_new.get('gemini_insights')) # Default
 
             self.assertNotIn('ExtraInfo', r_new)
             self.assertNotIn('AnotherExtra', r_new)
@@ -354,16 +351,16 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         api_establishments = [
             {'FHRSID': "123", 'BusinessName': 'API Cafe Update', 'RatingValue': '3', 'NewRatingPending': 'false',
              'AddressLine1': 'Addr1', 'AddressLine2': None, 'AddressLine3': None, 'PostCode': 'PC1',
-             'LocalAuthorityName': 'LA1', 'gemini_insights': None},
+             'LocalAuthorityName': 'LA1'},
             {'FHRSID': "789", 'BusinessName': 'API Cafe New Numeric', 'RatingValue': '5', 'NewRatingPending': 'false',
              'AddressLine1': 'Addr2', 'AddressLine2': 'Suite B', 'AddressLine3': None, 'PostCode': 'PC2',
-             'LocalAuthorityName': 'LA2', 'gemini_insights': 'Good place'},
+             'LocalAuthorityName': 'LA2'},
             {'FHRSID': "ABC", 'BusinessName': 'API NonNumeric Update', 'RatingValue': '2', 'NewRatingPending': 'true',
              'AddressLine1': 'Addr3', 'AddressLine2': None, 'AddressLine3': 'Old Town', 'PostCode': 'PC3',
-             'LocalAuthorityName': 'LA3', 'gemini_insights': None},
+             'LocalAuthorityName': 'LA3'},
             {'FHRSID': "XYZ", 'BusinessName': 'API Cafe New NonNumeric', 'RatingValue': '1', 'NewRatingPending': 'true',
              'AddressLine1': 'Addr4', 'AddressLine2': None, 'AddressLine3': None, 'PostCode': 'PC4',
-             'LocalAuthorityName': 'LA4', 'gemini_insights': None}
+             'LocalAuthorityName': 'LA4'}
         ]
         for est_api in api_establishments:
             for key in ORIGINAL_COLUMNS_TO_KEEP:

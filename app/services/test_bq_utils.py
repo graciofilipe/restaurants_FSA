@@ -27,7 +27,6 @@ NEW_BQ_SCHEMA = [
     bigquery.SchemaField(sanitize_column_name('newratingpending'), 'BOOLEAN', mode='NULLABLE'),
     bigquery.SchemaField(sanitize_column_name('first_seen'), 'DATE', mode='NULLABLE'),
     bigquery.SchemaField(sanitize_column_name('manual_review'), 'STRING', mode='NULLABLE'),
-    bigquery.SchemaField(sanitize_column_name('gemini_insights'), 'STRING', mode='NULLABLE'),
 ]
 
 # --- Tests for load_fhrsids_from_bq ---
@@ -100,8 +99,7 @@ def test_write_to_bigquery_logic_with_fixed_schema(mock_bq_client_constructor, m
         'RatingValue': ['5', '3'], # API often gives strings
         'NewRatingPending': ['false', 'true'], # API often gives strings for boolean
         'first_seen': ['2023-01-01', '2023-01-02'],
-        'manual_review': ['reviewed', 'not reviewed'],
-        'gemini_insights': [None, 'Some insight']
+        'manual_review': ['reviewed', 'not reviewed']
     }
     # Ensure all columns from ORIGINAL_COLUMNS_TO_KEEP are present for robust test
     for col in ORIGINAL_COLUMNS_TO_KEEP:
@@ -187,8 +185,7 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
             'ratingvalue': ['5', '4'], # Kept as string, type conversion handled by BQ or later if needed by schema
             'newratingpending': [False, True], # Boolean directly for sanitized input
             'first_seen': ['2023-03-01', '2023-03-02'],
-            'manual_review': ['reviewed', 'pending'],
-            'gemini_insights': [None, 'Insightful text here']
+            'manual_review': ['reviewed', 'pending']
         }
         # Ensure all columns from NEW_BQ_SCHEMA are present
         for col_name in sanitized_schema_names:
@@ -726,3 +723,43 @@ class TestBulkUpdateReviews(unittest.TestCase):
         df_passed = kwargs.get('df') if 'df' in kwargs else args[0]
 
         self.assertIn('user_rating', df_passed.columns)
+
+
+# --- The V1 `gemini_insights` column is retired ---
+
+class TestTheV1TextColumnIsGone(unittest.TestCase):
+    """The column is dropped from the live table, so nothing may name it.
+
+    `MASTER_BQ_SCHEMA` is the load schema for the weekly cron's
+    `append_to_bigquery`. A column listed here that the table does not have
+    fails the scheduled ingest -- silently, once a week, in a Cloud Run Job
+    nobody is watching. That is why these assertions are worth having rather
+    than trusting a grep at drop time.
+    """
+
+    def test_the_load_schema_does_not_name_it(self):
+        from app.services.bq_utils import MASTER_BQ_SCHEMA
+        self.assertNotIn('gemini_insights', [f.name for f in MASTER_BQ_SCHEMA])
+
+    def test_the_structured_column_is_untouched(self):
+        """`gemini_insights_structured` is the V2 audit trail and stays."""
+        from app.services.bq_utils import MASTER_BQ_SCHEMA
+        self.assertIn('gemini_insights_structured', [f.name for f in MASTER_BQ_SCHEMA])
+
+    def test_the_ingest_does_not_carry_it(self):
+        """`ORIGINAL_COLUMNS_TO_KEEP` is a flat key copy of the FSA payload.
+        The FSA API has never returned this field; the entry only existed to
+        reserve a NULL in a column that no longer exists.
+        """
+        self.assertNotIn('gemini_insights', ORIGINAL_COLUMNS_TO_KEEP)
+
+    def test_the_filter_it_backed_is_gone(self):
+        """`gemini_insights_status` filtered on a column that has been NULL on
+        every row since the V2 merge started nulling it, and no caller ever
+        passed it. Keeping the parameter would mean keeping a WHERE clause
+        against a dropped column.
+        """
+        import inspect
+        from app.services.bq_utils import load_filtered_data_from_bq
+        self.assertNotIn('gemini_insights_status',
+                         inspect.signature(load_filtered_data_from_bq).parameters)
