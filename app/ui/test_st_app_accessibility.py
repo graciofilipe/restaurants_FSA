@@ -15,5 +15,21 @@ class TestStAppAccessibility(unittest.TestCase):
         assert 'auth_manager.is_authenticated()' not in content
         assert 'login_page(auth_manager)' not in content
 
+    def test_the_bigquery_path_is_not_user_editable(self):
+        """The sidebar offered a "BigQuery Table Path" box whose value was
+        never read -- `bq_path` is assigned from the constant two lines above
+        it and nothing reassigns it. So the control did nothing, while looking
+        like it retargeted the whole app.
+
+        It is also where an injected table path would have entered: the query
+        builders interpolate this by f-string. Removing the widget closes that
+        route without touching the broader SQL-construction question.
+        """
+        with open('app/ui/st_app.py', 'r') as f:
+            content = f.read()
+        assert 'BigQuery Table Path' not in content
+        assert 'bq_path_input' not in content
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -24,7 +24,6 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from app.agent import root_agent as explorer_agent
-from app.maps_agent.agent import root_agent as maps_agent
 from app.services.bq_utils import execute_gemini_enrichment
 
 
@@ -37,12 +36,6 @@ def test_explorer_agent_model_is_gemini_3_8_flash():
         assert explorer_agent.model.model == "gemini-3.8-flash"
     else:
         assert explorer_agent.model == "gemini-3.8-flash"
-
-
-def test_maps_agent_model_is_gemini_3_8_flash():
-    """Verify that root_agent in app/maps_agent/agent.py is configured with gemini-3.8-flash."""
-    assert maps_agent.name == "restaurant_maps_agent"
-    assert maps_agent.model == "gemini-3.8-flash"
 
 
 def test_bq_utils_default_model_endpoint():

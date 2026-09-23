@@ -26,7 +26,6 @@ NEW_BQ_SCHEMA = [
     bigquery.SchemaField(sanitize_column_name('ratingvalue'), 'STRING', mode='NULLABLE'),
     bigquery.SchemaField(sanitize_column_name('newratingpending'), 'BOOLEAN', mode='NULLABLE'),
     bigquery.SchemaField(sanitize_column_name('first_seen'), 'DATE', mode='NULLABLE'),
-    bigquery.SchemaField(sanitize_column_name('manual_review'), 'STRING', mode='NULLABLE'),
 ]
 
 # --- Tests for load_fhrsids_from_bq ---
@@ -98,8 +97,7 @@ def test_write_to_bigquery_logic_with_fixed_schema(mock_bq_client_constructor, m
         'LocalAuthorityName': ['Council A', 'Council B'],
         'RatingValue': ['5', '3'], # API often gives strings
         'NewRatingPending': ['false', 'true'], # API often gives strings for boolean
-        'first_seen': ['2023-01-01', '2023-01-02'],
-        'manual_review': ['reviewed', 'not reviewed']
+        'first_seen': ['2023-01-01', '2023-01-02']
     }
     # Ensure all columns from ORIGINAL_COLUMNS_TO_KEEP are present for robust test
     for col in ORIGINAL_COLUMNS_TO_KEEP:
@@ -184,8 +182,7 @@ class TestAppendToBigQuery(unittest.TestCase): # Changed to use unittest.TestCas
             'localauthorityname': ['Council X', 'Council Y'],
             'ratingvalue': ['5', '4'], # Kept as string, type conversion handled by BQ or later if needed by schema
             'newratingpending': [False, True], # Boolean directly for sanitized input
-            'first_seen': ['2023-03-01', '2023-03-02'],
-            'manual_review': ['reviewed', 'pending']
+            'first_seen': ['2023-03-01', '2023-03-02']
         }
         # Ensure all columns from NEW_BQ_SCHEMA are present
         for col_name in sanitized_schema_names:
@@ -412,14 +409,86 @@ class TestBqUtilsGeminiSelection(unittest.TestCase):
             dataset_id='test-ds',
             master_table_id='master',
             days_recent=30,
-            review_status_filter=['pending']
         )
-        
+
         call_args = mock_client.query.call_args_list[0]
         query_executed = call_args[0][0]
-        
+
         self.assertIn("DATE_DIFF", query_executed)
         self.assertNotIn("fhrsid IN", query_executed)
+
+
+class TestTheDefaultFilterAsksWhetherItIsARestaurant(unittest.TestCase):
+    """The untargeted branch picked its rows by `manual_review`, a free-text
+    column with a typo in it ('prending', 2 rows) whose dominant value is
+    'rejected' on 9,348 rows that are `in_scope = TRUE`. It answered "has a
+    human typed something here", which is not the question worth spending a
+    Gemini call on. `in_scope` answers "is this a sit-down restaurant".
+    """
+
+    def _filter(self, mock_client_cls, **kwargs):
+        from app.services.bq_utils import execute_gemini_enrichment
+        mock_client = mock_client_cls.return_value
+        execute_gemini_enrichment(
+            project_id='test-proj', dataset_id='test-ds', master_table_id='master', **kwargs)
+        return mock_client.query.call_args_list[0][0][0]
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_it_no_longer_reads_manual_review(self, mock_client_cls):
+        self.assertNotIn('manual_review', self._filter(mock_client_cls))
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_a_known_cafe_is_not_profiled(self, mock_client_cls):
+        """`in_scope IS FALSE` is a decision already made, by triage or by the
+        profiler itself. Paying to re-profile it is the whole cost defect in
+        miniature. 7 of the 153 rows in the current 33-day window are these."""
+        self.assertIn('in_scope IS NOT FALSE', self._filter(mock_client_cls))
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_an_untriaged_row_is_still_profiled(self, mock_client_cls):
+        """`IS NOT FALSE`, not `IS TRUE`. Every row arrives with `in_scope`
+        NULL and stays that way until something judges it -- and profiling is
+        usually what does the judging. `IS TRUE` would mean new restaurants
+        are never profiled, which is the entire point of the pipeline."""
+        sql = self._filter(mock_client_cls)
+        self.assertNotIn('in_scope = TRUE', sql)
+        self.assertNotIn('in_scope IS TRUE', sql)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_the_date_window_still_applies(self, mock_client_cls):
+        """The scope predicate replaces the status one; it does not widen the
+        run to the whole table. 11,268 rows at once is not a filter."""
+        self.assertIn('DATE_DIFF', self._filter(mock_client_cls, days_recent=30))
+
+
+class TestManualReviewIsGone(unittest.TestCase):
+    """A free-text status column, superseded by `in_scope` + `user_rating`.
+
+    Nothing wrote it but the ingest default, nothing read it but a filter
+    parameter no caller passed, and the UI only displayed it.
+    """
+
+    def test_the_load_schema_does_not_name_it(self):
+        from app.services.bq_utils import MASTER_BQ_SCHEMA
+        self.assertNotIn('manual_review', [f.name for f in MASTER_BQ_SCHEMA])
+
+    def test_the_ingest_does_not_carry_it(self):
+        self.assertNotIn('manual_review', ORIGINAL_COLUMNS_TO_KEEP)
+
+    def test_neither_filter_takes_a_review_status(self):
+        import inspect
+        from app.services.bq_utils import (
+            execute_gemini_enrichment, load_filtered_data_from_bq)
+        for fn in (execute_gemini_enrichment, load_filtered_data_from_bq):
+            self.assertNotIn('review_status_filter', inspect.signature(fn).parameters, fn.__name__)
+
+    def test_the_bulk_writer_cannot_set_it(self):
+        """`bulk_update_reviews` accepted it as a writable column. The UI never
+        passed one -- it writes `in_scope`, `user_rating` and `rating_source`."""
+        import inspect
+        from app.services import bq_utils
+        source = inspect.getsource(bq_utils.bulk_update_reviews)
+        self.assertNotIn('manual_review', source)
 
 
 class TestGeminiEnrichmentTempTables(unittest.TestCase):
@@ -573,7 +642,7 @@ class TestBulkUpdateTempTableCleanup(unittest.TestCase):
         mock_client.query.return_value.result.side_effect = Exception("merge failed")
 
         success, _ = bulk_update_reviews(
-            'p', 'd', 't', pd.DataFrame({'fhrsid': ['1'], 'manual_review': ['approved']})
+            'p', 'd', 't', pd.DataFrame({'fhrsid': ['1'], 'in_scope': [True]})
         )
 
         self.assertFalse(success)
@@ -662,7 +731,6 @@ class TestBulkUpdateReviews(unittest.TestCase):
 
         # Simulate UI input
         selected_fhrsids = ["1", "2", "3"]
-        new_status = "accepted"
         project_id = "test-project"
         dataset_id = "test-dataset"
         table_id = "test-table"
@@ -671,7 +739,7 @@ class TestBulkUpdateReviews(unittest.TestCase):
         # Create DataFrame
         df_update = pd.DataFrame({
             'fhrsid': selected_fhrsids,
-            'manual_review': [new_status] * len(selected_fhrsids)
+            'in_scope': [True] * len(selected_fhrsids)
         })
 
         # Call existing service function
@@ -688,7 +756,7 @@ class TestBulkUpdateReviews(unittest.TestCase):
         
         self.assertEqual(len(df_passed), 3)
         self.assertEqual(list(df_passed['fhrsid']), selected_fhrsids)
-        self.assertEqual(list(df_passed['manual_review']), [new_status] * 3)
+        self.assertEqual(list(df_passed['in_scope']), [True] * 3)
 
     @patch('app.services.bq_utils.bigquery.Client')
     @patch('app.services.bq_utils.write_to_bigquery')
@@ -703,7 +771,6 @@ class TestBulkUpdateReviews(unittest.TestCase):
         mock_write.return_value = True
 
         selected_fhrsids = ['1', '2', '3']
-        new_status = 'accepted'
         user_rating = 8
         project_id = 'test-project'
         dataset_id = 'test-dataset'
@@ -711,7 +778,6 @@ class TestBulkUpdateReviews(unittest.TestCase):
 
         df_update = pd.DataFrame({
             'fhrsid': selected_fhrsids,
-            'manual_review': [new_status] * len(selected_fhrsids),
             'user_rating': [user_rating] * len(selected_fhrsids)
         })
 

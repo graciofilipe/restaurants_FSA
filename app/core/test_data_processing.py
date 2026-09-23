@@ -134,7 +134,6 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
                 for r_new in new_restaurants:
                     self.assertEqual(set(r_new.keys()), set(ORIGINAL_COLUMNS_TO_KEEP))
                     self.assertEqual(r_new['first_seen'], mock_datetime_str)
-                    self.assertEqual(r_new['manual_review'], "not reviewed")
                     
                     if r_new['FHRSID'] == "2": # api_restaurant_2_new
                         self.assertEqual(r_new['BusinessName'], 'Cafe Terra')
@@ -191,7 +190,6 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         self.assertEqual(r_new['LocalAuthorityName'], 'LA')
         self.assertEqual(r_new['NewRatingPending'], 'false') # Preserved as string
         self.assertEqual(r_new['first_seen'], mock_date_str)
-        self.assertEqual(r_new['manual_review'], "not reviewed")
         # Optional fields from ORIGINAL_COLUMNS_TO_KEEP not provided in API mock
         self.assertIsNone(r_new.get('AddressLine2'))
         self.assertIsNone(r_new.get('AddressLine3'))
@@ -256,7 +254,6 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
                 self.assertEqual(set(r_new.keys()), set(ORIGINAL_COLUMNS_TO_KEEP))
                 self.assertIsInstance(r_new['FHRSID'], str)
                 self.assertEqual(r_new['first_seen'], mock_date_str)
-            self.assertEqual(r_new['manual_review'], "not reviewed")
 
             self.assertNotIn('ExtraInfo', r_new)
             self.assertNotIn('AnotherExtra', r_new)

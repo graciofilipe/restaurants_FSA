@@ -11,7 +11,7 @@ source .venv/bin/activate && uv sync    # setup / re-sync deps from pyproject.to
 
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest app/ scripts/                    # 321 offline unit tests — this is what Cloud Build runs
+pytest app/ scripts/                    # 345 offline unit tests — this is what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest tests/                           # NOT offline-safe (see below)
 
@@ -32,6 +32,7 @@ python -m scripts.enrich_maps_data                # Google Places backfill (need
 python -m scripts.enrich_postcode_demographics    # postcodes.io → uk_postcode_demographics
 python -m scripts.evaluate_model --execute        # held-out MAE/RMSE/ρ vs the match_score baseline
 python -m scripts.invalidate_stale_predictions    # dry run; --execute clears pre-retrain scores
+python -m scripts.retire_v1_insights --drop       # done; the drop refuses without a full archive
 python -m app.cron.fetch_weekly                   # the weekly FSA ingest, run as a Cloud Run Job
 ```
 
@@ -78,8 +79,14 @@ a one-day expiry as a backstop).
    `train_bqml_model.py`; all three must agree or permanent misses get re-queried at cost.
 3. **Gemini profiling** — `execute_gemini_enrichment` in `bq_utils.py` runs three SQL steps
    (identify recents → `AI.GENERATE` → MERGE) using the templates in `scripts/bq_scripts.py`. The
-   result lands in `gemini_insights_structured` as raw JSON; the legacy text column
-   `gemini_insights` is nulled on merge.
+   result lands in `gemini_insights_structured` as raw JSON. Beware the name collision: the scratch
+   table aliases the raw `AI.GENERATE` output as `gemini_insights`, and so does the default
+   `column=` of `sql_conformance_check` — the *master* column of that name (the pre-V2 free text)
+   was archived to `gemini_insights_v1_archive_20260923` and dropped. When called without `fhrsids`
+   it selects recent rows with `in_scope IS NOT FALSE` — deliberately not `IS TRUE`, since rows
+   arrive untriaged and profiling is what answers the question; what it excludes is the
+   already-answered no. This replaced a `manual_review` predicate whose dominant value, `rejected`,
+   was set on 9,348 rows that are in scope.
 4. **Demographics** — `scripts/enrich_postcode_demographics.py` fills LSOA/MSOA/IMD from postcodes.io.
 5. **Predict** — `app/services/ml_prediction.py` runs steps 2–4 just-in-time for whatever is missing,
    then `ML.PREDICT` into `predicted_user_rating` + `predicted_at`. Whether step 3 is "missing" is
@@ -97,13 +104,14 @@ a one-day expiry as a backstop).
 - **The production profiler** is a BigQuery `AI.GENERATE` call. Its prompt is
   `_SYSTEM_INSTRUCTION_TEXT` in `scripts/bq_scripts.py` — the "Healthy Host & Explorer" persona and
   the 6 evaluation pillars. This is what the Streamlit app and the ML pipeline actually use.
-- **The ADK agents** (`app/agent.py` root agent, `app/maps_agent/agent.py`) use
-  `GoogleMapsGroundingTool` and are served by `app/fast_api_app.py`. **Streamlit never calls them.**
-  They exist as the evaluated agent surface for `tests/eval/` and `adk eval`. The Docker image's
-  `CMD` runs Streamlit, so the FastAPI app only runs locally or under test.
+- **The ADK agent** (`app/agent.py`, the root agent) uses `GoogleMapsGroundingTool` and is served by
+  `app/fast_api_app.py`. **Streamlit never calls it.** It exists as the evaluated agent surface for
+  `tests/eval/` and `adk eval`. The Docker image's `CMD` runs Streamlit, so the FastAPI app only
+  runs locally or under test. There was a second, near-identical `app/maps_agent/`; it was removed
+  in Phase 10 — nothing imported it but its own test, and `agents_dir` never discovered it.
 
 Both must stay on `gemini-3.8-flash` (or `gemini-3.1-pro`). Legacy model IDs are prohibited and
-`tests/test_model_upgrades.py` asserts this across agents, SQL, and eval configs.
+`tests/test_model_upgrades.py` asserts this across the agent, SQL, and eval configs.
 
 ### The 6-pillar contract has one definition
 

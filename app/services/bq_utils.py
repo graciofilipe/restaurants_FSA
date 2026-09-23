@@ -29,7 +29,7 @@ ORIGINAL_COLUMNS_TO_KEEP = [
     'FHRSID', 'BusinessName', 'AddressLine1', 'AddressLine2', 'AddressLine3',
     'PostCode', 'LocalAuthorityName', 'RatingValue', 'NewRatingPending',
     'latitude', 'longitude',
-    'first_seen', 'manual_review', 'gemini_insights_structured'
+    'first_seen', 'gemini_insights_structured'
 ]
 
 class BigQueryExecutionError(Exception):
@@ -88,7 +88,6 @@ def execute_gemini_enrichment(
     connection_id: str = 'eu.gemini',
     model_endpoint: str = 'gemini-3.8-flash',
     days_recent: int = 33,
-    review_status_filter: Optional[List[str]] = None,
     excluded_locations: Optional[List[str]] = None,
     fhrsids: Optional[List[str]] = None,
 ) -> bool:
@@ -103,12 +102,19 @@ def execute_gemini_enrichment(
             escaped = [_sql_quote(f) for f in fhrsids]
             filter_condition = f"CAST(fhrsid AS STRING) IN ({', '.join(escaped)})"
         else:
-            status_str = ", ".join(_sql_quote(s) for s in (review_status_filter or ['pending', 'not reviewed']))
             excl_clause = ""
             if excluded_locations:
                 escaped_locs = [_sql_quote(l) for l in excluded_locations]
                 excl_clause = f"AND localauthorityname NOT IN ({', '.join(escaped_locs)})"
-            filter_condition = f"DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent} AND manual_review IN ({status_str}) {excl_clause}"
+            # `in_scope IS NOT FALSE`, not `IS TRUE`: every row arrives untriaged
+            # and profiling is usually what decides the question, so `IS TRUE`
+            # would mean a new restaurant is never looked at. What this does
+            # exclude is the already-answered no -- a cafe or a bakery, judged
+            # by triage or by an earlier profile, which there is no reason to
+            # pay to profile again. It replaces `manual_review IN (...)`, a
+            # free-text column whose dominant value is 'rejected' on 9,348 rows
+            # that are in scope.
+            filter_condition = f"DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent} AND in_scope IS NOT FALSE {excl_clause}"
 
         q_recents = SCRIPT_IDENTIFY_RECENTS.format(
             project_id=project_id, dataset_id=dataset_id, source_table=master_table_id,
@@ -164,7 +170,6 @@ def load_filtered_data_from_bq(
     dataset_id: str,
     table_id: str,
     days_filter: Optional[int] = None,
-    review_status_filter: Optional[List[str]] = None,
     excluded_locations: Optional[List[str]] = None,
     postcode_areas: Optional[List[str]] = None,
     first_seen_start_date: Optional[str] = None,
@@ -179,9 +184,6 @@ def load_filtered_data_from_bq(
         query += f" AND DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_filter}"
     if first_seen_start_date:
         query += f" AND first_seen >= '{first_seen_start_date}'"
-    if review_status_filter:
-        escaped_statuses = [_sql_quote(s) for s in review_status_filter]
-        query += f" AND manual_review IN ({', '.join(escaped_statuses)})"
     if in_scope_filter:
         scope_clauses = []
         if 'in_scope' in in_scope_filter:
@@ -229,7 +231,7 @@ def sanitize_column_name(column_name: str) -> str:
 def bulk_update_reviews(
     project_id: str, dataset_id: str, target_table_id: str, df_updates: pd.DataFrame
 ) -> Tuple[bool, str]:
-    """Performs a bulk update of manual_review, in_scope, user_rating, and/or rating_source columns using a temp table and MERGE."""
+    """Performs a bulk update of in_scope, user_rating, and/or rating_source columns using a temp table and MERGE."""
     if df_updates.empty:
         return False, "DataFrame is empty."
 
@@ -244,7 +246,7 @@ def bulk_update_reviews(
     if df_updates.empty:
         return False, "No valid fhrsid values provided."
 
-    possible_update_cols = ['manual_review', 'user_rating', 'in_scope', 'rating_source']
+    possible_update_cols = ['user_rating', 'in_scope', 'rating_source']
     updatable_cols = [c for c in possible_update_cols if c in df_updates.columns]
     if not updatable_cols:
         return False, f"No updatable columns provided in DataFrame. Expected at least one of {possible_update_cols}"
@@ -258,7 +260,7 @@ def bulk_update_reviews(
             temp_schema.append(bigquery.SchemaField("in_scope", "BOOLEAN"))
         elif col == 'user_rating':
             temp_schema.append(bigquery.SchemaField("user_rating", "INT64"))
-        elif col in ['manual_review', 'rating_source']:
+        elif col == 'rating_source':
             temp_schema.append(bigquery.SchemaField(col, "STRING"))
 
     if not write_to_bigquery(df_updates, project_id, dataset_id, temp_table_id, required_cols, temp_schema):
@@ -385,7 +387,6 @@ MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('ratingvalue', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('newratingpending', 'BOOLEAN', mode='NULLABLE'),
     bigquery.SchemaField('first_seen', 'DATE', mode='NULLABLE'),
-    bigquery.SchemaField('manual_review', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('user_rating', 'INT64', mode='NULLABLE'),
     bigquery.SchemaField('predicted_user_rating', 'FLOAT64', mode='NULLABLE'),
     bigquery.SchemaField('predicted_at', 'TIMESTAMP', mode='NULLABLE'),

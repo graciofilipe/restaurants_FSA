@@ -19,7 +19,7 @@ This project is a Streamlit-based web application designed to fetch, analyze, an
 *   **`app/services/bq_utils.py`**: Streamlined utility module for all BigQuery interactions (data loading, schema management, merge operations, and Gemini SQL enrichments).
 *   **`app/services/api_client.py`**: Contains `fetch_api_data` to interact with the UK Food Standards Agency API.
 *   **`app/core/data_processing.py`**: Handles coordinate parsing, API data normalization, duplicate detection, and 6-pillar Gemini structured metric extraction.
-*   **`app/agent.py` & `app/maps_agent/agent.py`**: Cloud-native ADK agent definitions configured with `gemini-3.8-flash` and `GoogleMapsGroundingTool`.
+*   **`app/agent.py`**: Cloud-native ADK agent definition configured with `gemini-3.8-flash` and `GoogleMapsGroundingTool`.
 *   **`app/fast_api_app.py`**: FastAPI wrapper with resilient telemetry and authentication fallbacks for local/CI test isolation and Cloud Run deployment.
 
 ### Maintenance & Migration Scripts (`scripts/`)

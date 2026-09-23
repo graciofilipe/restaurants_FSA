@@ -124,7 +124,6 @@ def process_and_update_master_data(
             est['FHRSID'] = cid
             if cid not in existing_ids and cid not in processed_ids:
                 est['first_seen'] = today_date
-                est['manual_review'] = "not reviewed"
                 est['latitude'], est['longitude'] = extract_fsa_coordinates(est)
                 new_records.append({k: est.get(k) for k in ORIGINAL_COLUMNS_TO_KEEP})
                 processed_ids.add(cid)
