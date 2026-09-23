@@ -103,6 +103,16 @@ def test_match_score_baseline_is_fitted_not_compared_raw():
     assert "input_label_cols=['user_rating']" in sql
 
 
+def test_match_score_ranking_needs_no_model():
+    """The plan's 'rank the held-out rows by match_score alone'. Computing it
+    from a trained model would fold the fit into the ranking number."""
+    from scripts.evaluate_model import build_match_score_rank_sql
+    sql = build_match_score_rank_sql(SOURCE, 'AND 1=1')
+    assert 'ML.PREDICT' not in sql
+    assert 'MODEL' not in sql
+    assert 'CORR' in sql and 'RANK() OVER' in sql
+
+
 def test_only_the_two_training_statements_write():
     writers = [name for name, _, writes in build_all_statements(PROJECT, DATASET, TABLE, 5) if writes]
     assert writers == ['train_boosted_tree', 'train_match_score_baseline']

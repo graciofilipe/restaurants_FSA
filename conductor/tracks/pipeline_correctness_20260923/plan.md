@@ -158,13 +158,35 @@ in D-08.
 
 *A held-out number taken now is the only thing that can prove the repair helped.*
 
-- [ ] Task: Build the held-out evaluation harness
-    - [ ] Sub-task: `scripts/evaluate_model.py`, with its scoring core under `app/` so CI covers it.
-    - [ ] Sub-task: Split labelled rows, train on the majority, `ML.EVALUATE` on the remainder.
-- [ ] Task: Record the two baseline numbers
-    - [ ] Sub-task: MAE/RMSE for the current model, dead features and all.
-    - [ ] Sub-task: The no-ML baseline — the same held-out rows ranked by `match_score` alone.
-    - [ ] Sub-task: Write both to `decision_log.md` for verbatim reuse in Phase 9.
+- [x] Task: Build the held-out evaluation harness — 9c2b0e0
+    - [x] Sub-task: `scripts/evaluate_model.py`, with its scoring core under `app/` so CI covers it.
+          *Deviation:* it lives wholly in `scripts/`. The constraint existed because CI ran only
+          `pytest app/`; Phase 1 changed `cloudbuild.yaml` to `pytest app/ scripts/`, so `scripts/`
+          is now covered and the split would have bought nothing.
+    - [x] Sub-task: Split labelled rows, train on the majority, `ML.EVALUATE` on the remainder.
+          **292 train / 77 holdout**, split on `FARM_FINGERPRINT(fhrsid) MOD 5` so Phase 9 gets the
+          same rows. Mean rating 2.613 vs 2.299 — close enough that the comparison is not measuring
+          the split.
+    - [x] Sub-task: Extract `build_training_select` from `train_bqml_model.py` so the harness
+          baselines the production features rather than a third hand-copy. *Not in the plan;*
+          required, because a hand-copied feature list would have made the Phase 9 delta measure
+          harness drift. The production training query was dry-run afterwards to confirm it is
+          unchanged.
+- [x] Task: Record the two baseline numbers — 9c2b0e0
+    - [x] Sub-task: MAE/RMSE for the current model, dead features and all. **0.847 / 1.283.**
+    - [x] Sub-task: The no-ML baseline — the same held-out rows ranked by `match_score` alone.
+          **0.697 / 1.095, Spearman 0.603.** Fitted as a one-feature `LINEAR_REG`, since
+          `match_score` is 0–100 and `user_rating` is 1–10 and a raw MAE would have measured the
+          scale gap.
+    - [x] Sub-task: A third number not in the plan — the **training-mean floor, MAE 1.566**. Without
+          it, "the tree scores 0.847" has no scale.
+    - [x] Sub-task: Write both to `decision_log.md` for verbatim reuse in Phase 9. **D-11.**
+
+**Exit met, with a result that reframes Phase 9.** The one-feature baseline beats the twenty-feature
+boosted tree on every metric — MAE, RMSE, R² and rank correlation. Both beat the mean, so
+`match_score` carries real signal and the tree destroys part of it. This is what five constant-zero
+features plus high-cardinality categoricals over 292 rows should be expected to produce. The
+keep-or-retire recommendation stays in Phase 9; Phase 2's job was to make it answerable.
 
 ## Phase 3: Constrain the Profiler's Output Shape (D14)
 

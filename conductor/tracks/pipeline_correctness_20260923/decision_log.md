@@ -378,6 +378,55 @@ misreading.
 
 ---
 
+## D-11 — Baseline: the BQML model is beaten by the single feature it wraps
+
+*Measured 2026-09-23 by `scripts/evaluate_model.py`. 292 training rows, 77 held-out, split by
+`FARM_FINGERPRINT(fhrsid) MOD 5`. Phase 9 must reuse `--holdout_modulus 5` verbatim.*
+
+### The three numbers
+
+| Predictor | Features | MAE | RMSE | R² | Spearman |
+|---|---|---|---|---|---|
+| `BOOSTED_TREE_REGRESSOR`, current features | ~20 | **0.847** | 1.283 | 0.545 | 0.545 |
+| `match_score` alone (`LINEAR_REG`) | 1 | **0.697** | 1.095 | 0.668 | 0.603 |
+| Training mean | 0 | 1.566 | 1.926 | 0.0 | n/a |
+
+**The one-feature baseline beats the twenty-feature boosted tree on every metric** — 18% lower MAE,
+15% lower RMSE, higher R², and a better ranking correlation, which is the property the app actually
+depends on since the queue is sorted by prediction.
+
+Both comfortably beat the mean, so `match_score` carries real signal. The tree then destroys part of
+it.
+
+### Why this is the expected result, not an anomaly
+
+Five of the model's six Gemini features are pinned to `0` by D2. What remains beyond `match_score`
+is largely high-cardinality categoricals — `postcode`, `localauthorityname`, `lsoa`, `msoa`,
+`maps_types_array` — which give a boosted tree ample room to memorise 292 rows. Small data plus wide
+categoricals plus five dead columns is a recipe for exactly this.
+
+### Decision
+
+Recorded as the Phase 2 floor; **no action taken now**. Phase 9 re-runs this harness unchanged and
+reports the delta. Three outcomes are now possible and all are legitimate:
+
+1. Repaired features push the tree past 0.697 MAE — the model earns its place.
+2. It improves but still trails `match_score` — ship the linear baseline and retire BQML.
+3. It does not improve — the pillars carry no signal the label responds to, and the profiler prompt,
+   not the plumbing, is the thing to revisit.
+
+The keep-or-retire recommendation belongs to Phase 9; this phase exists so that recommendation can
+be made on numbers.
+
+### Caveat recorded deliberately
+
+The deployed `restaurant_preference_model` is **not** the model measured here. It was trained on all
+369 in-scope labelled rows including these 77, so its own `ML.EVALUATE` scores data it memorised and
+cannot serve as a baseline. The row above is a fresh model of the same type and features, trained on
+the training split only. That is the honest comparison and the one Phase 9 will repeat.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
@@ -401,8 +450,12 @@ misreading.
 | `in_scope` rows contradicting `pillar_is_sit_down` (D13) | **1,476** (1,458 + 18) | 2026-09-23 |
 | Rows with a prediction | 1,065 | 2026-09-23 |
 | Labelled rows / labelled **and** profiled | 411 / **404** | 2026-09-23 |
-| Baseline model MAE/RMSE | _pending Phase 2_ | |
-| `match_score`-only baseline | _pending Phase 2_ | |
+| Labelled rows passing the training `in_scope` filter | **369** (42 excluded) | 2026-09-23 |
+| Phase 2 split (`FARM_FINGERPRINT(fhrsid) MOD 5`) | 292 train / 77 holdout | 2026-09-23 |
+| Split mean rating, train / holdout | 2.613 / 2.299 | 2026-09-23 |
+| Baseline model MAE / RMSE / R² / Spearman | **0.847 / 1.283 / 0.545 / 0.545** | 2026-09-23 |
+| `match_score`-only baseline MAE / RMSE / R² / Spearman | **0.697 / 1.095 / 0.668 / 0.603** | 2026-09-23 |
+| Training-mean floor MAE / RMSE | 1.566 / 1.926 | 2026-09-23 |
 
 ## Cost ledger
 

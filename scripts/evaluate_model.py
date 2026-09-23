@@ -152,6 +152,30 @@ ranked AS (
 SELECT CORR(rank_pred, rank_actual) AS spearman FROM ranked"""
 
 
+def build_match_score_rank_sql(source_table, holdout_predicate) -> str:
+    """Spearman of raw `match_score` against the label -- no model at all.
+
+    This is the plan's "rank the held-out rows by match_score alone". It is
+    also the ranking number for the LINEAR_REG baseline: a one-feature linear
+    fit is monotonic in its input, so it cannot reorder anything.
+    """
+    return f"""WITH scored AS (
+  SELECT
+    m.user_rating,
+    IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.match_score') AS INT64), 0) AS match_score
+  FROM `{source_table}` AS m
+  WHERE (m.in_scope = TRUE OR m.in_scope IS NULL) AND m.user_rating IS NOT NULL
+  {holdout_predicate}
+),
+ranked AS (
+  SELECT
+    RANK() OVER (ORDER BY match_score) AS rank_pred,
+    RANK() OVER (ORDER BY user_rating) AS rank_actual
+  FROM scored
+)
+SELECT CORR(rank_pred, rank_actual) AS spearman FROM ranked"""
+
+
 def build_split_sizes_sql(source_table, train_predicate, holdout_predicate) -> str:
     """How the split actually landed, and whether the holdout is representative.
 
@@ -190,6 +214,8 @@ def build_all_statements(project_id, dataset_id, table_id, modulus) -> list:
          build_mean_baseline_sql(project_id, dataset_id, source_table, train, holdout), False),
         ("rank_correlation_boosted_tree",
          build_rank_correlation_sql(project_id, dataset_id, source_table, tree_model, holdout), False),
+        ("rank_correlation_match_score",
+         build_match_score_rank_sql(source_table, holdout), False),
     ]
 
 
