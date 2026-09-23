@@ -11,7 +11,7 @@ source .venv/bin/activate && uv sync    # setup / re-sync deps from pyproject.to
 
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest app/                             # 82 offline unit tests — this is what Cloud Build runs
+pytest app/ scripts/                    # 106 offline unit tests — this is what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest tests/                           # NOT offline-safe (see below)
 
@@ -21,7 +21,7 @@ uvx ruff check .                        # ruff is configured in pyproject.toml b
 `tests/` has no skip markers and requires live GCP + network: it makes real Vertex/Gemini calls
 (`tests/test_model_upgrades.py::test_live_...`, `tests/eval/`), spins up a uvicorn server on port 8000
 (`tests/integration/test_server_e2e.py`), and BQML tests mock BigQuery but the eval tests do not.
-Run `pytest app/` for the normal edit-test loop.
+Run `pytest app/ scripts/` for the normal edit-test loop.
 
 Operational scripts (all accept `--project_id/--dataset_id`, default to the live project):
 
@@ -51,13 +51,15 @@ other persistence (ADK sessions are in-memory). Its schema is `MASTER_BQ_SCHEMA`
 `sanitize_column_name`, while the FSA API returns PascalCase — code that straddles the boundary
 (`data_processing.py`, `fetch_weekly.py`) checks both spellings. Supporting tables:
 `uk_postcode_demographics` (reference), `config_search_params` (cron search coordinates),
-`recents`/`genairesults_temp` (rebuilt each enrichment run).
+`recents_<runid>`/`genairesults_temp_<runid>` (scratch, created and dropped per enrichment run, with
+a one-day expiry as a backstop).
 
 ### The pipeline
 
 1. **Ingest** — `app/cron/fetch_weekly.py` reads search coordinates from `config_search_params`,
    pages the FSA API (`app/services/api_client.py`), and `process_and_update_master_data` dedupes by
-   FHRSID against the existing master list, appending only genuinely new rows with `first_seen`.
+   FHRSID against the IDs already in the master table (`load_fhrsids_from_bq`), appending only
+   genuinely new rows with `first_seen`.
 2. **Maps enrichment** — `scripts/enrich_maps_data.py` hits Places `searchText` and MERGEs rating,
    review count, price level, coordinates, and types back. A miss writes sentinel `-1` values so the
    row is not retried forever.
