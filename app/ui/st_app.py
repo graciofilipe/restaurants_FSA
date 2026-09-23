@@ -264,14 +264,13 @@ def main():
     if 'data_loaded' not in st.session_state:
         st.session_state.data_loaded = False
 
-    bq_path = DEFAULT_BQ_PATH 
+    # One table, one dataset, one project -- not a setting. The sidebar used to
+    # offer this as an editable box whose value was never read.
+    bq_path = DEFAULT_BQ_PATH
     project_id, dataset_id, table_id = bq_path.split('.')
-    
+
     # --- Sidebar Filters ---
     with st.sidebar:
-        st.header("⚙️ Configuration")
-        bq_path_input = st.text_input("BigQuery Table Path", value=bq_path)
-        
         st.header("📥 BigQuery Data Loader")
         
         scope_options_map = {
