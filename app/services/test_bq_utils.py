@@ -424,6 +424,81 @@ class TestBqUtilsGeminiSelection(unittest.TestCase):
         self.assertIn("DATE_DIFF", query_executed)
         self.assertNotIn("fhrsid IN", query_executed)
 
+
+class TestGeminiEnrichmentTempTables(unittest.TestCase):
+    """The scratch tables live in the production dataset under fixed names."""
+
+    def _run(self, mock_client_cls):
+        from app.services.bq_utils import execute_gemini_enrichment
+        mock_client = mock_client_cls.return_value
+        execute_gemini_enrichment(
+            project_id='test-proj', dataset_id='test-ds', master_table_id='master',
+            fhrsids=['123'],
+        )
+        return mock_client, [c[0][0] for c in mock_client.query.call_args_list]
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_temp_tables_are_unique_per_run(self, mock_client_cls):
+        """Two concurrent runs sharing `recents` would profile each other's rows.
+
+        Run B's CREATE OR REPLACE lands between run A's create and read, so A
+        pays Gemini for B's selection and merges the result over its own.
+        """
+        _, first = self._run(mock_client_cls)
+        mock_client_cls.reset_mock()
+        _, second = self._run(mock_client_cls)
+
+        self.assertNotIn('`test-proj.test-ds.recents`', first[0])
+        self.assertNotEqual(first[0], second[0])
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_temp_tables_expire(self, mock_client_cls):
+        """A run that dies between create and drop must not leak a table forever."""
+        _, queries = self._run(mock_client_cls)
+
+        self.assertIn('expiration_timestamp', queries[0])
+        self.assertIn('expiration_timestamp', queries[1])
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_temp_tables_are_dropped_after_a_successful_run(self, mock_client_cls):
+        mock_client, _ = self._run(mock_client_cls)
+
+        deleted = [c[0][0] for c in mock_client.delete_table.call_args_list]
+        self.assertEqual(len(deleted), 2)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_temp_tables_are_dropped_when_the_run_fails(self, mock_client_cls):
+        from app.services.bq_utils import execute_gemini_enrichment
+        mock_client = mock_client_cls.return_value
+        mock_client.query.return_value.result.side_effect = [None, Exception("AI.GENERATE failed")]
+
+        ok = execute_gemini_enrichment(
+            project_id='test-proj', dataset_id='test-ds', master_table_id='master',
+            fhrsids=['123'],
+        )
+
+        self.assertFalse(ok)
+        self.assertTrue(mock_client.delete_table.called)
+
+
+class TestBulkUpdateTempTableCleanup(unittest.TestCase):
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('app.services.bq_utils.write_to_bigquery', return_value=True)
+    def test_temp_table_is_dropped_when_the_merge_fails(self, mock_write, mock_client_cls):
+        """The delete sat after the MERGE inside the try, so a failed MERGE leaked it."""
+        from app.services.bq_utils import bulk_update_reviews
+        mock_client = mock_client_cls.return_value
+        mock_client.query.return_value.result.side_effect = Exception("merge failed")
+
+        success, _ = bulk_update_reviews(
+            'p', 'd', 't', pd.DataFrame({'fhrsid': ['1'], 'manual_review': ['approved']})
+        )
+
+        self.assertFalse(success)
+        self.assertTrue(mock_client.delete_table.called)
+
+
 # If __name__ == '__main__':
 #     unittest.main() # This allows running file directly if not using pytest
 # For pytest, this is not strictly necessary.

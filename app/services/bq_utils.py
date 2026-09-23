@@ -1,5 +1,6 @@
 import logging
 import re
+import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery, exceptions as google_cloud_exceptions
@@ -45,7 +46,10 @@ def execute_gemini_enrichment(
 ) -> bool:
     """Orchestrates the Gemini enrichment process using BigQuery SQL scripts."""
     client = bigquery.Client(project=project_id)
-    recents_table_id, insights_table_id = "recents", "genairesults_temp"
+    # Per-run names: these scratch tables sit in the production dataset, and two
+    # overlapping runs sharing `recents` would each profile the other's selection.
+    run_id = uuid.uuid4().hex[:12]
+    recents_table_id, insights_table_id = f"recents_{run_id}", f"genairesults_temp_{run_id}"
     try:
         if fhrsids:
             escaped = [_sql_quote(f) for f in fhrsids]
@@ -81,6 +85,13 @@ def execute_gemini_enrichment(
     except Exception as e:
         logger.error(f"Error during Gemini enrichment: {e}")
         return False
+    finally:
+        for temp_table_id in (recents_table_id, insights_table_id):
+            try:
+                client.delete_table(f"{project_id}.{dataset_id}.{temp_table_id}", not_found_ok=True)
+            except Exception as e:
+                # The table expires on its own; a failed drop is not worth failing the run.
+                logger.warning(f"Could not drop temp table {temp_table_id}: {e}")
 
 def load_fhrsids_from_bq(project_id: str, dataset_id: str, table_id: str) -> Set[str]:
     """Loads just the FHRSIDs from a table, for deduplicating an ingest.
@@ -216,11 +227,15 @@ def bulk_update_reviews(
         job = client.query(query)
         job.result()
         affected = job.num_dml_affected_rows
-        client.delete_table(f"{project_id}.{dataset_id}.{temp_table_id}", not_found_ok=True)
         return True, f"{affected} rows updated."
     except Exception as e:
         logger.error(f"Error during bulk update: {e}")
         return False, f"Error executing update: {str(e)}"
+    finally:
+        try:
+            client.delete_table(f"{project_id}.{dataset_id}.{temp_table_id}", not_found_ok=True)
+        except Exception as e:
+            logger.warning(f"Could not drop temp table {temp_table_id}: {e}")
 
 def write_to_bigquery(
     df: pd.DataFrame, project_id: str, dataset_id: str, table_id: str,
