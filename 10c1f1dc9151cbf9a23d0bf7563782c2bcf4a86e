@@ -1,0 +1,62 @@
+PHASE 9 VERIFICATION REPORT -- Retrain and Deliver the Verdict
+
+AUTOMATED TESTS
+  Command: pytest app/ scripts/
+  Result:  321 passed (310 before this phase; 11 new, all on the new script).
+  Python 3.11 parity checked on both new files.
+
+CODE UNDER TEST
+  5403dfd feat(model): deliver the verdict, and stop trusting scores from a retired model
+  f2ad58a conductor(log): the sweep ran, and an empty column flattens the queue
+
+HARNESS RE-RUN -- scripts/evaluate_model.py --execute, unchanged, modulus 5
+  Split: 292 train / 77 holdout, means 2.613 / 2.299 -- identical to Phase 2.
+
+  Predictor                          MAE    RMSE     R2   Spearman  medAE
+  boosted tree, Phase 2 (19 feats)  0.847  1.283  0.545    0.545      --
+  boosted tree, Phase 9 (21 feats)  0.737  1.320  0.518    0.689    0.308
+  match_score alone (1 feat)        0.679  1.028  0.707    0.645    0.492
+  training mean                     1.566  1.926   0.0       --       --
+
+  Paired bootstrap, 20,000 resamples over the 77 holdout rows:
+    MAE(tree) - MAE(match) = +0.058, 95% CI [-0.073, +0.210], P(tree better) 0.21
+    rho(tree) - rho(match) = +0.044, 95% CI [-0.055, +0.156], P(tree better) 0.79
+  Both intervals straddle zero: no detectable difference at this sample size.
+
+  Mean true rating of top-k (overall 2.30):
+    k=5   tree 5.60  match 6.60  oracle 7.00
+    k=10  tree 5.20  match 6.10  oracle 6.70
+    k=20  tree 4.45  match 4.40  oracle 4.90
+
+RECOMMENDATION (D-19)
+  Keep BQML; do not rank above match_score at the head of the queue; re-measure
+  at ~600 in-scope labels (369 today). Departs from the Phase 2 pre-registered
+  response to outcome 2, because retiring a model on a null result is not what
+  the pre-registration was for. Retiring it stays out of scope for this track.
+
+  No retrain here: Phase 6 already did it, and the served model's 21 features
+  were verified an exact match for feature_select_list(). --dry-run validated.
+
+WRITE PERFORMED -- scripts/invalidate_stale_predictions.py --execute
+  Cutoff: served model created 2026-09-23 15:05:26.637+00.
+  Before: 1,065 predictions, 0 of them from the current model.
+          1,022 profiled / 43 unprofiled / 32 labelled.
+  Dry run shown first: valid, 11.2 MiB.
+  After:  1,065 cleared. Rows 11,268 and labels 411 unchanged.
+  The first --execute attempt was refused by the sandbox auto-mode classifier,
+  which read the bulk UPDATE as a mass delete. Nothing was written in between.
+
+QUEUE STATE AFTER THE CLEAR
+  Staleness is constant 100 on all 11,268 rows -- nothing is scored by the
+  current model, so the component no longer discriminates and the queue falls
+  back to proximity, the Maps prior and scope confidence.
+  Unprofiled rows in the top 25 / 100 / 500: 0 / 9 / 189 (Phase 8: 4 / 37 / 315).
+  Recorded, not smoothed over. Re-scoring the 1,022 already-profiled rows
+  restores the gradient for the price of ML.PREDICT.
+
+COST
+  Harness re-run < GBP 0.01. UPDATE < GBP 0.01. Re-scoring the 43 unprofiled
+  rows would bill ~GBP 0.30 in AI.GENERATE, and only when the user asks.
+
+USER CONFIRMATION
+  "you have my approval" for the sweep; "Yes merge" for this checkpoint.
