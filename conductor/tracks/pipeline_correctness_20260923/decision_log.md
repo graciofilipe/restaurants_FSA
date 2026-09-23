@@ -786,6 +786,130 @@ corrected version of what `gemini_insights` actually contains.
 
 ---
 
+## D-19 — Verdict: the repair worked, and the model still has not earned its place
+
+*Measured 2026-09-23 by `scripts/evaluate_model.py --execute`, unchanged from Phase 2 and with the
+same `--holdout_modulus 5`. Same split, same 292/77 rows, same code.*
+
+### The four numbers
+
+| Predictor | Features | MAE | RMSE | R² | Spearman | median AE |
+|---|---|---|---|---|---|---|
+| Boosted tree, **Phase 2** (5 pillars dead) | 19 | 0.847 | 1.283 | 0.545 | 0.545 | — |
+| Boosted tree, **Phase 9** (repaired) | 21 | **0.737** | 1.320 | 0.518 | **0.689** | **0.308** |
+| `match_score` alone (`LINEAR_REG`) | 1 | **0.679** | **1.028** | **0.707** | 0.645 | 0.492 |
+| Training mean | 0 | 1.566 | 1.926 | 0.0 | n/a | — |
+
+**What the repair bought:** MAE 0.847 → 0.737 (−13%) and Spearman 0.545 → 0.689 (+0.144). On the
+typical row the repaired tree is now the most accurate predictor in the table — a median absolute
+error of 0.31 against `match_score`'s 0.49. The five pillars that were pinned to zero are carrying
+signal, which is the question Phase 2 existed to make answerable.
+
+**What it did not buy:** the one-feature baseline still wins on MAE, RMSE and R². The tree's error
+distribution is the story — same typical row, fatter tail:
+
+| | tree | match_score |
+|---|---|---|
+| median abs. error | **0.308** | 0.492 |
+| 90th-percentile abs. error | 2.101 | **1.251** |
+| worst error | 5.226 | **4.749** |
+| rows off by more than 2 | 8 / 77 | **5 / 77** |
+
+### The comparison is not significant, and saying so is the point
+
+Paired bootstrap over the 77 held-out rows, 20,000 resamples:
+
+| Difference | Point | 95% CI | P(tree better) |
+|---|---|---|---|
+| MAE(tree) − MAE(match) | +0.058 | [−0.073, +0.210] | 0.21 |
+| ρ(tree) − ρ(match) | +0.044 | [−0.055, +0.156] | 0.79 |
+
+Both intervals straddle zero. With 77 rows the honest statement is **"no detectable difference"**,
+not "the baseline wins" and not "the tree caught up". Phase 2's headline — *beaten on every metric*
+— no longer holds; nothing has replaced it.
+
+### The part of the ranking the app actually reads
+
+Spearman scores the whole list. The user reads the top of it. Mean true rating of each predictor's
+top-k, against an oracle that ranks by the label itself (overall mean 2.30):
+
+| k | tree | `match_score` | oracle |
+|---|---|---|---|
+| 5 | 5.60 | **6.60** | 7.00 |
+| 10 | 5.20 | **6.10** | 6.70 |
+| 20 | 4.45 | 4.40 | 4.90 |
+
+At the head of the queue `match_score` still picks better, and it is close to the oracle. This is
+the one place the two predictors visibly disagree, and it is the place that matters.
+
+### Recommendation: keep BQML, do not trust it above `match_score` yet
+
+Phase 2 pre-registered three outcomes. The result is outcome 2 — *improves but still trails* — but
+the pre-registered response to it ("ship the linear baseline and retire BQML") was written before
+the ranking metric flipped, and acting on it now would be reading a null result as a verdict.
+
+1. **Keep the model.** It costs pennies to train, and the repair moved it a long way in one step.
+   Retiring it would discard the only surface that can learn from the labels being collected.
+2. **Do not promote it over `match_score` at the top of the queue.** On top-5 and top-10 picks the
+   single Gemini number is still better, and that is where a wrong ordering costs a real visit.
+3. **Re-measure at ~600 in-scope labels** (369 today) with this same harness and modulus. That is
+   the cheapest possible tiebreaker, and at 77 holdout rows nothing smaller will settle it.
+4. **If it still has not separated at 600 labels**, retire BQML in a separate track and rank on
+   `match_score`. The 21-feature tree would then be paying maintenance — train/serve parity, schema
+   coupling, retrain-on-feature-change — for signal a single JSON field already carries.
+
+The evidence for that decision is now on disk and reproducible with one command. Retiring BQML
+remains out of scope for this track, as the plan states.
+
+### Two caveats, recorded rather than buried
+
+The `match_score` baseline also moved — 0.697 → 0.679 MAE — although the harness is byte-identical.
+The data underneath it changed: Phase 5's `in_scope` re-derivation and the 7 profiles the Phase 6
+retrain filled in altered which rows carry a `match_score` and what it is. The split is unchanged
+(292/77, identical means), so the comparison within this run is sound; the cross-phase comparison of
+the *baseline* to itself is approximate. The tree's 0.847 → 0.737 spans the same data change.
+
+The production model was not retrained in this phase. Phase 6 already retrained it on the corrected
+features, and its 21 inputs were verified against `feature_select_list()` here — exact match, label
+excluded. Phase 8 changed no features, so a second retrain would have produced the same model.
+
+**Related.** [D-11] is the Phase 2 floor this replaces; [D-15] is the retrain whose features are
+being measured; [D-20] is the stale-prediction sweep this verdict makes necessary.
+
+---
+
+## D-20 — Every prediction in the table was made by a model that no longer exists
+
+*Measured 2026-09-23 by `scripts/invalidate_stale_predictions.py`.*
+
+All **1,065** predictions predate the Phase 6 retrain — `current_predictions` is 0. They came out of
+a 19-feature model with five constant-zero pillars, and the model that would score those rows today
+is a different one.
+
+Nothing in the table records this. `predicted_at` says *when* a row was scored, not *what* scored
+it, and the staleness component reads a recent timestamp as "freshly scored" and parks the row at
+the bottom of the queue. A prediction from a retired model is therefore self-perpetuating: it is
+wrong, and it is the reason the row never comes back up to be re-scored.
+
+**Fix.** `scripts/invalidate_stale_predictions.py` nulls `predicted_user_rating` and `predicted_at`
+where `predicted_at < ` the served model's training time, read from the model's own metadata rather
+than typed in. `created` rather than `modified`: `CREATE OR REPLACE MODEL` resets creation time, so
+for a BQML model it is the training time, while `modified` also moves for a description or label
+edit — which would silently widen the cutoff and clear good rows.
+
+**Cost of the consequence, not of the write.** The `UPDATE` is 11.2 MiB. What follows it is not
+free: 1,022 of the 1,065 rows already hold a Gemini profile and re-score for the price of
+`ML.PREDICT`, but **43 do not**, and those bill a fresh `AI.GENERATE` on the way through — about
+£0.30 at the Phase 6 measured rate. The dry run reports the two counts separately so that number is
+visible before the write rather than after it. 32 of the cleared rows carry a human `user_rating`;
+they lose a displayed prediction from a retired model and are recoverable from
+`fsa_master_backup_20260923`.
+
+**Related.** [D-19] is the verdict that makes the sweep necessary; [D-15] is the retrain that made
+every one of these predictions stale.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
@@ -853,6 +977,20 @@ corrected version of what `gemini_insights` actually contains.
 | `maps_found`: TRUE / FALSE / NULL | 2,263 / **243** / **8,762** | 2026-09-23 |
 | Rows found on Maps but unrated | **0** — so the metric's number is unchanged, its meaning is not | 2026-09-23 |
 | `-1` sentinels in `maps_rating` / `maps_reviews` / `price_level` / `match_score` | **0 / 0 / 0 / 0** | 2026-09-23 |
+| Phase 9 split, re-run unchanged | 292 train / 77 holdout, means 2.613 / 2.299 — **identical to Phase 2** | 2026-09-23 |
+| Production model features vs. `feature_select_list()` | **21 / 21 exact match**, label excluded | 2026-09-23 |
+| Repaired tree MAE / RMSE / R² / Spearman | **0.737 / 1.320 / 0.518 / 0.689** | 2026-09-23 |
+| Boosted tree, Phase 2 → Phase 9 | MAE 0.847 → **0.737** (−13%); ρ 0.545 → **0.689** | 2026-09-23 |
+| `match_score`-only, Phase 2 → Phase 9 | MAE 0.697 → 0.679; ρ 0.603 → 0.645 (data moved, harness did not) | 2026-09-23 |
+| Median absolute error, tree / `match_score` | **0.308** / 0.492 | 2026-09-23 |
+| p90 absolute error, tree / `match_score` | 2.101 / **1.251** | 2026-09-23 |
+| Holdout rows off by more than 2, tree / `match_score` | 8 / **5** of 77 | 2026-09-23 |
+| Paired bootstrap, ΔMAE (tree − match), 20k resamples | +0.058, 95% CI [−0.073, +0.210], P(tree better) 0.21 | 2026-09-23 |
+| Paired bootstrap, Δρ (tree − match) | +0.044, 95% CI [−0.055, +0.156], P(tree better) 0.79 | 2026-09-23 |
+| Mean true rating of top-5 / top-10, tree | 5.60 / 5.20 | 2026-09-23 |
+| Mean true rating of top-5 / top-10, `match_score` | **6.60 / 6.10** (oracle 7.00 / 6.70; overall 2.30) | 2026-09-23 |
+| Predictions predating the Phase 6 retrain | **1,065 of 1,065**; 0 current | 2026-09-23 |
+| Stale predictions profiled / unprofiled / labelled | 1,022 / **43** / 32 | 2026-09-23 |
 
 ## Cost ledger
 
@@ -874,6 +1012,10 @@ corrected version of what `gemini_insights` actually contains.
 | Phase 7 sweep, grounding | 1,116+ searches; 5,000/month free across Gemini 3.x, then $14/1,000 | **$0–$35** (£0–£28) |
 | Phase 7 sweep, Places for the 975 without Maps | incurred anyway on first prediction, not by the sweep | **~$31** (£25), separate |
 | **Phase 7 sweep, total** | | **$7–$59 / £6–£47, pending a measured pilot** |
+
+| Phase 9 harness re-run | 2 throwaway models on 292 rows; 10.4 MiB dry-run, ~16 MiB executed | **< £0.01** — spent |
+| Phase 9 stale-prediction `UPDATE` | 11.2 MiB over 11,268 rows | **< £0.01** |
+| Re-scoring the 43 cleared rows with no profile | 43 × `AI.GENERATE` @ the Phase 6 measured rate | **~£0.30**, incurred only when the user asks |
 
 The only line item that needs its own approval is the Phase 7 sweep; everything up to Phase 9 is
 pennies because the backfill turned out to be pure SQL.
