@@ -12,26 +12,26 @@ from app.core.data_processing import (
     calculate_restaurant_priority,
     get_outcode_coordinates,
 )
+from app.core.pillar_schema import ALL_COLUMNS as PILLAR_COLUMNS
+from app.core.profile_freshness import count_needing_gemini_profile
 
 st.set_page_config(page_title="FSA Restaurant Explorer", layout="wide")
 
 DEFAULT_BQ_PATH = "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_master"
 
+# The pillar half of this list is generated: it is the same 14 columns the
+# profiler writes, in the order the prompt emits them. Before Phase 7 it was a
+# hand-kept copy of a fourth naming convention -- flat, numeric-prefixed names
+# that only ever existed in the DataFrame, built per row per rerun.
 DISPLAY_COLUMNS = [
     "fhrsid", "businessname", "priority_score", "distance_km", "in_scope", "rating_source", "user_rating", "predicted_user_rating", "predicted_at",
-    "addressline1", "addressline2", "addressline3", 
+    "addressline1", "addressline2", "addressline3",
     "postcode", "localauthorityname", "first_seen", "manual_review",
     "price_level", "maps_rating", "maps_reviews",
     "latitude", "longitude", "maps_url", "business_status", "website_url", "maps_types",
+    *PILLAR_COLUMNS,
+    "gemini_profiled_at",
     "gemini_insights_structured",
-    "match_score",
-    "1_value_and_volume_rating", "1_value_and_volume_verdict",
-    "2_demographic_community_score", "2_demographic_community_evidence",
-    "3_linguistic_signal_score", "3_linguistic_signal_menu_type",
-    "4_geographic_precision_region_identified", "4_geographic_precision_specificity_level",
-    "5_culinary_uncompromisingness_score", "5_culinary_uncompromisingness_pander_check",
-    "6_establishment_integrity_is_sit_down_restaurant", "6_establishment_integrity_type",
-    "summary_reasoning"
 ]
 
 def display_data(df, key=None):
@@ -126,7 +126,9 @@ def filter_and_sort_restaurants(
             ]
 
     # 4. Gemini Match Score Filter
-    match_col = "match_score" if "match_score" in filtered.columns else ("insight_score" if "insight_score" in filtered.columns else None)
+    # `insight_score` was the parser's alias for the same number; the column is
+    # real now, so the alias is gone rather than carried as a fallback.
+    match_col = "match_score" if "match_score" in filtered.columns else None
     if match_col:
         has_gemini = filtered[match_col].notna()
         if "gemini_insights_structured" in filtered.columns:
@@ -169,9 +171,8 @@ def filter_and_sort_restaurants(
         filtered = filtered.sort_values(by="user_rating", ascending=False, na_position="last")
     elif sort_by == "Maps Rating (High to Low)" and "maps_rating" in filtered.columns:
         filtered = filtered.sort_values(by="maps_rating", ascending=False, na_position="last")
-    elif sort_by == "Gemini Match Score (High to Low)" and ("match_score" in filtered.columns or "insight_score" in filtered.columns):
-        sort_col = "match_score" if "match_score" in filtered.columns else "insight_score"
-        filtered = filtered.sort_values(by=sort_col, ascending=False, na_position="last")
+    elif sort_by == "Gemini Match Score (High to Low)" and "match_score" in filtered.columns:
+        filtered = filtered.sort_values(by="match_score", ascending=False, na_position="last")
     elif sort_by == "First Seen (Newest)" and "first_seen" in filtered.columns:
         filtered = filtered.sort_values(by="first_seen", ascending=False, na_position="last")
     elif sort_by == "Business Name (A-Z)":
@@ -399,8 +400,8 @@ def main():
         m3.metric("User Rated", len(df_master[df_master['user_rating'].notna()]) if 'user_rating' in df_master.columns else 0)
         m4.metric("ML Predicted", len(df_master[df_master['predicted_user_rating'].notna()]) if 'predicted_user_rating' in df_master.columns else 0)
         m5.metric("Google Maps", len(df_master[df_master['maps_rating'].notna()]) if 'maps_rating' in df_master.columns else 0)
-        match_col = "match_score" if "match_score" in df_master.columns else ("insight_score" if "insight_score" in df_master.columns else None)
-        m6.metric("Gemini Evaluated", len(df_master[df_master[match_col].notna()]) if match_col else 0)
+        m6.metric("Gemini Evaluated",
+                  len(df_master[df_master["match_score"].notna()]) if "match_score" in df_master.columns else 0)
 
         st.caption(f"Displaying **{len(df_filtered)}** of **{len(df_master)}** loaded restaurants.")
 
@@ -698,13 +699,12 @@ def main():
                 num_candidates = len(top_candidates)
 
                 if num_candidates > 0:
-                    # Calculate estimated gemini calls (how many are missing gemini_insights)
-                    gem_missing = 0
-                    for _, r in top_candidates.iterrows():
-                        v_str = r.get("gemini_insights_structured")
-                        v_leg = r.get("gemini_insights")
-                        if (pd.isna(v_str) or not str(v_str).strip()) and (pd.isna(v_leg) or not str(v_leg).strip()):
-                            gem_missing += 1
+                    # The same predicate `generate_predictions` will apply, so
+                    # the estimate cannot drift from the spend (D1). It counted
+                    # the legacy `gemini_insights` column too, which is NULL on
+                    # every row, and knew nothing about staleness or the force
+                    # checkbox.
+                    gem_missing = count_needing_gemini_profile(top_candidates, force=force_gemini)
 
                     avg_dist = top_candidates["distance_km"].mean()
                     

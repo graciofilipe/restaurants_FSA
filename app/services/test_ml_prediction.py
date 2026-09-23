@@ -1,6 +1,12 @@
+import datetime
 from unittest.mock import patch, MagicMock
 
+from app.core.profile_freshness import GEMINI_PROFILE_MAX_AGE_DAYS
 from app.services.ml_prediction import generate_predictions
+
+
+def _days_ago(days):
+    return datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
 
 
 class DummyRow:
@@ -8,16 +14,26 @@ class DummyRow:
 
     `gemini_insights` is None because SCRIPT_MERGE_INSIGHTS nulls it on every
     successful enrichment — that is the production state for every profiled row.
+
+    `has_profile` is computed here exactly as the query computes it, so a test
+    cannot set up a row that BigQuery could not return: a profile the column
+    does not hold, or the reverse.
     """
 
     def __init__(self, fhrsid, maps_rating=4.5, gemini_insights=None,
                  gemini_insights_structured=None, postcode='SW16 1AA', d_postcode='SW16 1AA',
-                 maps_lookup_at='2026-01-01 00:00:00+00:00'):
+                 maps_lookup_at='2026-01-01 00:00:00+00:00', gemini_profiled_at=None):
         self.fhrsid = fhrsid
         self.maps_rating = maps_rating
         self.maps_lookup_at = maps_lookup_at
         self.gemini_insights = gemini_insights
         self.gemini_insights_structured = gemini_insights_structured
+        self.has_profile = gemini_insights_structured is not None
+        # Phase 5 stamped every row that already had a profile, so "profiled
+        # but no timestamp" is not a state production is in.
+        if gemini_profiled_at is None and self.has_profile:
+            gemini_profiled_at = _days_ago(1)
+        self.gemini_profiled_at = gemini_profiled_at
         self.postcode = postcode
         self.d_postcode = d_postcode
 
@@ -86,6 +102,61 @@ def test_force_gemini_reprofiles_an_already_profiled_restaurant(mock_gemini, moc
     )
 
     mock_gemini.assert_called_once()
+
+
+@patch('app.services.ml_prediction.bigquery.Client')
+@patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
+@patch('app.services.ml_prediction.execute_gemini_enrichment')
+def test_a_profile_past_the_staleness_threshold_is_refreshed(mock_gemini, mock_maps, mock_bq):
+    """Phase 7. The executor and the UI's estimate share one predicate, so this
+    also pins what the "Estimated New Gemini Calls" figure will say."""
+    mock_bq.return_value = _mock_client([
+        DummyRow('123', gemini_insights_structured='{"match_score": 90}',
+                 gemini_profiled_at=_days_ago(GEMINI_PROFILE_MAX_AGE_DAYS + 1))
+    ])
+
+    generate_predictions(
+        'project', 'dataset', 'table', 'model',
+        target_fhrsids=['123'], force_maps=False, force_gemini=False,
+    )
+
+    mock_gemini.assert_called_once()
+
+
+@patch('app.services.ml_prediction.bigquery.Client')
+@patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
+@patch('app.services.ml_prediction.execute_gemini_enrichment')
+def test_a_profile_inside_the_threshold_is_not(mock_gemini, mock_maps, mock_bq):
+    """The whole point of the timestamp. Every profiled row was stamped at the
+    Phase 5 migration, so a threshold that caught them would re-profile 2,767
+    rows the first time anyone pressed Predict."""
+    mock_bq.return_value = _mock_client([
+        DummyRow('123', gemini_insights_structured='{"match_score": 90}',
+                 gemini_profiled_at=_days_ago(GEMINI_PROFILE_MAX_AGE_DAYS - 1))
+    ])
+
+    generate_predictions(
+        'project', 'dataset', 'table', 'model',
+        target_fhrsids=['123'], force_maps=False, force_gemini=False,
+    )
+
+    mock_gemini.assert_not_called()
+
+
+@patch('app.services.ml_prediction.bigquery.Client')
+@patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
+@patch('app.services.ml_prediction.execute_gemini_enrichment')
+def test_the_find_query_selects_what_the_guard_reads(mock_gemini, mock_maps, mock_bq):
+    """A guard on an unselected column raises AttributeError inside the `try`,
+    which returns "Failed to identify target batch" and skips every step."""
+    client = _mock_client([DummyRow('123', gemini_insights_structured='{"match_score": 90}')])
+    mock_bq.return_value = client
+
+    generate_predictions('project', 'dataset', 'table', 'model', target_fhrsids=['123'])
+
+    find_query = client.query.call_args_list[0].args[0]
+    assert 'AS has_profile' in find_query
+    assert 'm.gemini_profiled_at' in find_query
 
 
 @patch('app.services.ml_prediction.bigquery.Client')

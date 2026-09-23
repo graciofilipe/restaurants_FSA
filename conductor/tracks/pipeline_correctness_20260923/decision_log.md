@@ -700,6 +700,41 @@ would have aborted before training and the finding would have looked like an out
 
 ---
 
+## D-17 — Staleness was switched on while nothing is stale, deliberately
+
+**Date:** 2026-09-23 · **Phase:** 7 · **Status:** decided
+
+`GEMINI_PROFILE_MAX_AGE_DAYS = 180`, checked against `gemini_profiled_at`, now decides whether the
+Predict button re-profiles a restaurant. Measured before choosing it: 2,767 profiled rows, every one
+stamped, **0 stale** — the oldest stamp is the Phase 5 backfill from earlier today, so the first row
+becomes eligible on 2027-03-22.
+
+That is the point. Phase 5 chose `CURRENT_TIMESTAMP()` over NULL for exactly this reason, and it
+means the mechanism can land, be tested and be reverted six months before it can spend anything. The
+alternative — ship the predicate later, when rows are genuinely old — would have put the code change
+and its first bill on the same day.
+
+Three decisions inside it, each of which could have gone the expensive way:
+
+- **Unknown age reads as fresh.** A row with a profile but no timestamp is not re-profiled. There
+  are zero such rows, and if the backfill had missed some, treating a missing timestamp as "old"
+  would re-profile them all on the next click. A parse failure on the timestamp is handled the same
+  way.
+- **The training pre-flight passes `max_age_days=None`.** It fills gaps and never refreshes.
+  Retraining is cheap, re-profiling is not, and training is the only scheduled caller — a staleness
+  rule there spends money with nobody watching. This is the user's own framing, recorded as a
+  parameter rather than a comment.
+- **180 days, not 30 or 90.** A profile describes cuisine, menu language and neighbourhood. Halving
+  the threshold doubles the recurring bill for signal that moves on the scale of a refurbishment.
+
+**The D1 half.** The UI's "Estimated New Gemini Calls" and the enrichment it estimates were two
+implementations of one question; they agreed only because the legacy column they disagreed about is
+NULL on every row. Both now call `needs_gemini_profile`. The estimate also answers correctly when
+"Force Regenerate" is ticked, which it previously ignored — it would show 0 and then bill for the
+whole batch.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
@@ -752,6 +787,9 @@ would have aborted before training and the finding would have looked like an out
 | `maps_rating` as the model sees it | min −1.0, 0 nulls → **min 2.1, 166 nulls** | 2026-09-23 |
 | Retrain training population / unprofiled | 370 / **7** (all NULL postcode — D-16) | 2026-09-23 |
 | Unprofiled rows with a NULL postcode | **126** of 8,494; 7 labelled | 2026-09-23 |
+| Profiled rows carrying a `gemini_profiled_at` stamp | **2,767 of 2,767** | 2026-09-23 |
+| Rows stale at the Phase 7 threshold of 180 days | **0**; first eligible 2027-03-22 | 2026-09-23 |
+| Unprofiled rows, whole table / in-scope slice | **8,501** / 1,116; **0 labelled** | 2026-09-23 |
 
 ## Cost ledger
 

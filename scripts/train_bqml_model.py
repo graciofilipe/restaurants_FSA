@@ -4,6 +4,7 @@ from google.cloud import bigquery
 from google.cloud.exceptions import GoogleCloudError
 
 from app.core.model_features import feature_select_list, feature_source_clause
+from app.core.profile_freshness import needs_gemini_profile
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -53,7 +54,8 @@ def train_model(
     # Pre-flight JIT Enrichment: check all labeled examples for missing features.
     logger.info("Executing pre-flight JIT check for labeled training examples...")
     check_query = f"""
-        SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_insights_structured, d.postcode AS d_postcode
+        SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_profiled_at,
+               m.gemini_insights_structured IS NOT NULL AS has_profile, d.postcode AS d_postcode
         FROM `{source_table}` AS m
         LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
           ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
@@ -66,7 +68,14 @@ def train_model(
         # See the note in `app/services/ml_prediction.py`: the do-not-retry
         # signal is the lookup timestamp, not the absence of a rating.
         maps_missing = [str(row.fhrsid) for row in rows if row.maps_lookup_at is None]
-        gemini_missing = [str(row.fhrsid) for row in rows if row.gemini_insights_structured is None]
+        # `max_age_days=None`: fill gaps, never refresh. Training is cheap and
+        # re-profiling is not, and this is the one thing here that is
+        # scheduled -- a staleness rule on this path would spend money without
+        # anyone pressing a button. The UI's Predict path uses the default.
+        gemini_missing = [
+            str(row.fhrsid) for row in rows
+            if needs_gemini_profile(row.has_profile, row.gemini_profiled_at, max_age_days=None)
+        ]
         postcode_missing = [str(row.fhrsid) for row in rows if getattr(row, 'd_postcode', None) is None and getattr(row, 'postcode', None) is not None]
         
         if maps_missing:

@@ -469,17 +469,79 @@ not now.
 
 ## Phase 7: Switch Readers, Stale-Aware Refresh (R1)
 
-- [ ] Task: Read typed columns instead of parsing JSON
-    - [ ] Sub-task: Reduce `parse_insight_row` to reading columns; drop the V1 text branch.
-    - [ ] Sub-task: The per-row `json.loads` in `enhance_dataframe_with_insights` disappears.
-    - [ ] Sub-task: Update `DISPLAY_COLUMNS`.
-- [ ] Task: Stale-aware refresh
-    - [ ] Sub-task: Threshold against `gemini_profiled_at` as a named constant.
-    - [ ] Sub-task: The UI's "Estimated New Gemini Calls" uses the **same predicate** as the
-          executor, so estimate and behaviour cannot drift apart again — that divergence is D1.
+- [x] Task: Read typed columns instead of parsing JSON — 0abf4e2
+    - [x] Sub-task: Reduce `parse_insight_row` to reading columns; drop the V1 text branch. 0abf4e2
+    - [x] Sub-task: The per-row `json.loads` in `enhance_dataframe_with_insights` disappears. 0abf4e2
+    - [x] Sub-task: Update `DISPLAY_COLUMNS`. 0abf4e2
+- [x] Task: Stale-aware refresh — 0abf4e2
+    - [x] Sub-task: Threshold against `gemini_profiled_at` as a named constant. 0abf4e2
+    - [x] Sub-task: The UI's "Estimated New Gemini Calls" uses the **same predicate** as the
+          executor, so estimate and behaviour cannot drift apart again — that divergence is D1. 0abf4e2
     - [ ] Sub-task: The first stale sweep is budget-capped, with its £ cost stated before it runs.
-    - [ ] Sub-task: Tests for fresh / stale / never-profiled / forced.
+          **Not run — and nothing is stale until 2027-03-22.** Priced below; needs a go-ahead.
+    - [x] Sub-task: Tests for fresh / stale / never-profiled / forced. 0abf4e2
 - [ ] Task: Conductor — User Manual Verification 'Rewire' (Protocol in workflow.md)
+
+- *Deviation:* `parse_insight_row` is **deleted, not reduced.** Reducing it to "read fourteen
+  columns off the row" left a function whose single caller no longer needed it —
+  `enhance_dataframe_with_insights` is a frame-level column guarantee now, not a per-row map. Its
+  three `insight_*` outputs went with it: `insight_authenticity` and `insight_vibe` read
+  `cultural_authenticity_rating` / `atmosphere`, keys this profiler has never emitted, and
+  `insight_verdict` / `insight_summary` / `detailed_insights` were computed for no reader at all.
+- *Deviation:* the freshness predicate is a **new module**, `app/core/profile_freshness.py`, rather
+  than a constant dropped into an existing one. The point of the sub-task is that the estimate and
+  the spend are the same rule; a rule three files import is a place that rule can live, and
+  `needs_gemini_profile(has_profile, profiled_at, force=, max_age_days=)` is what all three call.
+- *Deviation:* the **training pre-flight** was brought onto the same predicate, which the task did
+  not ask for. It passes `max_age_days=None` — fills gaps, never refreshes. It is the only
+  scheduled caller, and a staleness rule there would spend money with nobody present; saying that
+  in an argument is better than saying it in a comment beside a third hand-copied guard.
+- *Deviation:* both find-queries now select `gemini_insights_structured IS NOT NULL AS has_profile`
+  instead of the column. Nothing on either path parsed the JSON, and it is the widest column in the
+  table.
+- *Left for Phase 8:* `calculate_restaurant_priority` still reads
+  `gemini_insights` / `gemini_insights_structured` for its staleness component rather than
+  `match_score`. Switching it changes queue *ordering*, and this plan puts ordering changes behind
+  a real-data check in Phase 8. Phase 10 has to revisit it anyway, when the legacy column goes.
+
+**Phase 7 checkpoint:** `pytest app/ scripts/` green at **296** tests (was 268; +20 in
+`test_profile_freshness.py`, +3 `test_ml_prediction.py`, +2 `test_train_bqml_model.py`, +3 net in
+`test_data_processing.py`). All edited files parse under `ast.parse(feature_version=(3,11))`. Two
+read-only BigQuery queries, `use_query_cache=False`, no writes, £0. Every name in `DISPLAY_COLUMNS`
+was checked against the live table schema — all 44 resolve, so the grid cannot order a column that
+is not there.
+
+**Measured before choosing the threshold** (`fsa_master`, 2026-09-23):
+
+| | rows |
+|---|---|
+| total | 11,268 |
+| profiled (`gemini_insights_structured IS NOT NULL`) | 2,767 |
+| profiled but unstamped | 0 |
+| stamped without a profile | 0 |
+| **stale at 180 days, today** | **0** |
+
+The oldest `gemini_profiled_at` is the Phase 5 backfill, 2026-09-23 13:06 UTC. So switching
+staleness on is a £0 change today and the first row becomes eligible on **2027-03-22**. The
+"profiled but unstamped" count being 0 is what makes the predicate's money-safe default — unknown
+age reads as *fresh* — unobservable in production rather than merely defensible.
+
+**The sweep, priced, not run.** 8,501 rows carry no profile — the 1,116 the ledger sized is the
+in-scope slice of that. Cost is not linear in the row count, because `_MODEL_PARAMS_STRUCT` enables
+`tools: [{"googleSearch": {}}]` and the free allowance is 5,000 grounded calls a month:
+
+| | tokens | grounded search | total |
+|---|---|---|---|
+| 1,116 in-scope rows | $7–$24 | inside the free allowance | **£6–£47** (the ledger's figure, unchanged) |
+| all 8,501 unprofiled | $53–$183 | 3,501 over, at the ledger's $14/1,000 | **≈£80–£180** |
+
+Nothing here is measured. The Phase 6 retrain's "≈$0.02 for 7 calls" was an a-priori figure from the
+same $0.75/$3.75 rates, not a bill, so it is not independent evidence and the ranges do not narrow
+because of it. Both are wide for the reason already recorded: grounded calls inject retrieved
+results into the input and `gemini-3.8-flash` bills thinking tokens as output, neither of which is
+visible in the stored `.result`. The 20-row pilot (~$0.15, reading `usageMetadata` off
+`full_response`) is still what collapses the range. **0 of the 8,501 are labelled**, so either
+sweep buys triage-queue coverage, not model quality. Needs an explicit go-ahead.
 
 ## Phase 8: Honest Missing Data and Free Coordinates (D4, R4)
 

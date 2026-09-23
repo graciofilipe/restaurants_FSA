@@ -11,7 +11,7 @@ source .venv/bin/activate && uv sync    # setup / re-sync deps from pyproject.to
 
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest app/ scripts/                    # 268 offline unit tests — this is what Cloud Build runs
+pytest app/ scripts/                    # 296 offline unit tests — this is what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest tests/                           # NOT offline-safe (see below)
 
@@ -72,7 +72,12 @@ a one-day expiry as a backstop).
    `gemini_insights` is nulled on merge.
 4. **Demographics** — `scripts/enrich_postcode_demographics.py` fills LSOA/MSOA/IMD from postcodes.io.
 5. **Predict** — `app/services/ml_prediction.py` runs steps 2–4 just-in-time for whatever is missing,
-   then `ML.PREDICT` into `predicted_user_rating` + `predicted_at`.
+   then `ML.PREDICT` into `predicted_user_rating` + `predicted_at`. Whether step 3 is "missing" is
+   decided by `needs_gemini_profile` (`app/core/profile_freshness.py`) — no profile, or one older
+   than `GEMINI_PROFILE_MAX_AGE_DAYS` (180) by `gemini_profiled_at`. The UI's "Estimated New Gemini
+   Calls" calls the same predicate, so the estimate cannot drift from the spend; the training
+   pre-flight calls it with `max_age_days=None`, because it is scheduled and must never refresh a
+   profile it already has.
 6. **Label** — the Streamlit UI writes `user_rating` (1–10), `in_scope`, and `rating_source`
    ("desk"/"visited") back via `bulk_update_reviews`, which is what
    `scripts/train_bqml_model.py` trains on. The loop closes here.
@@ -109,8 +114,10 @@ constant-zero feature is indistinguishable from an uninformative one.
 **Changing the feature list changes the model's input schema**, so `ML.PREDICT` against a model
 trained on the old one fails. Retrain in the same change.
 
-Two readers are not yet generated from the schema and still need hand-editing: `parse_insight_row`
-(`app/core/data_processing.py`) and `DISPLAY_COLUMNS` (`app/ui/st_app.py`).
+The UI reads those columns straight out of BigQuery — `DISPLAY_COLUMNS` (`app/ui/st_app.py`) takes
+its pillar half from `ALL_COLUMNS`, and nothing parses the JSON blob per row any more.
+`gemini_insights_structured` is kept as the audit trail: it is the only way to re-derive a column
+after a schema change.
 
 The profiler's prompt concatenates row fields directly. **Every field must be `COALESCE`d** — a NULL
 anywhere makes the whole prompt NULL and `AI.GENERATE` returns nothing, silently (D-16).

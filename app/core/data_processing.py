@@ -4,6 +4,7 @@ import logging
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import pandas as pd
+from app.core.pillar_schema import ALL_COLUMNS
 from app.services.api_client import fetch_api_data
 from app.services.bq_utils import ORIGINAL_COLUMNS_TO_KEEP
 
@@ -116,61 +117,25 @@ def parse_bq_path(bq_path: str) -> Tuple[str, str, str]:
         raise ValueError(f"Invalid BigQuery Path: '{bq_path}'. Expected format: 'project.dataset.table'")
     return parts[0], parts[1], parts[2]
 
-def parse_insight_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Parses structured V2 or legacy text V1 insight columns."""
-    res = {
-        "insight_score": None, "insight_authenticity": None, "insight_verdict": "PENDING",
-        "insight_summary": None, "insight_vibe": None, "detailed_insights": None
-    }
-    v2_json = row.get('gemini_insights_structured')
-    if v2_json:
-        try:
-            d = json.loads(v2_json)
-            res["detailed_insights"] = d
-            res["insight_score"] = d.get('match_score')
-            res["insight_authenticity"] = d.get('cultural_authenticity_rating')
-            res["insight_summary"] = d.get('summary_reasoning')
-            res["insight_vibe"] = d.get('atmosphere')
-
-            score = d.get('match_score', 0)
-            res["insight_verdict"] = "ACCEPTED" if score >= 85 else ("MAYBE" if score >= 70 else "REJECTED")
-
-            res["match_score"] = d.get("match_score")
-            res["1_value_and_volume_rating"] = d.get("1_value_and_volume", {}).get("rating")
-            res["1_value_and_volume_verdict"] = d.get("1_value_and_volume", {}).get("verdict")
-            res["2_demographic_community_score"] = d.get("2_demographic_community", {}).get("score")
-            res["2_demographic_community_evidence"] = d.get("2_demographic_community", {}).get("evidence")
-            res["3_linguistic_signal_score"] = d.get("3_linguistic_signal", {}).get("score")
-            res["3_linguistic_signal_menu_type"] = d.get("3_linguistic_signal", {}).get("menu_type")
-            res["4_geographic_precision_region_identified"] = d.get("4_geographic_precision", {}).get("region_identified")
-            res["4_geographic_precision_specificity_level"] = d.get("4_geographic_precision", {}).get("specificity_level")
-            res["5_culinary_uncompromisingness_score"] = d.get("5_culinary_uncompromisingness", {}).get("score")
-            res["5_culinary_uncompromisingness_pander_check"] = d.get("5_culinary_uncompromisingness", {}).get("pander_check")
-            res["6_establishment_integrity_is_sit_down_restaurant"] = d.get("6_establishment_integrity", {}).get("is_sit_down_restaurant")
-            res["6_establishment_integrity_type"] = d.get("6_establishment_integrity", {}).get("type")
-            res["summary_reasoning"] = d.get("summary_reasoning")
-            return res
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    v1_text = row.get('gemini_insights')
-    if isinstance(v1_text, str) and v1_text.strip():
-        res["insight_summary"] = v1_text
-        up = v1_text.upper()
-        if "FINAL VERDICT: ACCEPTED" in up:
-            res["insight_verdict"], res["insight_score"] = "ACCEPTED", 90
-        elif "FINAL VERDICT: PROBABLY REJECTED" in up or "FINAL VERDICT: REJECTED" in up:
-            res["insight_verdict"], res["insight_score"] = "REJECTED", 20
-        elif "FINAL VERDICT: MAYBE" in up or "UNSURE" in up:
-            res["insight_verdict"], res["insight_score"] = "MAYBE", 50
-    return res
-
 def enhance_dataframe_with_insights(df: pd.DataFrame) -> pd.DataFrame:
-    """Enriches DataFrame with parsed insight columns."""
-    if df.empty:
+    """Guarantees the frame carries every pillar column the UI displays.
+
+    The profile lands in typed columns at merge time (Phase 6), so the reader's
+    whole job is now making sure they are present. It used to run `json.loads`
+    on `gemini_insights_structured` once per row per Streamlit rerun and
+    re-derive the pillars into a flat naming convention that existed only in
+    this DataFrame -- a fourth spelling of the same six pillars, and the reason
+    a renamed key could go unnoticed.
+
+    A column that is absent is filled with NA, never with 0: no profile and a
+    score of zero are different facts, and conflating them is D2.
+    """
+    if df is None or df.empty:
         return df
-    parsed = df.apply(lambda row: pd.Series(parse_insight_row(row)), axis=1)
-    return pd.concat([df, parsed], axis=1)
+    missing = [column for column in ALL_COLUMNS if column not in df.columns]
+    if not missing:
+        return df
+    return df.assign(**{column: pd.NA for column in missing})
 
 import math
 import os
