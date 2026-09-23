@@ -427,6 +427,61 @@ the training split only. That is the honest comparison and the one Phase 9 will 
 
 ---
 
+## D-12 — The conformance check is advisory, and its first reading confirms D-08
+
+**Date:** 2026-09-23 · **Phase:** 3 · **Status:** decided
+
+### The mechanism
+
+`app/core/pillar_schema.py` is now the single definition of the profiler's output: 14 JSON-derived
+fields plus 3 non-JSON columns, each carrying its column name, BigQuery type, and key path. The
+extraction SQL, the Python parser, the model feature list, and the conformance query are all
+generated from that one tuple. `app/core/test_pillar_schema.py` runs the real extraction against the
+real payloads captured in Phase 0 — the first test in this repo that could have caught D2.
+
+`log_insight_conformance` (`app/services/bq_utils.py`) runs the generated check against the scratch
+insights table immediately before the merge, and logs the per-path miss counts.
+
+### First production reading, 2026-09-23
+
+Run against `fsa_master` with `where='gemini_insights_structured IS NOT NULL'`:
+
+| | |
+|---|---|
+| Profiles examined | **2,767** |
+| Conforming on all 14 canonical paths | **2,766** |
+| Unparseable (no JSON object at all) | **1** — FHRSID 1855447, a leaked reasoning trace |
+| Rows missing any individual path while otherwise parseable | **0** |
+
+Every one of the 14 `missing_*` counters reads exactly 1, and that 1 is the same row in all 14. So
+there is no partial drift anywhere in the table: a profile either conforms completely or is not JSON.
+This is the D-08 finding reproduced by the mechanism that will keep watching it.
+
+### Decision: the check logs, it does not block
+
+It never raises and never stops the merge.
+
+### Reasoning
+
+At 2,766/2,767, refusing to merge on a bad path would discard a whole run's worth of good profiles
+over a single leaked reasoning trace, and the profiles are the expensive part. The failure this
+track is repairing was never that bad profiles got merged — it was that **five features read zero
+for the life of the model and nothing anywhere said so**. Detection is the missing capability;
+enforcement is not. If a future reading shows drift at scale, the log line is the signal to revisit
+this, and the decision is cheap to reverse.
+
+One consequence to accept knowingly: a WARNING in Cloud Run logs is only useful if someone reads it.
+No alerting is being added in this track.
+
+### Note on the query's default
+
+`sql_conformance_check` does **not** filter NULL source values by default, because in the scratch
+table a NULL `AI.GENERATE` result is a *failed* profile and belongs in the unparseable count.
+Auditing `fsa_master` needs the explicit predicate above, or all 8,501 never-profiled rows land in
+that same count and the reading is meaningless. Both behaviours are pinned by tests.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
@@ -456,12 +511,15 @@ the training split only. That is the honest comparison and the one Phase 9 will 
 | Baseline model MAE / RMSE / R² / Spearman | **0.847 / 1.283 / 0.545 / 0.545** | 2026-09-23 |
 | `match_score`-only baseline MAE / RMSE / R² / Spearman | **0.697 / 1.095 / 0.668 / 0.603** | 2026-09-23 |
 | Training-mean floor MAE / RMSE | 1.566 / 1.926 | 2026-09-23 |
+| Conformance check, first production reading | **2,766 / 2,767** conform on all 14 paths; 1 unparseable; 0 partial | 2026-09-23 |
 
 ## Cost ledger
 
 | Item | Basis | Estimate |
 |---|---|---|
 | Phase 0 recon (8 read-only queries) | 33.4 MiB scanned @ $6.25/TiB | **£0.0002** — spent |
+| Phase 3 conformance reading | 4.5 MiB scanned @ $6.25/TiB | **£0.00003** — spent |
+| Phase 3 conformance check, per enrichment run | one scan of the scratch table, ~KiB | **£0** in practice |
 | Phase 0 snapshot | 11,268 rows ≈ 6 MiB active storage | **< £0.01/month** — spent |
 | Phase 4 `ALTER TABLE ADD COLUMN` × 17 | metadata-only | **£0** |
 | Phase 5 backfill (pure SQL over existing JSON) | one full-table `UPDATE`, ~6 MiB | **< £0.01** |
