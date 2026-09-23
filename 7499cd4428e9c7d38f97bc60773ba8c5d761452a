@@ -1,0 +1,1 @@
+Phase 3 checkpoint (pipeline_correctness_20260923). pytest app/ scripts/ green at 184. All new/edited files parse under ast.parse(feature_version=(3,11)) for Cloud Build parity. First production conformance reading recorded as D-12: 2,766/2,767 conform on all 14 paths, 1 unparseable, 0 partial drift. Phase 4 generates its DDL from PILLAR_FIELDS + NON_JSON_COLUMNS.
