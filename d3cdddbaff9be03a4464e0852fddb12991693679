@@ -1,0 +1,24 @@
+D7 -- unbounded ingest pagination.
+
+Defect: app/core/data_processing.py:28, 'while True' whose only exits were a
+falsy response from fetch_api_data and len(ests) < max_results. Neither fires if
+the FSA enhanced-search endpoint returns a full page indefinitely, which is what
+happens if it ignores the page segment of the URL
+(api_client.py:22 puts page and max_results in the path, not the query string --
+a malformed value degrades silently rather than erroring). In the Cloud Run cron
+that is an unattended infinite loop with a 1s sleep and unbounded list growth.
+
+Fix: 'for page in range(1, max_pages + 1)' with for/else. The else clause only
+runs when the loop was not broken out of -- i.e. the cap was reached without a
+short page -- which is exactly the ambiguous case worth warning about.
+
+Default of 50 chosen as a runaway guard, not an expected limit: the FSA search
+returns at most a few thousand establishments within the configured radius, and
+production configs pass max_results=5000, so real runs break on page 1. Anything
+tight enough to truncate a legitimate ingest would be worse than the bug.
+
+Cap is per coordinate, asserted by test_page_cap_applies_per_coordinate -- a
+shared counter would let one exhausted coordinate shorten the next one's fetch.
+
+Verification: pytest app/ scripts/ -> 90 passed. Red phase: 3 failures
+(TypeError on the unknown max_pages kwarg) before implementation.
