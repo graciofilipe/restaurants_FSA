@@ -16,7 +16,7 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
         escaped_target_ids = [fid.replace("'", "''") for fid in target_fhrsids]
         target_ids_str = ", ".join([f"'{fid}'" for fid in escaped_target_ids])
         find_query = f'''
-            SELECT m.fhrsid, m.postcode, m.maps_rating, m.gemini_insights_structured, d.postcode AS d_postcode
+            SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_insights_structured, d.postcode AS d_postcode
             FROM `{table_ref}` AS m
             LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
               ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
@@ -24,7 +24,7 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
         '''
     else:
         find_query = f'''
-            SELECT m.fhrsid, m.postcode, m.maps_rating, m.gemini_insights_structured, d.postcode AS d_postcode
+            SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_insights_structured, d.postcode AS d_postcode
             FROM `{table_ref}` AS m
             LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
               ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
@@ -38,7 +38,11 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
         if force_maps:
             maps_missing_fhrsids = fhrsids.copy()
         else:
-            maps_missing_fhrsids = [str(row.fhrsid) for row in rows if row.maps_rating is None]
+            # `maps_lookup_at`, not `maps_rating`: Phase 5 retired the `-1`
+            # sentinel, so a NULL rating no longer distinguishes "never looked
+            # up" from "looked up, Places had nothing". Testing the rating
+            # would re-query 243 permanent misses on every run, at cost.
+            maps_missing_fhrsids = [str(row.fhrsid) for row in rows if row.maps_lookup_at is None]
         
         if force_gemini:
             gemini_missing_fhrsids = fhrsids.copy()

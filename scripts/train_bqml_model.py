@@ -75,7 +75,7 @@ def train_model(
     # Pre-flight JIT Enrichment: check all labeled examples for missing features.
     logger.info("Executing pre-flight JIT check for labeled training examples...")
     check_query = f"""
-        SELECT m.fhrsid, m.postcode, m.maps_rating, m.gemini_insights_structured, d.postcode AS d_postcode
+        SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_insights_structured, d.postcode AS d_postcode
         FROM `{source_table}` AS m
         LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
           ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
@@ -85,7 +85,9 @@ def train_model(
         results = client.query(check_query).result()
         rows = list(results)
         
-        maps_missing = [str(row.fhrsid) for row in rows if row.maps_rating is None]
+        # See the note in `app/services/ml_prediction.py`: the do-not-retry
+        # signal is the lookup timestamp, not the absence of a rating.
+        maps_missing = [str(row.fhrsid) for row in rows if row.maps_lookup_at is None]
         gemini_missing = [str(row.fhrsid) for row in rows if row.gemini_insights_structured is None]
         postcode_missing = [str(row.fhrsid) for row in rows if getattr(row, 'd_postcode', None) is None and getattr(row, 'postcode', None) is not None]
         

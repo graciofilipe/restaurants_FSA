@@ -23,7 +23,11 @@ def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int
         fhrsid_filter = f"AND fhrsid IN ({formatted_ids})"
     else:
         fhrsid_filter = ""
-    null_filter = "" if force_regen else "AND maps_rating IS NULL AND maps_reviews IS NULL"
+    # `maps_lookup_at IS NULL`, not `maps_rating IS NULL`: a row Places has
+    # already failed to find has no rating either, and the old predicate put it
+    # back in the queue on every run. That is what the `-1` sentinel was for,
+    # and Phase 5 retired it in favour of a timestamp that says what it means.
+    null_filter = "" if force_regen else "AND maps_lookup_at IS NULL"
 
     query = f"SELECT fhrsid, BusinessName, PostCode, AddressLine1 FROM `{table_ref}` WHERE BusinessName IS NOT NULL {null_filter} {fhrsid_filter} LIMIT {limit}"
     try:
@@ -55,10 +59,16 @@ def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int
                     "fhrsid": row.fhrsid, "price_level": pl, "maps_rating": p.get("rating"), "maps_reviews": p.get("userRatingCount"),
                     "latitude": loc.get("latitude"), "longitude": loc.get("longitude"), "maps_url": p.get("googleMapsUri"),
                     "business_status": p.get("businessStatus"), "website_url": p.get("websiteUri"),
-                    "maps_types": ",".join(p.get("types", [])) if p.get("types") else None
+                    "maps_types": ",".join(p.get("types", [])) if p.get("types") else None,
+                    "maps_found": True
                 })
             else:
-                updates.append({"fhrsid": row.fhrsid, "price_level": None, "maps_rating": -1.0, "maps_reviews": -1, "latitude": None, "longitude": None, "maps_url": None, "business_status": None, "website_url": None, "maps_types": None})
+                # A miss leaves the rating NULL and says so in `maps_found`. It
+                # used to write -1, which scored these worse than an unknown
+                # restaurant in `calculate_restaurant_priority` while also
+                # standing in for the do-not-retry flag. `maps_lookup_at` now
+                # carries that second job on its own.
+                updates.append({"fhrsid": row.fhrsid, "price_level": None, "maps_rating": None, "maps_reviews": None, "latitude": None, "longitude": None, "maps_url": None, "business_status": None, "website_url": None, "maps_types": None, "maps_found": False})
         except Exception as e:
             print(f"Error fetching for {row.BusinessName}: {e}")
         time.sleep(0.05)
@@ -75,13 +85,14 @@ def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int
                 bstat = f"'{u['business_status'].replace(chr(39), chr(92)+chr(39))}'" if u["business_status"] else "NULL"
                 wurl = f"'{u['website_url'].replace(chr(39), chr(92)+chr(39))}'" if u["website_url"] else "NULL"
                 mtypes = f"'{u['maps_types'].replace(chr(39), chr(92)+chr(39))}'" if u["maps_types"] else "NULL"
-                val_strs.append(f"('{fid}', {pl}, {mr}, {mrev}, {lat}, {lon}, {murl}, {bstat}, {wurl}, {mtypes})")
+                found = "TRUE" if u["maps_found"] else "FALSE"
+                val_strs.append(f"('{fid}', {pl}, {mr}, {mrev}, {lat}, {lon}, {murl}, {bstat}, {wurl}, {mtypes}, {found})")
 
             merge_q = f"""
             MERGE `{table_ref}` T
-            USING (SELECT * FROM UNNEST([STRUCT<fhrsid STRING, price_level INT64, maps_rating FLOAT64, maps_reviews INT64, latitude FLOAT64, longitude FLOAT64, maps_url STRING, business_status STRING, website_url STRING, maps_types STRING> {", ".join(val_strs)}])) S
+            USING (SELECT * FROM UNNEST([STRUCT<fhrsid STRING, price_level INT64, maps_rating FLOAT64, maps_reviews INT64, latitude FLOAT64, longitude FLOAT64, maps_url STRING, business_status STRING, website_url STRING, maps_types STRING, maps_found BOOL> {", ".join(val_strs)}])) S
             ON T.fhrsid = S.fhrsid
-            WHEN MATCHED THEN UPDATE SET price_level=S.price_level, maps_rating=S.maps_rating, maps_reviews=S.maps_reviews, latitude=IFNULL(S.latitude, T.latitude), longitude=IFNULL(S.longitude, T.longitude), maps_url=S.maps_url, business_status=S.business_status, website_url=S.website_url, maps_types=S.maps_types
+            WHEN MATCHED THEN UPDATE SET price_level=S.price_level, maps_rating=S.maps_rating, maps_reviews=S.maps_reviews, latitude=IFNULL(S.latitude, T.latitude), longitude=IFNULL(S.longitude, T.longitude), maps_url=S.maps_url, business_status=S.business_status, website_url=S.website_url, maps_types=S.maps_types, maps_found=S.maps_found, maps_lookup_at=CURRENT_TIMESTAMP()
             """
             try:
                 client.query(merge_q).result()

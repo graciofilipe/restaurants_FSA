@@ -11,9 +11,11 @@ class DummyRow:
     """
 
     def __init__(self, fhrsid, maps_rating=4.5, gemini_insights=None,
-                 gemini_insights_structured=None, postcode='SW16 1AA', d_postcode='SW16 1AA'):
+                 gemini_insights_structured=None, postcode='SW16 1AA', d_postcode='SW16 1AA',
+                 maps_lookup_at='2026-01-01 00:00:00+00:00'):
         self.fhrsid = fhrsid
         self.maps_rating = maps_rating
+        self.maps_lookup_at = maps_lookup_at
         self.gemini_insights = gemini_insights
         self.gemini_insights_structured = gemini_insights_structured
         self.postcode = postcode
@@ -115,3 +117,36 @@ def test_untargeted_find_query_reads_the_structured_column(mock_gemini, mock_map
     find_query = client.query.call_args_list[0].args[0]
     assert 'm.gemini_insights_structured' in find_query
     assert 'm.gemini_insights,' not in find_query
+
+
+@patch('app.services.ml_prediction.bigquery.Client')
+@patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
+@patch('app.services.ml_prediction.execute_gemini_enrichment')
+def test_a_permanent_maps_miss_does_not_repay_for_places(mock_gemini, mock_maps, mock_bq):
+    """A row Places has already failed to find must not be looked up again.
+
+    Phase 5 retired the `-1` sentinel and nulled those 243 ratings, so
+    `maps_rating is None` no longer distinguishes "never tried" from "tried and
+    found nothing". `maps_lookup_at` does.
+    """
+    row = DummyRow('1', maps_rating=None, maps_lookup_at='2026-01-01 00:00:00+00:00',
+                   gemini_insights_structured='{"match_score": 80}')
+    mock_bq.return_value = _mock_client([row])
+
+    generate_predictions('p', 'd', 't', 'm', limit=1)
+
+    mock_maps.assert_not_called()
+
+
+@patch('app.services.ml_prediction.bigquery.Client')
+@patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
+@patch('app.services.ml_prediction.execute_gemini_enrichment')
+def test_a_never_looked_up_restaurant_still_gets_enriched(mock_gemini, mock_maps, mock_bq):
+    """The other half of the guard: the change must not switch enrichment off."""
+    row = DummyRow('2', maps_rating=None, maps_lookup_at=None,
+                   gemini_insights_structured='{"match_score": 80}')
+    mock_bq.return_value = _mock_client([row])
+
+    generate_predictions('p', 'd', 't', 'm', limit=1)
+
+    mock_maps.assert_called_once()
