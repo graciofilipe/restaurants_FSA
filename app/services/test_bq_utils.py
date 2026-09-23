@@ -481,6 +481,90 @@ class TestGeminiEnrichmentTempTables(unittest.TestCase):
         self.assertTrue(mock_client.delete_table.called)
 
 
+class TestInsightConformanceCheck(unittest.TestCase):
+    """Detection, not prevention -- the Phase 3 decision (D-08).
+
+    Five pillar features read zero for the life of the model and nothing in the
+    repo said so. The check exists to make that impossible to repeat, which
+    means it has to be loud when paths go missing and harmless when it itself
+    goes wrong.
+    """
+
+    def _conformance_row(self, **overrides):
+        from app.core.pillar_schema import PILLAR_FIELDS
+        row = {'profiles': 10, 'unparseable': 0}
+        row.update({f'missing_{f.column}': 0 for f in PILLAR_FIELDS})
+        row.update(overrides)
+        return row
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_it_runs_before_the_merge_not_after(self, mock_client_cls):
+        """Checking after the merge would describe the whole accumulated column
+        rather than the profiles this run just paid for."""
+        from app.services.bq_utils import execute_gemini_enrichment
+        mock_client = mock_client_cls.return_value
+        mock_client.query.return_value.result.return_value = [self._conformance_row()]
+
+        execute_gemini_enrichment(
+            project_id='p', dataset_id='d', master_table_id='master', fhrsids=['1'],
+        )
+
+        queries = [c[0][0] for c in mock_client.query.call_args_list]
+        conformance = [i for i, q in enumerate(queries) if 'COUNTIF' in q and 'missing_' in q]
+        merges = [i for i, q in enumerate(queries) if q.strip().startswith('MERGE')]
+        self.assertTrue(conformance, "no conformance query was issued")
+        self.assertLess(conformance[0], merges[0])
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_a_failing_check_does_not_fail_the_run(self, mock_client_cls):
+        """The profiles are already paid for by this point; losing them to a
+        broken diagnostic would be a worse bug than the one it detects."""
+        from app.services.bq_utils import log_insight_conformance
+        mock_client = mock_client_cls.return_value
+        mock_client.query.side_effect = Exception("conformance query exploded")
+
+        self.assertIsNone(log_insight_conformance(mock_client, 'p', 'd', 'scratch'))
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_missing_paths_are_logged_as_a_warning(self, mock_client_cls):
+        from app.services.bq_utils import log_insight_conformance
+        mock_client = mock_client_cls.return_value
+        mock_client.query.return_value.result.return_value = [
+            self._conformance_row(missing_pillar_value_rating=3, unparseable=1)
+        ]
+
+        with self.assertLogs('app.services.bq_utils', level='WARNING') as captured:
+            log_insight_conformance(mock_client, 'p', 'd', 'scratch')
+
+        message = "\n".join(captured.output)
+        self.assertIn('pillar_value_rating=3', message)
+        self.assertIn('unparseable=1', message)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_a_clean_run_does_not_warn(self, mock_client_cls):
+        """A check that cries wolf on every run stops being read."""
+        from app.services.bq_utils import log_insight_conformance
+        mock_client = mock_client_cls.return_value
+        mock_client.query.return_value.result.return_value = [self._conformance_row()]
+
+        with self.assertLogs('app.services.bq_utils', level='INFO') as captured:
+            log_insight_conformance(mock_client, 'p', 'd', 'scratch')
+
+        self.assertNotIn('WARNING', "\n".join(captured.output))
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_the_check_reads_the_scratch_table_not_the_master(self, mock_client_cls):
+        from app.services.bq_utils import log_insight_conformance
+        mock_client = mock_client_cls.return_value
+        mock_client.query.return_value.result.return_value = [self._conformance_row()]
+
+        log_insight_conformance(mock_client, 'p', 'd', 'genairesults_temp_abc')
+
+        sql = mock_client.query.call_args[0][0]
+        self.assertIn('`p.d.genairesults_temp_abc`', sql)
+        self.assertNotIn('fsa_master', sql)
+
+
 class TestBulkUpdateTempTableCleanup(unittest.TestCase):
 
     @patch('app.services.bq_utils.bigquery.Client')
