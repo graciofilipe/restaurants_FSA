@@ -725,7 +725,9 @@ would spend it on.
           `app/services/bq_utils.py:114`.
     - [x] Sub-task: Confirm the Phase 0 snapshot still exists. `fsa_master_backup_20260923`.
     - [x] Sub-task: Deploy the code first — `MASTER_BQ_SCHEMA` no longer names the column, and
-          naming one the table lacks is safe while the reverse is not.
+          naming one the table lacks is safe while the reverse is not. Merge 0efec1e, build
+          864764c2-edf6-4cb4-b925-fa03a61488f7 SUCCESS, revision `restaurants-fsa-00229-8pz`,
+          HTTP 302.
     - [ ] Sub-task: `ALTER TABLE ... DROP COLUMN` only on explicit go-ahead. **Not yet given.**
           No archive proposed: see D-22 for why the column's contents carry no information.
     - *Note:* `gemini_insights` is already dropped, under its own task above. The two were one task
