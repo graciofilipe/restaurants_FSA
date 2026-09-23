@@ -75,9 +75,14 @@ estimate attached.
           (the production state) is excluded when `force_gemini` is false.
     - [x] Sub-task: Test that `force_gemini=True` still includes it.
     - [x] Sub-task: Test that the query selects the structured column.
-- [ ] Task: Stop a Places miss from erasing coordinates (D5)
-    - [ ] Sub-task: Remove `latitude`/`longitude` from the miss payload in `enrich_maps_data.py`.
-    - [ ] Sub-task: Test that a miss leaves existing coordinates intact.
+- [x] Task: Stop a Places miss from erasing coordinates (D5) — 3e5f0c5
+    - [x] Sub-task: Guard `latitude`/`longitude` in the `enrich_maps_data.py` MERGE with
+          `IFNULL(S.x, T.x)`. *Deviation:* the plan said to drop the keys from the miss payload, but
+          that payload feeds a positional STRUCT whose field list must stay intact. Guarding in the
+          MERGE is correct and also covers a Places **hit** that returns no location block — a case
+          the plan had not identified.
+    - [x] Sub-task: Test that a miss leaves existing coordinates intact.
+    - [x] Sub-task: First tests for this script; `scripts/` added to the Cloud Build test command.
 - [ ] Task: Stop the cron's full-table scan (D6)
     - [ ] Sub-task: Add an FHRSID-only loader to `bq_utils.py` returning a set.
     - [ ] Sub-task: Point `fetch_weekly.py` at it; drop `load_all_data_from_bq` if unused.
