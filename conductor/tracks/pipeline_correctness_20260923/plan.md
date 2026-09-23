@@ -64,7 +64,7 @@ estimate attached.
     - [ ] Sub-task: Backfill is pure SQL over existing JSON — confirm ≈ free.
     - [ ] Sub-task: Price every candidate re-profile sweep as rows × `AI.GENERATE` unit cost, in £.
 
-## Phase 1: Stop the Bleeding (no schema change, no recon dependency)
+## Phase 1: Stop the Bleeding (no schema change, no recon dependency) [checkpoint: 59439e3]
 
 *Independent of Phase 0 — runs in parallel. Each task is individually shippable and revertible.*
 
@@ -116,7 +116,15 @@ estimate attached.
     - [x] Sub-task: Wrap the `bulk_update_reviews` temp-table delete in `finally`.
     - [x] *Follow-up for the checkpoint:* the existing production `recents` and `genairesults_temp`
           tables are now orphaned. Dropping them is destructive and needs explicit go-ahead.
-- [ ] Task: Conductor — User Manual Verification 'Stop the Bleeding' (Protocol in workflow.md)
+- [x] Task: Conductor — User Manual Verification 'Stop the Bleeding' (Protocol in workflow.md) — 59439e3
+    - [x] Sub-task: `pytest app/ scripts/` → 106 passed; all sources parsed against the 3.11 grammar
+          CI builds on. Coverage was **not** measured — `pytest-cov` is in neither `.venv` nor
+          `requirements.txt`, so `workflow.md`'s >80% gate could not be evaluated. Folded into
+          D11/D12 in Phase 11.
+    - [x] Sub-task: Added `scripts/test_bq_scripts.py` — the protocol requires a test file per
+          changed code file, and `bq_scripts.py` had none despite holding SQL run against prod.
+    - [x] Sub-task: Verified the deploy trigger with `gcloud` before relying on it — see D-07. It is
+          real, and region-scoped to `europe-west2`.
 - [ ] Task: Merge to `main` and verify the Cloud Run deploy
 
 ## Phase 2: Baseline the Model Before Repairing It (R7)
