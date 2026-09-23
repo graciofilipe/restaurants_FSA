@@ -7,12 +7,11 @@ from typing import List, Tuple
 from app.core.data_processing import (
     parse_coordinates,
     fetch_data_for_all_coordinates,
-    load_master_data,
     process_and_update_master_data,
     parse_bq_path
 )
 from app.services.bq_utils import (
-    load_all_data_from_bq,
+    load_fhrsids_from_bq,
     append_to_bigquery,
     MASTER_BQ_SCHEMA,
     ORIGINAL_COLUMNS_TO_KEEP
@@ -80,19 +79,18 @@ def run_sync_for_config(config: dict):
     
     combined_api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': all_api_establishments}}}
 
-    # 3. Load Master Data
-    logger.info("Loading master data from BigQuery...")
+    # 3. Load the IDs we already hold -- nothing else is needed to spot new records
+    logger.info("Loading existing FHRSIDs from BigQuery...")
     try:
-        # load_master_data expects a loader function
-        master_restaurant_data = load_master_data(project_id, dataset_id, table_id, load_all_data_from_bq)
-        logger.info(f"Loaded {len(master_restaurant_data)} existing records.")
+        existing_fhrsids = load_fhrsids_from_bq(project_id, dataset_id, table_id)
+        logger.info(f"Loaded {len(existing_fhrsids)} existing records.")
     except Exception as e:
-        logger.error(f"Failed to load master data: {e}")
+        logger.error(f"Failed to load existing FHRSIDs: {e}")
         return
 
     # 4. Process and Identify New
     logger.info("Processing data to identify new records...")
-    new_restaurants, summary_msg = process_and_update_master_data(master_restaurant_data, combined_api_data)
+    new_restaurants, summary_msg = process_and_update_master_data(existing_fhrsids, combined_api_data)
     logger.info(f"Process summary: {summary_msg}")
 
     if not new_restaurants:

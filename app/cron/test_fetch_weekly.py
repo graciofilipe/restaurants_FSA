@@ -38,7 +38,42 @@ class TestFetchWeekly(unittest.TestCase):
         self.assertEqual(mock_run_sync.call_count, 2)
 
     @patch('app.cron.fetch_weekly.fetch_data_for_all_coordinates')
-    @patch('app.cron.fetch_weekly.load_master_data')
+    @patch('app.cron.fetch_weekly.load_fhrsids_from_bq')
+    @patch('app.cron.fetch_weekly.process_and_update_master_data')
+    @patch('app.cron.fetch_weekly.append_to_bigquery')
+    def test_run_sync_loads_only_fhrsids(self, mock_append, mock_process, mock_load, mock_fetch):
+        """The cron only needs existing IDs to spot new restaurants."""
+        mock_fetch.return_value = []
+        mock_load.return_value = {'1', '2'}
+        mock_process.return_value = ([], "Summary")
+
+        fetch_weekly.run_sync_for_config({
+            'latitude': 51.5074, 'longitude': -0.1278, 'max_results': 5000,
+            'target_bq_table': 'p.d.t', 'radius': 5
+        })
+
+        mock_load.assert_called_once_with('p', 'd', 't')
+        self.assertEqual(mock_process.call_args.args[0], {'1', '2'})
+
+    @patch('app.cron.fetch_weekly.fetch_data_for_all_coordinates')
+    @patch('app.cron.fetch_weekly.load_fhrsids_from_bq')
+    @patch('app.cron.fetch_weekly.process_and_update_master_data')
+    @patch('app.cron.fetch_weekly.append_to_bigquery')
+    def test_run_sync_aborts_when_ids_cannot_be_loaded(self, mock_append, mock_process, mock_load, mock_fetch):
+        """Appending without knowing what already exists would duplicate the table."""
+        mock_fetch.return_value = []
+        mock_load.side_effect = Exception("credentials expired")
+
+        fetch_weekly.run_sync_for_config({
+            'latitude': 51.5074, 'longitude': -0.1278, 'max_results': 5000,
+            'target_bq_table': 'p.d.t', 'radius': 5
+        })
+
+        mock_process.assert_not_called()
+        mock_append.assert_not_called()
+
+    @patch('app.cron.fetch_weekly.fetch_data_for_all_coordinates')
+    @patch('app.cron.fetch_weekly.load_fhrsids_from_bq')
     @patch('app.cron.fetch_weekly.process_and_update_master_data')
     @patch('app.cron.fetch_weekly.append_to_bigquery')
     def test_run_sync_for_config_new_schema(self, mock_append, mock_process, mock_load, mock_fetch):
@@ -53,7 +88,7 @@ class TestFetchWeekly(unittest.TestCase):
         
         # Mock returns
         mock_fetch.return_value = [] # Return empty list to stop early or simple list
-        mock_load.return_value = []
+        mock_load.return_value = set()
         mock_process.return_value = ([], "Summary")
         
         fetch_weekly.run_sync_for_config(config)

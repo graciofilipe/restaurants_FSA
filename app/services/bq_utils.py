@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery, exceptions as google_cloud_exceptions
 import pandas as pd
@@ -82,16 +82,21 @@ def execute_gemini_enrichment(
         logger.error(f"Error during Gemini enrichment: {e}")
         return False
 
-def load_all_data_from_bq(project_id: str, dataset_id: str, table_id: str) -> List[Dict[str, Any]]:
-    """Loads all data from a specified BigQuery table."""
+def load_fhrsids_from_bq(project_id: str, dataset_id: str, table_id: str) -> Set[str]:
+    """Loads just the FHRSIDs from a table, for deduplicating an ingest.
+
+    Unlike the loaders around it this one raises: the caller treats the result
+    as "everything that already exists", so an empty set from a failed read
+    would re-append the whole fetch.
+    """
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
     try:
         client = bigquery.Client(project=project_id)
-        results = client.query(f"SELECT * FROM `{table_ref}`").result()
-        return [dict(row) for row in results]
+        results = client.query(f"SELECT fhrsid FROM `{table_ref}`").result()
+        return {str(row.fhrsid) for row in results if row.fhrsid is not None}
     except Exception as e:
-        logger.error(f"Error loading from {table_ref}: {e}")
-        return []
+        logger.error(f"Error loading FHRSIDs from {table_ref}: {e}")
+        raise BigQueryExecutionError(f"Could not load FHRSIDs from {table_ref}: {e}") from e
 
 def load_filtered_data_from_bq(
     project_id: str,
