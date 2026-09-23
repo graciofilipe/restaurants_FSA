@@ -29,7 +29,7 @@ ORIGINAL_COLUMNS_TO_KEEP = [
     'FHRSID', 'BusinessName', 'AddressLine1', 'AddressLine2', 'AddressLine3',
     'PostCode', 'LocalAuthorityName', 'RatingValue', 'NewRatingPending',
     'latitude', 'longitude',
-    'first_seen', 'manual_review', 'gemini_insights', 'gemini_insights_structured'
+    'first_seen', 'manual_review', 'gemini_insights_structured'
 ]
 
 class BigQueryExecutionError(Exception):
@@ -167,7 +167,6 @@ def load_filtered_data_from_bq(
     review_status_filter: Optional[List[str]] = None,
     excluded_locations: Optional[List[str]] = None,
     postcode_areas: Optional[List[str]] = None,
-    gemini_insights_status: Optional[str] = None,
     first_seen_start_date: Optional[str] = None,
     local_authority_filter: Optional[List[str]] = None,
     in_scope_filter: Optional[List[str]] = None,
@@ -202,8 +201,6 @@ def load_filtered_data_from_bq(
     if postcode_areas:
         escaped = [_sql_quote(p) for p in postcode_areas]
         query += f" AND SPLIT(postcode, ' ')[SAFE_OFFSET(0)] IN ({', '.join(escaped)})"
-    if gemini_insights_status:
-        query += " AND gemini_insights IS NOT NULL" if gemini_insights_status.lower() == 'populated' else " AND gemini_insights IS NULL"
 
     try:
         client = bigquery.Client(project=project_id)
@@ -392,7 +389,6 @@ MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('user_rating', 'INT64', mode='NULLABLE'),
     bigquery.SchemaField('predicted_user_rating', 'FLOAT64', mode='NULLABLE'),
     bigquery.SchemaField('predicted_at', 'TIMESTAMP', mode='NULLABLE'),
-    bigquery.SchemaField('gemini_insights', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('gemini_insights_structured', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('price_level', 'INT64', mode='NULLABLE'),
     bigquery.SchemaField('maps_rating', 'FLOAT64', mode='NULLABLE'),

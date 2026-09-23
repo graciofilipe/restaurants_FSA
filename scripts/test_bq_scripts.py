@@ -104,6 +104,14 @@ class TestMergeWritesTypedColumns:
         assert 'T.gemini_insights_structured, ' not in SCRIPT_MERGE_INSIGHTS
         assert SCRIPT_MERGE_INSIGHTS.count('S.gemini_insights') >= len(PILLAR_FIELDS)
 
+    def test_it_no_longer_nulls_the_retired_v1_column(self):
+        """`T.gemini_insights = NULL` was how the V2 merge cleared the V1 text
+        as it superseded it. The column is dropped, so the assignment is now a
+        reference to a column that does not exist -- and a MERGE that fails is
+        a MERGE that loses a profile already paid for.
+        """
+        assert 'T.gemini_insights = NULL' not in SCRIPT_MERGE_INSIGHTS
+
     def test_the_raw_payload_is_still_kept(self):
         """`gemini_insights_structured` stays the audit trail: it is the only
         way to re-derive a column after a schema change, and the one row whose

@@ -136,7 +136,6 @@ def test_calculate_restaurant_priority_unscored_nearby():
         "longitude": sw16_lon,
         "in_scope": True,
         "predicted_user_rating": None,
-        "gemini_insights": None,
         "gemini_insights_structured": None,
         "maps_rating": 4.8,
         "maps_reviews": 150,
@@ -229,7 +228,12 @@ def test_a_profiled_and_predicted_row_is_not_scored_as_never_seen():
     arrive as `float('nan')` in a DataFrame, NaN is truthy, so
     `gemini_insights or gemini_insights_structured` stopped at the missing V1
     text and returned NaN. 1,020 live rows carried a profile and a prediction
-    and were still being queued as if they had neither."""
+    and were still being queued as if they had neither.
+
+    The reproducing column is gone as of Phase 10, so this can no longer set
+    the trap it was written for; the NaN-truthy lesson lives on in the
+    postcode test below. What it still asserts is the behaviour the defect
+    denied: a row with a profile and a recent prediction gets its real tier."""
     today = datetime.date(2026, 8, 31)
     df = pd.DataFrame([{
         "fhrsid": "601",
@@ -237,7 +241,6 @@ def test_a_profiled_and_predicted_row_is_not_scored_as_never_seen():
         "in_scope": True,
         "predicted_user_rating": 7.0,
         "predicted_at": "2026-08-10 12:00:00 UTC",   # 21 days -> the 40.0 tier
-        "gemini_insights": float("nan"),
         "gemini_insights_structured": '{"match_score": 90}',
         "gemini_profiled_at": "2026-08-10 12:00:00 UTC",
     }])
@@ -267,7 +270,6 @@ def test_calculate_restaurant_priority_out_of_scope_penalty():
         "longitude": -0.1294,
         "in_scope": False,
         "predicted_user_rating": None,
-        "gemini_insights": None,
         "gemini_insights_structured": None,
         "maps_rating": 4.0,
         "maps_reviews": 10,
@@ -290,7 +292,6 @@ def test_calculate_restaurant_priority_user_rating_penalty():
         "in_scope": True,
         "user_rating": 9.0,
         "predicted_user_rating": None,
-        "gemini_insights": None,
         "gemini_insights_structured": None,
         "maps_rating": 4.8,
         "maps_reviews": 150,

@@ -110,7 +110,6 @@ def build_queries(bq_path: str) -> dict:
 SELECT
   COUNT(*) AS total_rows,
   COUNTIF(gemini_insights_structured IS NOT NULL) AS profiled_rows,
-  COUNTIF(gemini_insights IS NOT NULL) AS legacy_v1_populated,
   COUNTIF(user_rating IS NOT NULL) AS labelled_rows,
   COUNTIF(maps_rating = -1) AS maps_miss_sentinel,
   COUNTIF(maps_rating > 0) AS maps_hit,
@@ -122,9 +121,10 @@ SELECT
   COUNTIF(predicted_user_rating IS NOT NULL) AS predicted_rows
 FROM `{bq_path}`"""
 
-    # D1 is already fixed, but the empirical confirmation belongs in the log:
-    # if legacy_v1_populated is 0 then the column the old guard tested could
-    # never have indicated a cached profile.
+    # `legacy_v1_populated` used to sit in the sizing block above, and its
+    # answer -- 0 -- was the empirical confirmation of D1: the column the old
+    # guard tested could never have indicated a cached profile. The column was
+    # retired in Phase 10, so counting it now would only fail the query.
     queries['parseability'] = f"""-- Can the stored text even be read as JSON?
 SELECT
   COUNT(*) AS profiled_rows,

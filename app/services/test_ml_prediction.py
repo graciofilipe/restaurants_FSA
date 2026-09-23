@@ -12,21 +12,20 @@ def _days_ago(days):
 class DummyRow:
     """A row as the find_query returns it.
 
-    `gemini_insights` is None because SCRIPT_MERGE_INSIGHTS nulls it on every
-    successful enrichment — that is the production state for every profiled row.
+    There is no `gemini_insights`: the V1 text column was dropped in Phase 10,
+    so a row carrying one is a row BigQuery cannot return.
 
     `has_profile` is computed here exactly as the query computes it, so a test
     cannot set up a row that BigQuery could not return: a profile the column
     does not hold, or the reverse.
     """
 
-    def __init__(self, fhrsid, maps_rating=4.5, gemini_insights=None,
+    def __init__(self, fhrsid, maps_rating=4.5,
                  gemini_insights_structured=None, postcode='SW16 1AA', d_postcode='SW16 1AA',
                  maps_lookup_at='2026-01-01 00:00:00+00:00', gemini_profiled_at=None):
         self.fhrsid = fhrsid
         self.maps_rating = maps_rating
         self.maps_lookup_at = maps_lookup_at
-        self.gemini_insights = gemini_insights
         self.gemini_insights_structured = gemini_insights_structured
         self.has_profile = gemini_insights_structured is not None
         # Phase 5 stamped every row that already had a profile, so "profiled
@@ -59,7 +58,7 @@ def test_profiled_restaurant_does_not_repay_for_gemini(mock_gemini, mock_maps, m
     which the merge sets to NULL every time, so every run re-paid for AI.GENERATE.
     """
     mock_bq.return_value = _mock_client([
-        DummyRow('123', gemini_insights=None, gemini_insights_structured='{"match_score": 90}')
+        DummyRow('123', gemini_insights_structured='{"match_score": 90}')
     ])
 
     success, _ = generate_predictions(
@@ -76,7 +75,7 @@ def test_profiled_restaurant_does_not_repay_for_gemini(mock_gemini, mock_maps, m
 @patch('app.services.ml_prediction.execute_gemini_enrichment')
 def test_unprofiled_restaurant_is_enriched(mock_gemini, mock_maps, mock_bq):
     mock_bq.return_value = _mock_client([
-        DummyRow('123', gemini_insights=None, gemini_insights_structured=None)
+        DummyRow('123', gemini_insights_structured=None)
     ])
 
     generate_predictions(
@@ -93,7 +92,7 @@ def test_unprofiled_restaurant_is_enriched(mock_gemini, mock_maps, mock_bq):
 @patch('app.services.ml_prediction.execute_gemini_enrichment')
 def test_force_gemini_reprofiles_an_already_profiled_restaurant(mock_gemini, mock_maps, mock_bq):
     mock_bq.return_value = _mock_client([
-        DummyRow('123', gemini_insights=None, gemini_insights_structured='{"match_score": 90}')
+        DummyRow('123', gemini_insights_structured='{"match_score": 90}')
     ])
 
     generate_predictions(

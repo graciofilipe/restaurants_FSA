@@ -153,6 +153,9 @@ SELECT
     endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_endpoint}',
     model_params => JSON r'''{model_params_json}'''
   ).result AS gemini_insights
+-- `gemini_insights` here is this scratch table's own alias for the raw
+-- AI.GENERATE output. It is not the master's retired V1 text column, which no
+-- longer exists; the merge below lands this under `gemini_insights_structured`.
 FROM
   `{project_id}.{dataset_id}.{source_table_recents}`
 """
@@ -187,7 +190,6 @@ ON T.fhrsid = S.fhrsid
 WHEN MATCHED AND S.gemini_insights IS NOT NULL THEN
   UPDATE SET
     T.gemini_insights_structured = S.gemini_insights,
-    T.gemini_insights = NULL,
     T.gemini_profiled_at = CURRENT_TIMESTAMP(),
     """ + _TYPED_COLUMN_ASSIGNMENTS + """
 """

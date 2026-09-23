@@ -719,9 +719,9 @@ def main():
                 if num_candidates > 0:
                     # The same predicate `generate_predictions` will apply, so
                     # the estimate cannot drift from the spend (D1). It counted
-                    # the legacy `gemini_insights` column too, which is NULL on
-                    # every row, and knew nothing about staleness or the force
-                    # checkbox.
+                    # the legacy V1 text column too -- NULL on every row, and
+                    # since retired -- and knew nothing about staleness or the
+                    # force checkbox.
                     gem_missing = count_needing_gemini_profile(top_candidates, force=force_gemini)
 
                     avg_dist = top_candidates["distance_km"].mean()
