@@ -292,41 +292,87 @@ deployed app is unaffected. Cost: £0 — `ADD COLUMN` is metadata-only.
 > of the 2,767 profiled rows already carries all 17 fields under the same nested paths. The backfill
 > is a straight extraction with no alias handling, and no legacy row needs re-profiling.
 
-- [ ] Task: Write `scripts/backfill_pillar_columns.py`
-    - [ ] Sub-task: Populate the typed columns from `gemini_insights_structured` using the spec §4
+- [x] Task: Write `scripts/backfill_pillar_columns.py` — c609e34
+    - [x] Sub-task: Populate the typed columns from `gemini_insights_structured` using the spec §4
           nested paths directly. **No alias `COALESCE`** — the census found no alternate spellings
-          of any path the schema reads.
-    - [ ] Sub-task: Handle the 1 unparseable payload and the 22 markdown-fenced ones; the
+          of any path the schema reads. Generated from `PILLAR_FIELDS` via `sql_extract`, so the
+          paths are the same objects the parser and the conformance check use.
+    - [x] Sub-task: Handle the 1 unparseable payload and the 22 markdown-fenced ones; the
           `REGEXP_EXTRACT` unwrap covers the fences, the unparseable row must land as NULL rather
-          than failing the statement.
-    - [ ] Sub-task: `--dry-run` reporting affected rows and per-column non-null tallies.
-          Expect 2,766 non-null for every pillar column.
+          than failing the statement. Confirmed: 2,766 of 2,767 filled on every column.
+    - [x] Sub-task: `--dry-run` reporting affected rows and per-column non-null tallies.
+          Expect 2,766 non-null for every pillar column. *Deviation:* the tallies moved to a
+          separate `--validate` mode. The dry run previews **affected rows per statement**, which
+          is the number that governs approval; coverage is only meaningful after the write.
+    - [x] Sub-task: *Not in the plan:* `--dry-run` submits every `UPDATE` to BigQuery with
+          `dry_run=True` rather than printing it, as Phase 4 established. Each count query carries
+          the same predicate as its `UPDATE`, so the estimate cannot drift from the behaviour —
+          that divergence is the shape of D1.
 - [x] Task: Decide the legacy-row strategy — **withdrawn**, D-08
     - [x] Sub-task: Re-profiling legacy rows would cost a full 2,767-row Gemini sweep to produce
           fields the stored JSON already contains. Not run, not offered.
-- [ ] Task: Backfill the timestamps
-    - [ ] Sub-task: `gemini_profiled_at` ← `CURRENT_TIMESTAMP()` for rows that already have a
+- [x] Task: Backfill the timestamps — c609e34
+    - [x] Sub-task: `gemini_profiled_at` ← `CURRENT_TIMESTAMP()` for rows that already have a
           profile, following `scripts/migrate_predicted_at.py`. Existing profiles count as fresh, so
           the first stale sweep is a budget-capped operation rather than a full-table re-profile.
-- [ ] Task: Backfill the Maps sentinel (D4, R3)
-    - [ ] Sub-task: `maps_rating = -1` rows → `maps_found = FALSE`, `maps_lookup_at` set to a past
-          timestamp, `maps_rating`/`maps_reviews` nulled.
-    - [ ] Sub-task: Real ratings → `maps_found = TRUE` and `maps_lookup_at` set.
-    - [ ] Sub-task: The timestamp must take over the do-not-retry role `-1` plays in
+          Guarded on `gemini_profiled_at IS NULL` so a re-run cannot slide the staleness clock.
+- [x] Task: Backfill the Maps sentinel (D4, R3) — c609e34, 4cf568b
+    - [x] Sub-task: `maps_rating = -1` rows → `maps_found = FALSE`, `maps_lookup_at` set to a past
+          timestamp, `maps_rating`/`maps_reviews` nulled. 243 rows.
+    - [x] Sub-task: Real ratings → `maps_found = TRUE` and `maps_lookup_at` set. 2,263 rows. Ordered
+          before the miss statement, which erases the sentinel the hit statement selects against.
+    - [x] Sub-task: The timestamp must take over the do-not-retry role `-1` plays in
           `enrich_maps_data.py`, or every run re-queries Places for permanent misses.
-    - [ ] Sub-task: Verify `COUNT(*) WHERE maps_rating = -1` is zero afterwards.
-- [ ] Task: Re-derive `in_scope` — recon confirmed the triage path never resolved (D13)
-    - [ ] Sub-task: Derive from the now-typed `pillar_is_sit_down` for the affected rows. The census
+          *Deviation:* **three** sites made that decision, not one — `enrich_maps_data.py:26`,
+          `ml_prediction.py:41` and `train_bqml_model.py:88` all read `maps_rating IS NULL` as
+          "needs Maps". The plan assigned this to Phase 6; it was pulled forward and shipped
+          immediately after the production backfill, on your call, because the window between the
+          two is a window in which 243 rows are eligible for a paid Places re-query.
+    - [x] Sub-task: *Not in the plan:* the **writer** changes too. A Places miss now records
+          `maps_found = FALSE` and a lookup timestamp instead of a fresh `-1`. Without it the guard
+          move is a one-way door — the next miss would put itself straight back in the queue.
+    - [x] Sub-task: Verify `COUNT(*) WHERE maps_rating = -1` is zero afterwards. It is.
+- [x] Task: Re-derive `in_scope` — recon confirmed the triage path never resolved (D13) — c609e34
+    - [x] Sub-task: Derive from the now-typed `pillar_is_sit_down` for the affected rows. The census
           measured **1,476 disagreements** out of 2,766 profiled rows: 1,458 marked in-scope that
-          the profile calls not-sit-down, and 18 the other way.
-    - [ ] Sub-task: Dry-run and diff count first — `in_scope` governs what gets profiled at all, and
+          the profile calls not-sit-down, and 18 the other way. Re-measured against the backfilled
+          column: **1,479** (1,458 / 18 / 3 filling a NULL).
+    - [x] Sub-task: Dry-run and diff count first — `in_scope` governs what gets profiled at all, and
           this moves ~1,458 rows *out* of scope, which is a large change to future Gemini spend.
-    - [ ] Sub-task: Leave the 8,501 never-profiled rows alone; there is nothing to derive from.
-- [ ] Task: Validate the backfill
-    - [ ] Sub-task: Every pillar column has more than one distinct value.
-    - [ ] Sub-task: Spot-check a sample against the raw JSON.
-    - [ ] Sub-task: Record per-column non-null coverage in `decision_log.md`.
-    - [ ] Sub-task: Run on the snapshot copy first, compare, then prod.
+          **This is where the plan was wrong.** 216 of the 1,479 disagreements carry a human
+          `user_rating` or `rating_source`, and 214 of the 369 trainable labels sit on rows the
+          profiler calls not-sit-down. The blind re-derivation the plan specified would have
+          collapsed the training set to 157 — and every row it removes is rated 1–5, so it would
+          have taken the low end the model learns from. See D-14.
+    - [x] Sub-task: *Added:* skip any row with a `user_rating` or `rating_source`. 1,263 rows
+          corrected, 216 human decisions preserved, training set unchanged at 369. Approved by the
+          user against the measured alternative.
+    - [x] Sub-task: Leave the 8,501 never-profiled rows alone; there is nothing to derive from.
+- [x] Task: Validate the backfill — c609e34
+    - [x] Sub-task: Every pillar column has more than one distinct value. Lowest is 2
+          (`pillar_is_sit_down`, a BOOL); the two enums read 3 and 3; `match_score` reads 91.
+    - [x] Sub-task: Spot-check a sample against the raw JSON. Stronger than a sample: 0 mismatches
+          across all 2,766 rows on an INT64, a STRING-enum and a BOOL representative.
+    - [x] Sub-task: Record per-column non-null coverage in `decision_log.md`. See D-14.
+    - [x] Sub-task: Run on the snapshot copy first, compare, then prod. *Deviation:* rehearsed on a
+          throwaway `fsa_master_rehearsal_20260923` (7-day expiry) instead. Backfilling
+          `fsa_master_backup_20260923` would have destroyed the restore point it exists to be.
+          Production then verified byte-identical to the validated rehearsal across all 19
+          affected columns.
+
+### Phase 5 checkpoint
+
+**Manual verification.** `pytest app/ scripts/` — 241 passed (233 before the guard move). Python
+3.11 parity checked with `ast.parse(feature_version=(3,11))` on every changed file. Production
+figures after the run: 11,268 rows, 411 labels, 369 trainable, 0 surviving sentinels, 2,766 of
+2,767 profiles extracted on all 14 paths, `in_scope` 10,693 → 9,465. Cross-table checks against the
+pristine snapshot: 0 labels changed, 0 human-triaged rows moved.
+
+**Deviations:** five, all recorded above and in D-14 — coverage tallies moved to `--validate`, the
+`in_scope` human guard, the three-site guard move pulled forward from Phase 6, the Places writer
+change, and rehearsing on a throwaway rather than the restore point.
+
+**Cost:** £0. Five SQL `UPDATE`s over data already in the table; no Gemini, no Places, no new rows.
 
 ## Phase 6: Dual-Write
 
@@ -336,9 +382,11 @@ deployed app is unaffected. Cost: £0 — `ADD COLUMN` is metadata-only.
     - [ ] Sub-task: `SCRIPT_MERGE_INSIGHTS` writes the typed columns and
           `gemini_profiled_at = CURRENT_TIMESTAMP()`, keeping `gemini_insights_structured` as the
           raw audit trail.
-    - [ ] Sub-task: The Places merge writes `maps_found` / `maps_lookup_at` and stops writing `-1`.
-    - [ ] Sub-task: Switch the "needs Maps" guard from `maps_rating IS NULL` to
-          `maps_lookup_at IS NULL`, preserving do-not-retry.
+    - [x] Sub-task: The Places merge writes `maps_found` / `maps_lookup_at` and stops writing `-1`.
+          Pulled forward into Phase 5 — 4cf568b.
+    - [x] Sub-task: Switch the "needs Maps" guard from `maps_rating IS NULL` to
+          `maps_lookup_at IS NULL`, preserving do-not-retry. Pulled forward into Phase 5 — 4cf568b.
+          Three sites, not one; see the Phase 5 deviation note.
 - [ ] Task: Single source of truth for model features (D3)
     - [ ] Sub-task: Build both the training `SELECT` and the `ML.PREDICT` subquery from the Phase 3
           canonical schema.

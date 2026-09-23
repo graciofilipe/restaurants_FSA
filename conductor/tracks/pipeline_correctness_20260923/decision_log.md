@@ -549,6 +549,82 @@ close with a startup assertion if it proves to be a real risk.
 
 ---
 
+## D-14 — Phase 5: the `in_scope` re-derivation the plan specified would have destroyed 58% of the training set
+
+*2026-09-23*
+
+The backfill itself was uneventful: five `UPDATE`s over data the table already held, 2,767 / 2,767 /
+2,263 / 243 / 1,263 rows, no model calls, £0. Every typed column came out at 2,766 filled — the
+2,767th is the known unparseable reasoning-trace row, FHRSID 1855447 — and every feature column has
+more than one distinct value, which is the condition this track exists to create. A cross-check
+against a fresh re-read of the raw JSON found 0 mismatches across all 2,766 rows on an INT64, a
+STRING-enum and a BOOL representative, so the extraction is not merely plausible but exact.
+
+The interesting part is `in_scope`.
+
+**What the plan said.** Re-derive `in_scope` from `pillar_is_sit_down` for the 1,476 rows that
+disagree with their own profile, since `migrate_to_in_scope_workflow.py` gated on a path
+(convention B) that has never resolved and so assigned scope from `maps_types` alone.
+
+**What measurement found.** Re-measured against the backfilled column the disagreement is 1,479
+(1,458 leaving scope, 18 entering, 3 filling a NULL). But **216 of those rows carry a human
+`user_rating` or `rating_source`**, and **214 of the 369 trainable labels sit on rows the profiler
+calls not-sit-down**. The blind re-derivation would have taken the training set from 369 to 157.
+
+Worse than the count: the rows it removes have a mean rating of 1.5 against 2.55 overall, and **not
+one of them is rated 6 or above**. So the profiler is not wrong about them — they really are
+takeaways and cafés. The problem is that `in_scope` is doing two incompatible jobs. As a spend gate
+it should follow the profiler. As a training-set filter it would be discarding exactly the negative
+examples that teach the model what a bad match looks like, on rows a human already paid attention
+to. Re-deriving a human's decision from a model's opinion is the wrong direction of authority
+regardless of which one is right.
+
+**Decision.** The re-derivation skips any row with a `user_rating` or `rating_source`. 1,263 rows
+corrected, 216 human decisions preserved, training set unchanged at 369, triage queue 10,841 →
+9,610. The guard gives up 216 of 1,479 corrections, which is the cheapest part of the change. Both
+options were measured and put to the user before anything ran; the guarded version was chosen.
+
+The deeper problem — one column serving as both spend gate and training filter — is not fixed here.
+Phase 9 has the evidence to decide whether the training `SELECT` should stop filtering on `in_scope`
+at all, at which point the 42 currently-excluded labels come back too.
+
+### Three other things Phase 5 turned up
+
+**The sentinel guard exists in three places, not one.** The plan named `enrich_maps_data.py:26`.
+`ml_prediction.py:41` and `train_bqml_model.py:88` make the same decision with the same hand-copied
+predicate. Nulling 243 sentinel ratings without moving all three would have made every prediction
+*and every training run* re-query the paid Places API for permanent misses — D1 again, in the Maps
+dimension, on the one path that runs on a schedule. Pulled the guard move forward from Phase 6 and
+shipped it immediately after the production backfill, with the user's go-ahead, because the gap
+between the two is the exposure window. The `train_bqml_model.py` pre-flight also had to change what
+it *selects*: the new guard would otherwise have raised `AttributeError` into a bare `except` that
+downgrades the failure to a warning and silently skips all enrichment.
+
+The **writer** had to change with them. A Places miss now records `maps_found = FALSE` and a lookup
+timestamp instead of a fresh `-1`; otherwise the cleanup is a one-way door and the next miss puts
+itself straight back in the queue. Two intended side effects fall out: the 243 miss rows move from a
+zero Maps quality prior to the neutral 50 in `calculate_restaurant_priority` — they were being
+ranked below restaurants nobody had ever looked up — and the UI's "Has Google Maps Rating" filter
+stops counting a `-1` as a rating. Both were Phase 8 items that the data change delivered for free.
+
+**Rehearsing on the snapshot would have destroyed the snapshot.** The plan says "run on the snapshot
+copy first, compare, then prod", and separately designates `fsa_master_backup_20260923` as the
+restore point. Those are incompatible: a backfilled snapshot restores backfilled data. Rehearsed on
+a throwaway `fsa_master_rehearsal_20260923` with a 7-day expiry instead, left the snapshot pristine,
+and then verified production byte-identical to the validated rehearsal across all 19 affected
+columns via `FARM_FINGERPRINT(TO_JSON_STRING(STRUCT(...)))` per row. Phase 4's fingerprint proved
+*nothing changed*; this one proves *the right thing changed*.
+
+**The `in_scope` preview reads 0 in a pure dry run**, because its count query shares a predicate with
+its `UPDATE` and that predicate reads a column an earlier statement in the same run fills. Keeping
+the shared predicate was deliberate. The alternative — computing the preview from the JSON while the
+`UPDATE` reads the column — is an estimate derived differently from the behaviour it predicts, which
+is precisely the shape of D1. The rehearsal run is what makes the number visible before production,
+and it reported 1,263, matching the independent measurement exactly.
+
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
@@ -570,6 +646,17 @@ close with a startup assertion if it proves to be a real risk.
 | Rows with lat/lon | 2,291 | 2026-09-23 |
 | `in_scope` true / false / null | 10,693 / 427 / 148 | 2026-09-23 |
 | `in_scope` rows contradicting `pillar_is_sit_down` (D13) | **1,476** (1,458 + 18) | 2026-09-23 |
+| D13 disagreements re-measured on the typed column | **1,479** (1,458 out / 18 in / 3 NULL) | 2026-09-23 |
+| D13 disagreements carrying a human decision | **216** — protected by the guard | 2026-09-23 |
+| Trainable labels under a *blind* re-derivation | **157** of 369 — rejected | 2026-09-23 |
+| Phase 5 rows updated (5 statements) | 2,767 / 2,767 / 2,263 / 243 / 1,263 | 2026-09-23 |
+| Pillar columns filled after backfill | **2,766 of 2,767** on all 14 | 2026-09-23 |
+| Distinct values per feature column | match_score 91, value 20, community 22, linguistic 17, culinary 23, geo_specificity 3, is_sit_down 2, establishment_type 3 | 2026-09-23 |
+| Backfill vs. fresh JSON re-read | **0 mismatches** over 2,766 rows (INT64, STRING-enum, BOOL) | 2026-09-23 |
+| Production vs. validated rehearsal, 19 affected columns | **0 rows differ** | 2026-09-23 |
+| Surviving `maps_rating = -1` sentinels | **0** | 2026-09-23 |
+| `in_scope` true, before → after Phase 5 | 10,693 → **9,465** | 2026-09-23 |
+| Labels / trainable, before → after Phase 5 | 411 → 411, 369 → **369** | 2026-09-23 |
 | Rows with a prediction | 1,065 | 2026-09-23 |
 | Labelled rows / labelled **and** profiled | 411 / **404** | 2026-09-23 |
 | Labelled rows passing the training `in_scope` filter | **369** (42 excluded) | 2026-09-23 |
@@ -592,8 +679,10 @@ close with a startup assertion if it proves to be a real risk.
 | Phase 3 conformance check, per enrichment run | one scan of the scratch table, ~KiB | **£0** in practice |
 | Phase 0 snapshot | 11,268 rows ≈ 6 MiB active storage | **< £0.01/month** — spent |
 | Phase 4 `ALTER TABLE ADD COLUMN` × 17 | metadata-only | **£0** — spent, both tables |
-| Phase 5 backfill (pure SQL over existing JSON) | one full-table `UPDATE`, ~6 MiB | **< £0.01** |
-| Phase 5 `in_scope` re-derivation | one `UPDATE` over 2,766 rows | **< £0.01** |
+| Phase 5 backfill (pure SQL over existing JSON) | 5 `UPDATE`s, ~6 MiB each | **< £0.01** — spent |
+| Phase 5 `in_scope` re-derivation | one `UPDATE` over 1,263 rows | **< £0.01** — spent |
+| Phase 5 rehearsal copy | 11,268 rows, 7-day expiry | **< £0.01** — spent |
+| Places re-query of 243 permanent misses | avoided by the guard move | **~£6 avoided, recurring** |
 | Phase 9 retrain | `BOOSTED_TREE_REGRESSOR` over 404 rows | **~£0.05** |
 | **Legacy re-profile — withdrawn** | would have been 2,767 × `AI.GENERATE` | **avoided** |
 | Phase 7 first stale sweep | 1,116 V1-only rows × grounded `AI.GENERATE` | **to be estimated and approved separately** |
