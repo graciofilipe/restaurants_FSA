@@ -1,0 +1,36 @@
+Phase 2 baseline — Red/Green, deviations, and cost.
+
+Red: scripts/test_evaluate_model.py (16 tests) written against the new module.
+Green: 133 offline tests, up from 117. Both new files parse under
+ast.parse(feature_version=(3,11)) for Cloud Build parity.
+
+Deviations from the plan:
+- The harness lives wholly in scripts/, not with "its scoring core under app/".
+  That instruction existed because CI ran only `pytest app/`; Phase 1 changed
+  cloudbuild.yaml to `pytest app/ scripts/`, so the split would buy nothing.
+- Added a third baseline the plan did not ask for: the training mean. Without
+  it, "MAE 0.847" has no scale and neither of the other two numbers can be
+  called good or bad.
+- Extracted build_training_select() from train_bqml_model.py rather than
+  hand-copying the feature list. Not in the plan, but a copied list would have
+  made the Phase 9 delta measure harness drift rather than the repair. The
+  production CREATE MODEL query was dry-run after the refactor and is
+  unchanged (5.45 MiB, valid).
+
+Found while working, not fixed here:
+- D15: train_bqml_model.py --dry-run runs its JIT enrichment block before
+  checking the flag, so it can issue grounded AI.GENERATE calls. Deferred to
+  Phase 11 (D-09) — Phase 2 must not change what it is baselining. This is why
+  the harness never calls train_model().
+- D-10: the in_scope filter drops 42 of 411 labels. Measured before concluding:
+  those rows mean 1.21 vs 2.55, only 2 contradict their profile. Substantially
+  correct filtering, not D13 damage. No change; revisit in Phase 9.
+
+Cost: one BOOSTED_TREE_REGRESSOR training job (~15 min wall clock, Vertex AI
+backed), one LINEAR_REG, and six read queries totalling under 20 MiB. The two
+eval models are left in place for Phase 9 to inspect; they carry no
+model_registry entry and cannot be confused with the served model.
+
+Not done here:
+- Coverage still unmeasurable; pytest-cov absent from .venv and
+  requirements.txt. Carried in D11/D12 (Phase 11).
