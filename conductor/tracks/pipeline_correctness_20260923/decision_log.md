@@ -1063,8 +1063,13 @@ the weekly cron's load schema, and naming a column the table lacks fails the sch
 Cloud Run Job nobody watches. The reverse — the table holding a NULLABLE column the schema omits — is
 harmless.
 
-**Open.** The `ALTER TABLE ... DROP COLUMN` itself. Not yet approved; the code no longer reads the
-column, so the table can carry it indefinitely at no cost.
+**State after.** Dropped on the go-ahead of 2026-09-23. **43 → 42 columns.** 11,268 rows, 411
+labels, 9,465 `in_scope = TRUE` and 2,774 structured profiles all unchanged. `MASTER_BQ_SCHEMA` and
+the live table agree on all 42 names in both directions — nothing named-but-absent, nothing
+present-but-unnamed. `fsa_master_backup_20260923` still carries the column, so this is reversible
+until Phase 12 retires the snapshot; after that it is gone, which is the intended end state.
+
+With `gemini_insights` this makes **44 → 42** across Phase 10.
 
 **Related.** [D-21] is the same retirement for a column that did hold information; [D-05] and [D-13]
 are how `in_scope` came to be derived, including the branches that never fired.
@@ -1164,6 +1169,7 @@ are how `in_scope` came to be derived, including the branches that never fired.
 | `manual_review` distribution | `rejected` 10,869 / NULL 288 / `pending` 109 / `prending` 2 | 2026-09-23 |
 | `manual_review = 'rejected'` that are `in_scope = TRUE` | **9,348**; 351 of them carry a `user_rating` | 2026-09-23 |
 | Enrichment filter, 33-day window, old vs new | **153 → 146 rows**; the 7 dropped are all `in_scope = FALSE` | 2026-09-23 |
+| `fsa_master` columns after both Phase 10 drops | **42** (was 44); 11,268 rows, 411 labels, 2,774 profiles unchanged | 2026-09-23 |
 
 ## Cost ledger
 
