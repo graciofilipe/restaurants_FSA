@@ -1,0 +1,52 @@
+PHASE 8 VERIFICATION REPORT -- Honest Missing Data and Free Coordinates (D4, R4)
+
+AUTOMATED TESTS
+  Command: pytest app/ scripts/
+  Result:  310 passed (296 before this phase; 14 new).
+  Python 3.11 parity: every edited file parses under
+  ast.parse(..., feature_version=(3,11)); Docker and Cloud Build run 3.11.
+
+CODE UNDER TEST
+  0d02c8c fix(scoring): unplaceable is not nearby, and a profiled row is not unscored
+  f09514b conductor(log): record Phase 8, and the NaN that was truthy all along
+
+LIVE TABLE STATE AT CHECKPOINT (read-only, use_query_cache=False, 11,268 rows)
+  maps_found IS TRUE                 2,263
+  maps_found IS FALSE                  243   permanent misses
+  maps_found IS NULL                 8,762   never asked
+  maps_rating = -1 sentinels             0
+  rows with no exact lat/lon         8,977
+  rows with no postcode                126   (0 empty strings)
+  rows with gemini_profiled_at       2,767
+
+MEASURED EFFECT (pre-merge module run against the new one over the same rows)
+  proximity on 106 unplaceable rows  14.7 (fabricated 9.59 km)  ->  10.0, blank distance
+  rows scored as never profiled      10,152                     ->  8,501
+  staleness 100 on profiled+predicted  1,020                    ->  0
+  unprofiled rows in top 25/100/500  0 / 7 / 178                ->  4 / 37 / 315
+  priority scores changed            576
+  top-25 overlap 4/25; top-100 overlap 43/100
+
+MANUAL VERIFICATION PLAN AS PRESENTED
+  1. Sidebar "Google Maps Lookup" four-way split: All 11,268 / Found 2,263 /
+     Not found 243 / Never looked up 8,762 (was one 9,005 bucket of "no rating").
+  2. Metric row reads "Found on Maps" = 2,263, not 2,506.
+  3. maps_found visible in the grid; blank means never asked.
+  4. Sorted by Priority Score, unplaceable rows show a blank Distance (km).
+  5. Queue composition moved: more unprofiled rows near the top.
+
+USER CONFIRMATION
+  The user asked to deploy so the verification could be done on the live Cloud
+  Run service (https://restaurants-fsa-tqzsejpoja-nw.a.run.app) instead of a
+  local Streamlit run. The merge was authorised on that basis; steps 1-5 above
+  are to be checked against the deployed build.
+
+DEVIATIONS RECORDED IN plan.md
+  - D4's headline was latent, not live: no row has an empty-string postcode, so
+    the old code fabricated Trafalgar Square rather than SW16. Fix stands.
+  - D-18 found while measuring: NaN is truthy, so row.get('a') or row.get('b')
+    returned NaN for a BigQuery NULL and scored 10,152 rows as never profiled.
+    That, not D4, is what moves the queue.
+  - get_outcode_coordinates keeps its SW16 default for the anchor box;
+    lookup_outcode_coordinates returns None for a row.
+  - The D-17 log entry is corrected: gemini_insights is non-NULL on 1,116 rows.
