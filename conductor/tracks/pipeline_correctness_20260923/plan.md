@@ -99,10 +99,15 @@ estimate attached.
           The two copies of the ID-normalisation logic collapse into `normalize_fhrsid`.
     - [x] Sub-task: Update `app/cron/test_fetch_weekly.py` — loads IDs only, and aborts without
           appending when the load fails.
-- [ ] Task: Bound ingest pagination (D7)
-    - [ ] Sub-task: `max_pages` cap on `fetch_data_for_all_coordinates` with a conservative default.
-    - [ ] Sub-task: Warn when the cap is hit.
-    - [ ] Sub-task: Test that a mock API returning full pages forever terminates.
+- [x] Task: Bound ingest pagination (D7) — d3cdddb
+    - [x] Sub-task: `max_pages` cap on `fetch_data_for_all_coordinates` with a conservative default.
+          50, and deliberately loose: it is a runaway guard, not an expected limit. Production
+          configs pass `max_results=5000`, so real runs break on page 1; a cap tight enough to
+          truncate a legitimate ingest would be worse than the bug. Applied **per coordinate** — a
+          shared counter would let one exhausted coordinate shorten the next one's fetch.
+    - [x] Sub-task: Warn when the cap is hit, via `for`/`else` so it fires only when the loop was
+          never broken out of — the case where truncation and a misbehaving API are indistinguishable.
+    - [x] Sub-task: Test that a mock API returning full pages forever terminates.
 - [ ] Task: Isolate the temp tables (D10)
     - [ ] Sub-task: Per-run suffix and expiration on `recents` / `genairesults_temp`.
     - [ ] Sub-task: Wrap the `bulk_update_reviews` temp-table delete in `finally`.
