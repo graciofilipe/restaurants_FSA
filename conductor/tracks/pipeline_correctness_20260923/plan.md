@@ -83,10 +83,22 @@ estimate attached.
           the plan had not identified.
     - [x] Sub-task: Test that a miss leaves existing coordinates intact.
     - [x] Sub-task: First tests for this script; `scripts/` added to the Cloud Build test command.
-- [ ] Task: Stop the cron's full-table scan (D6)
-    - [ ] Sub-task: Add an FHRSID-only loader to `bq_utils.py` returning a set.
-    - [ ] Sub-task: Point `fetch_weekly.py` at it; drop `load_all_data_from_bq` if unused.
-    - [ ] Sub-task: Update `app/cron/test_fetch_weekly.py`.
+- [x] Task: Stop the cron's full-table scan (D6) — 73e039c
+    - [x] Sub-task: Add an FHRSID-only loader to `bq_utils.py` returning a set. *Deviation:* it
+          raises `BigQueryExecutionError` instead of returning an empty set. The module-wide swallow
+          is D9/Phase 11 work, but here "read failed" and "table is empty" call for opposite actions
+          — an empty set would re-append the whole fetch — and `fetch_weekly.py:89` already aborts
+          the sync on an exception.
+    - [x] Sub-task: Point `fetch_weekly.py` at it; drop `load_all_data_from_bq` if unused. Both it
+          and `load_master_data` (its only wrapper) were callerless after the switch and are gone,
+          with their 10 tests. `load_master_data` also injected the `manual_review` defaults that
+          Phase 10 removes anyway.
+    - [x] Sub-task: `process_and_update_master_data` accepts bare FHRSIDs alongside full rows.
+          *Not in the plan, but required:* its `isinstance(est, dict)` guard would have silently
+          dropped a set of strings, making every restaurant look new and duplicating the table.
+          The two copies of the ID-normalisation logic collapse into `normalize_fhrsid`.
+    - [x] Sub-task: Update `app/cron/test_fetch_weekly.py` — loads IDs only, and aborts without
+          appending when the load fails.
 - [ ] Task: Bound ingest pagination (D7)
     - [ ] Sub-task: `max_pages` cap on `fetch_data_for_all_coordinates` with a conservative default.
     - [ ] Sub-task: Warn when the cap is hit.
