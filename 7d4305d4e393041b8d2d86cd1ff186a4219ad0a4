@@ -1,0 +1,51 @@
+PHASE 10 VERIFICATION REPORT — Contract: Remove Legacy Surfaces (R5)
+
+Tests: 345 passed (pytest app/ scripts/), re-run after the drop against the
+live 42-column table. Python 3.11 AST parity clean.
+
+Deployed: revision restaurants-fsa-00229-8pz, build
+864764c2-edf6-4cb4-b925-fa03a61488f7 SUCCESS, HTTP 302. The code stopped
+naming both columns and was live before either drop -- MASTER_BQ_SCHEMA is
+the weekly cron's load schema, and naming a column the table lacks fails a
+scheduled job nobody watches.
+
+SCHEMA, before -> after
+  fsa_master columns              44 -> 42
+  gemini_insights present          1 -> 0   (archived first)
+  manual_review present            1 -> 0   (not archived)
+  MASTER_BQ_SCHEMA vs live        43 = 43, then 42 = 42, both directions
+
+DATA, unchanged throughout
+  rows                        11,268
+  COUNT(user_rating)             411
+  COUNTIF(in_scope)            9,465
+  structured profiles          2,774
+
+WHY ONE WAS ARCHIVED AND THE OTHER WAS NOT
+  gemini_insights: 1,116 rows, median 1,379 chars, all distinct, 1,090 in
+    scope, 0 labelled, and 0 that also hold a V2 profile -- the sets are
+    exactly disjoint, so it duplicated nothing. Archived to
+    gemini_insights_v1_archive_20260923 and verified by row count, BIT_XOR
+    fingerprint and total character count: 1,116 = 1,116, hashes equal,
+    1,526,413 = 1,526,413 chars.
+  manual_review: four values. 'rejected' on 10,869 of 11,268 rows, of which
+    9,348 are in_scope = TRUE and 351 carry a hand-entered user_rating. Plus
+    a 'prending' typo on 2 rows that the old IN (...) predicate silently
+    excluded from enrichment. Nothing to preserve.
+
+BEHAVIOUR CHANGE
+  execute_gemini_enrichment's untargeted filter:
+    manual_review IN ('pending','not reviewed')  ->  in_scope IS NOT FALSE
+  Not IS TRUE: rows arrive untriaged and profiling is what answers the
+  question, so IS TRUE would drain the queue. Measured on the live table,
+  33-day window: 153 rows -> 146. The 7 dropped are all in_scope = FALSE.
+  Strictly fewer AI.GENERATE calls, not a different set.
+
+ROLLBACK
+  Code: revert merges 6917678 and 0efec1e; auto-deploy restores the image.
+  Data: fsa_master_backup_20260923 still carries both columns, and
+  gemini_insights_v1_archive_20260923 outlives it. Not scheduled for
+  deletion.
+
+COST: £0. Both drops are metadata-only DDL. The filter swap is a small
+recurring saving.
