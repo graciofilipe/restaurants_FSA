@@ -43,10 +43,12 @@ USD_TO_GBP = 0.79
 # copies live inside `.format()` templates and so carry doubled braces.
 JSON_UNWRAP_REGEX = "r'(?s)[{].*[}]'"
 
-# The six paths the production feature extraction reads today. Verified against
-# the SQL by scripts/test_recon_pipeline_state.py, so this list cannot silently
-# drift from what the model is actually fed.
-PRODUCTION_FEATURE_PATHS = [
+# The six paths the production feature extraction read before Phase 6, kept so
+# the census below can still be re-run and so the D2 finding stays reproducible.
+# Five of them resolve on zero of 2,767 profiled rows. Production now builds its
+# feature list from `app/core/model_features.py`; the test module asserts none
+# of these paths has crept back in.
+LEGACY_FLAT_FEATURE_PATHS = [
     '$.1_value_and_volume_rating',
     '$.2_demographic_community_score',
     '$.3_linguistic_signal_score',
@@ -161,8 +163,8 @@ ORDER BY n_rows DESC
 LIMIT 25"""
 
     queries['production_paths'] = _path_census_query(
-        bq_path, PRODUCTION_FEATURE_PATHS,
-        'D2: the flat paths train_bqml_model.py and ml_prediction.py read today'
+        bq_path, LEGACY_FLAT_FEATURE_PATHS,
+        'D2: the flat paths train_bqml_model.py and ml_prediction.py read before Phase 6'
     )
 
     queries['prompt_paths'] = _path_census_query(

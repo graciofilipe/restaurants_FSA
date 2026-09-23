@@ -2,9 +2,29 @@ import logging
 from google.cloud import bigquery
 from typing import Tuple, List
 from scripts.enrich_maps_data import enrich_restaurants_by_fhrsid
+from app.core.model_features import feature_select_list, feature_source_clause
 from app.services.bq_utils import execute_gemini_enrichment
 
 logger = logging.getLogger(__name__)
+
+
+def build_prediction_input_select(project_id: str, dataset_id: str, table_ref: str,
+                                  id_list_str: str) -> str:
+    """The `ML.PREDICT` input: the training features, plus the join key.
+
+    Byte-identical to `build_training_select`'s feature list by construction --
+    both call `feature_select_list()`. The only addition is `m.fhrsid`, which
+    ML.PREDICT passes through so the MERGE has something to match on; it is not
+    a feature and the model never saw it.
+
+    Train/serve skew here is silent: BigQuery would happily predict from a
+    differently-computed column and write a plausible-looking number.
+    """
+    return f'''          SELECT
+            m.fhrsid,
+{feature_select_list()}
+{feature_source_clause(project_id, dataset_id, table_ref)}
+          WHERE m.fhrsid IN ({id_list_str})'''
 
 def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_name: str, limit: int = 50, target_fhrsids: List[str] = None, force_maps: bool = False, force_gemini: bool = False) -> Tuple[bool, str]:
     client = bigquery.Client(project=project_id)
@@ -94,38 +114,13 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
     USING (
       SELECT fhrsid, predicted_user_rating FROM ML.PREDICT(MODEL `{model_ref}`,
         (
-          SELECT
-            m.fhrsid,
-            m.postcode,
-            m.localauthorityname,
-            m.ratingvalue,
-            m.user_rating,
-            m.price_level,
-            m.maps_rating,
-            m.maps_reviews,
-            m.latitude,
-            m.longitude,
-            m.business_status,
-            SPLIT(REPLACE(m.maps_types, ' ', ''), ',') AS maps_types_array,
-            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.1_value_and_volume_rating') AS INT64), 0) AS score_1_value_and_volume_rating,
-            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.2_demographic_community_score') AS INT64), 0) AS score_2_demographic_community_score,
-            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.3_linguistic_signal_score') AS INT64), 0) AS score_3_linguistic_signal_score,
-            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.4_geographic_precision_specificity_level') AS INT64), 0) AS score_4_geographic_precision_specificity_level,
-            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.5_culinary_uncompromisingness_score') AS INT64), 0) AS score_5_culinary_uncompromisingness_score,
-            IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.match_score') AS INT64), 0) AS match_score,
-            d.lsoa,
-            d.msoa,
-            d.imd_rank
-          FROM `{table_ref}` AS m
-          LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
-            ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
-          WHERE m.fhrsid IN ({id_list_str})
+{build_prediction_input_select(project_id, dataset_id, table_ref, id_list_str)}
         )
       )
     ) S
     ON T.fhrsid = S.fhrsid
     WHEN MATCHED THEN
-      UPDATE SET 
+      UPDATE SET
         predicted_user_rating = S.predicted_user_rating,
         predicted_at = CURRENT_TIMESTAMP()
     '''
