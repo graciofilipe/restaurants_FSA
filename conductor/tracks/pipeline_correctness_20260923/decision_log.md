@@ -312,6 +312,72 @@ hidden unprofiled rows — are all things the original plan would have got wrong
 
 ---
 
+## D-09 — `train_bqml_model.py --dry-run` can spend money (new defect, D15)
+
+*Found 2026-09-23 while building the Phase 2 harness.*
+
+### Context
+
+`CLAUDE.md` documents `python -m scripts.train_bqml_model --dry-run` as "validate BQML training SQL
+without spending". It does not do that. The JIT pre-flight block at `train_bqml_model.py:26-60` runs
+**unconditionally, before** `if dry_run:` is ever evaluated, and it calls
+`enrich_maps_data.enrich_restaurants_by_fhrsid`, `bq_utils.execute_gemini_enrichment` and
+`enrich_postcode_demographics.enrich_postcodes` for any labelled row missing that data.
+
+There are currently 7 labelled rows with no `gemini_insights_structured`, so a `--dry-run` today
+would issue 7 grounded `AI.GENERATE` calls and an unbounded number of Places lookups.
+
+### Decision
+
+Recorded as **D15** and deferred to Phase 11, not fixed here — Phase 2 must not change the thing it
+is baselining. The fix is to move the JIT block inside the non-dry-run branch.
+
+In the meantime the Phase 2 harness never invokes `train_model()`. It imports
+`build_training_select` and validates the SQL directly, which is why the refactor extracting that
+function was worth doing rather than hand-copying the feature list a third time.
+
+### Reasoning
+
+This is the same failure shape as D1: a guard that reads as a cost control but is evaluated after
+the spend, or on the wrong column. Worth naming separately because the *documentation* actively
+misleads here — a flag called `--dry-run` is the last place anyone would look for a Gemini bill.
+
+---
+
+## D-10 — The `in_scope` filter discards 42 hand-entered labels
+
+*Measured 2026-09-23 while sizing the Phase 2 split.*
+
+### Context
+
+`build_training_select`'s `WHERE` clause is `(m.in_scope = TRUE OR m.in_scope IS NULL) AND
+m.user_rating IS NOT NULL`. Of 411 labelled rows, only **369** satisfy it; 42 are dropped for
+`in_scope = FALSE`. Given D-08 showed `in_scope` is mis-derived on 1,476 of 2,766 profiled rows,
+that is 10% of the hand-entered training data being discarded by a column known to be wrong.
+
+Measured before assuming the worst: the 42 excluded rows have a mean `user_rating` of **1.21**
+against **2.55** for the included ones, and only **2** of them carry a profile saying they *are* a
+sit-down restaurant. The exclusion is therefore substantially correct in effect — these really are
+the places the user rates lowest — and only 2 rows are clearly wrongly dropped.
+
+### Decision
+
+**No change in Phase 2.** The baseline must train on exactly what production trains on, or the
+Phase 9 delta measures the change in row selection rather than the change in features.
+
+Revisit in Phase 9, once the D13 re-derivation has corrected `in_scope`: at that point re-sizing the
+training set is a real question, and worth asking whether 42 unambiguous negatives are data the
+model should see rather than data to filter out.
+
+### Reasoning
+
+Two effects were tangled here and had to be separated: the label count is smaller than the recon's
+411 suggested, but the cause is mostly legitimate filtering rather than the D13 defect. Acting on
+the headline number without measuring the composition would have been a change made on a
+misreading.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*

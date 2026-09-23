@@ -36,13 +36,18 @@ Note that correcting the paths alone is insufficient for pillar 4:
 the repo records what `gemini_insights_structured` actually contains. See D14 and `decision_log.md`
 D-01. Phase 0 settles it before any column is designed.
 
-### D13 — A past migration may have mis-derived `in_scope` (data quality)
+### D13 — A past migration mis-derived `in_scope` (data quality) — **CONFIRMED**
 `scripts/migrate_to_in_scope_workflow.py:45` and `:70` — already run against production — gate
 categorisation on
 `JSON_EXTRACT_SCALAR(gemini_insights_structured, '$.6_establishment_integrity_is_sit_down_restaurant')`,
 the same flat convention as D2. If that path resolves to NULL, those branches never fired and
 `in_scope` was assigned from `maps_types` alone. This matters beyond tidiness: `in_scope` is the
 predicate governing which restaurants get profiled at all.
+
+**Phase 0 confirmed it**: that path resolves on **0** rows, and **1,476 of 2,766** profiled rows now
+contradict their own profile. A second consequence surfaced in Phase 2 — the training query filters
+on `in_scope`, so the defect also discards **42 of 411** hand-entered labels. See D-08 and D-10 in
+`decision_log.md`.
 
 ### D14 — The profiler's output shape is unconstrained (root cause of D2)
 `_MODEL_PARAMS_STRUCT` (`scripts/bq_scripts.py:104-127`) sets `generationConfig`, `safetySettings`
@@ -60,6 +65,17 @@ If the profiler drifts the same way, no fixed path set is safe and `gemini_insig
 heterogeneous *across rows* — making a fixed-column backfill produce coverage that depends on when
 each row happened to be profiled. Correcting the paths without constraining generation leaves the
 pipeline one model revision from the same breakage.
+
+**Phase 0 measured this and the risk did not materialise**: the profiler is at 2,766/2,766
+conformance on every required key, so the drift is an ADK-agent phenomenon, not a profiler one.
+Phase 3 is downscoped accordingly — see D-08. The residual risk is real but is now addressed by
+detection (a contract test and a merge-time conformance count) rather than by changing generation.
+
+### D15 — `train_bqml_model.py --dry-run` can spend money
+The JIT pre-flight block at `train_bqml_model.py:26-60` runs **before** `if dry_run:` is evaluated
+and triggers Maps, Gemini and postcode enrichment for any labelled row missing that data — 7 rows
+currently qualify for a grounded `AI.GENERATE`. `CLAUDE.md` documents the flag as "validate BQML
+training SQL without spending". Deferred to Phase 11; see D-09.
 
 The obvious fix is not drop-in: `tools: [{"googleSearch": {}}]` is enabled, and grounded search is
 generally incompatible with constrained decoding on Gemini.

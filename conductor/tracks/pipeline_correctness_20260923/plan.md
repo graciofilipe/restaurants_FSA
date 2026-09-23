@@ -345,6 +345,13 @@ no prompt or model-params change is now planned.*
 
 *Deliberately last — cross-cutting churn that would otherwise have blocked the cost fixes.*
 
+- [ ] Task: Make `--dry-run` actually dry (D15, found in Phase 2 — see D-09)
+    - [ ] Sub-task: Move the JIT pre-flight block at `train_bqml_model.py:26-60` inside the
+          non-dry-run branch. It currently runs first and can issue grounded `AI.GENERATE` calls for
+          the 7 labelled rows with no profile.
+    - [ ] Sub-task: Test that a dry run triggers no enrichment call.
+    - [ ] Sub-task: `CLAUDE.md` documents the flag as "validate BQML training SQL without spending";
+          that becomes true rather than needing a correction.
 - [ ] Task: Make failures visible (D9)
     - [ ] Sub-task: BigQuery helpers raise, or return an error-carrying result, instead of
           `[]`/`False`.
