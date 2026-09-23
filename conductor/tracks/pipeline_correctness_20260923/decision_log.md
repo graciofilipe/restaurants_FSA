@@ -663,6 +663,43 @@ weekly cron.
 
 ---
 
+## D-16 — A NULL postcode silently voided the profile prompt (new defect)
+
+**Date:** 2026-09-23 · **Phase:** 6 · **Status:** fixed in code (e6ad77c); data repair pending
+
+Found by running the retrain, not by reading the code. The JIT pre-flight reported 7 labelled rows
+missing a profile; all 7 came back unparseable, and all 7 have `postcode IS NULL`.
+
+`SCRIPT_GENERATE_INSIGHTS` concatenated `postcode` straight into the prompt while `COALESCE`-ing the
+three address lines on either side of it. Concatenating NULL in BigQuery yields NULL, so the whole
+prompt was NULL and `AI.GENERATE` returned nothing — no error, no cost signal, just a row that stays
+unprofiled. Every prediction run and every training run then retried it, because the JIT guard reads
+`gemini_insights_structured IS NULL` and that is exactly what a failed generation leaves behind.
+
+**126 unprofiled rows have a NULL postcode**, 7 of them labelled (two rated 5 and 7 — among the more
+informative labels the model has). They are not a random 126: `enrich_maps_data.py` searches Places
+by `BusinessName + PostCode`, so a missing postcode degrades that lookup too. The inspected names
+are chains and concessions — `Costa Coffee Drive Thru`, `UNIT R13 VICTORIA PLACE`, `Dub Pan` — the
+FSA rows least likely to carry a clean postcode.
+
+`businessname` had the identical exposure and now gets the identical guard, though nothing currently
+violates it.
+
+**A defect the dual-write introduced, in the same run.** The merge stamped
+`gemini_profiled_at = CURRENT_TIMESTAMP()` unconditionally on match, so those 7 rows are now marked
+profiled while holding no profile. That state is worse than either end of it: a staleness sweep
+reads them as fresh and skips them, while the JIT guard reads them as missing and retries them. The
+merge now carries `WHEN MATCHED AND S.gemini_insights IS NOT NULL`, so a failed generation leaves
+the row untouched. The 7 already-stamped rows need a one-line `UPDATE` to clear.
+
+**The Phase 3 conformance check is what surfaced this**, logging
+`7 generated, non-conforming paths -- ... unparseable=7` at the moment it happened. It was built to
+detect schema drift and caught a prompt bug instead, which is the argument for having built it.
+D-12 recorded the decision to keep it advisory rather than blocking; had it been blocking, this run
+would have aborted before training and the finding would have looked like an outage.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
@@ -707,6 +744,14 @@ weekly cron.
 | `fsa_master` data fingerprint (27 pre-existing columns) | `rows=11268 labels=411 hash=7075448033881697774` | 2026-09-23 |
 | Snapshot fingerprint, pre-migration | **identical to production** — byte-for-byte restore point | 2026-09-23 |
 | Columns after Phase 4 (both tables) | **44** (27 + 17), all nullable, types verified | 2026-09-23 |
+| Model input features, before / after the Phase 6 retrain | **19 → 21** | 2026-09-23 |
+| `pillar_value_rating` range in the trained model | **constant 0 → 0–8** | 2026-09-23 |
+| `pillar_community_score` / `pillar_linguistic_score` / `pillar_culinary_score` | constant 0 → **0–6 / 0–7 / 0–6** | 2026-09-23 |
+| `pillar_geo_specificity` in the trained model | constant 0 → **3 categories** | 2026-09-23 |
+| `pillar_is_sit_down` / `pillar_establishment_type` | not read → **2 / 3 categories** | 2026-09-23 |
+| `maps_rating` as the model sees it | min −1.0, 0 nulls → **min 2.1, 166 nulls** | 2026-09-23 |
+| Retrain training population / unprofiled | 370 / **7** (all NULL postcode — D-16) | 2026-09-23 |
+| Unprofiled rows with a NULL postcode | **126** of 8,494; 7 labelled | 2026-09-23 |
 
 ## Cost ledger
 

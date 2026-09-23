@@ -432,6 +432,35 @@ labelled rows that have never been profiled). At $0.75/1M in and $3.75/1M out th
 grounding inside the 5,000/month free allowance; BQML training on 370 rows over a 5.7 MB scan is
 pennies. **Under £0.05 all in.** 363 of the 370 already carry every typed pillar.
 
+**Retrain executed, 2026-09-23 15:00–15:05 UTC** (approved). `ML.FEATURE_INFO` on the replaced model
+reports **21 input features, up from 19**, and D2 is visible as repaired rather than merely fixed in
+source:
+
+| feature | before | after |
+|---|---|---|
+| `pillar_value_rating` | constant 0 | 0–8 |
+| `pillar_community_score` | constant 0 | 0–6 |
+| `pillar_linguistic_score` | constant 0 | 0–7 |
+| `pillar_culinary_score` | constant 0 | 0–6 |
+| `pillar_geo_specificity` | constant 0 | 3 categories |
+| `pillar_is_sit_down` | not read | 2 categories |
+| `pillar_establishment_type` | not read | 3 categories |
+| `maps_rating` | min −1.0, 0 nulls | min 2.1, 166 nulls |
+
+The last row is Phase 5 showing up in the model: the `-1` sentinel was a real value the tree could
+split on, and it is now an honest NULL.
+
+*Caution worth recording:* the first `ML.FEATURE_INFO` reading after the retrain returned the **old**
+19 features. BigQuery served it from the 24-hour result cache, because the identical query had been
+run before training. Any before/after measurement in this track must pass
+`use_query_cache=False` or it will confirm whatever was true beforehand.
+
+- *Deviation:* the retrain surfaced **D-16**, a new defect — a NULL postcode voided the profile
+  prompt, so 7 labelled rows could never be profiled and were retried by every run. 126 unprofiled
+  rows are affected. Fixed in e6ad77c along with a merge guard against recording a failed
+  generation as a profile. The 7 rows carrying a `gemini_profiled_at` with no profile need a
+  one-line `UPDATE` to clear — dry run shown, 11.7 MB, pending approval.
+
 ## Phase 7: Switch Readers, Stale-Aware Refresh (R1)
 
 - [ ] Task: Read typed columns instead of parsing JSON
