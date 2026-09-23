@@ -1,0 +1,31 @@
+Phase 0 recon — Red/Green and deviations.
+
+Red: scripts/test_recon_pipeline_state.py written against the new module; the
+two path-parity tests failed first because the extraction regex used [^,]+ for
+JSON_EXTRACT_SCALAR's first argument, which cannot span the nested
+REGEXP_EXTRACT call's own comma. Fixed to a non-greedy .+? and both passed.
+
+Green: 117 offline tests (was 106; +11 here). Both new files parse under
+ast.parse(feature_version=(3,11)) for Docker/Cloud Build parity.
+
+Deviations from the plan:
+- The plan specified "--dry-run by default". Implemented as the inverse flag,
+  --execute, which is the same behaviour but reads correctly as a default
+  rather than a flag you must remember. This is the opposite of the other
+  scripts/migrate_*.py, which default to executing; noted in the docstring.
+- The plan said "then one level deeper per pillar object" as a separate step.
+  JSON_KEYS(json, 2) returns both levels in one query, so it is one query, not
+  seven.
+- Snapshot uses CREATE TABLE IF NOT EXISTS, not CREATE OR REPLACE. A re-run
+  after a later phase has already modified fsa_master would otherwise overwrite
+  the restore point with the state it exists to protect. Guarded by a test.
+
+Verification the plan asked for and this delivered:
+- Snapshot fsa_master_backup_20260923 verified at 11,268 rows / 411 labels,
+  matching production exactly.
+- All 8 census queries dry-ran clean against the live table before executing,
+  confirming every referenced column and JSON function resolves.
+
+Not done here:
+- Coverage remains unmeasurable; pytest-cov is in neither .venv nor
+  requirements.txt. Carried in D11/D12 (Phase 11), unchanged from Phase 1.
