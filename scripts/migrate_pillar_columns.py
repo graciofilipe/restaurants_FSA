@@ -39,9 +39,17 @@ NEW_COLUMNS = tuple(
     [(field.column, field.bq_type) for field in PILLAR_FIELDS] + list(NON_JSON_COLUMNS)
 )
 
-# The columns that exist before this migration. Held invariant across it, and
-# named explicitly so the fingerprint cannot drift as columns are added.
-PRE_EXISTING_COLUMNS = tuple(field.name for field in MASTER_BQ_SCHEMA)
+# The columns that exist before this migration, held invariant across it.
+#
+# Subtracted from the load schema rather than snapshotted, because once
+# `MASTER_BQ_SCHEMA` lists the pillar columns the two are no longer the same
+# set. Taking it as-is would fold the new columns into the fingerprint, and
+# after Phase 5's backfill a re-run would then see a legitimately different
+# hash and refuse to proceed.
+_NEW_NAMES = {name for name, _ in NEW_COLUMNS}
+PRE_EXISTING_COLUMNS = tuple(
+    field.name for field in MASTER_BQ_SCHEMA if field.name not in _NEW_NAMES
+)
 
 
 def build_ddl_statements(bq_path: str) -> list:

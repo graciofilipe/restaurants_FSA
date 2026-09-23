@@ -12,6 +12,7 @@ from app.core.pillar_schema import NON_JSON_COLUMNS, PILLAR_FIELDS
 from app.services.bq_utils import MASTER_BQ_SCHEMA
 from scripts.migrate_pillar_columns import (
     NEW_COLUMNS,
+    PRE_EXISTING_COLUMNS,
     build_ddl_statements,
     build_fingerprint_query,
     run_migration,
@@ -50,10 +51,19 @@ class TestColumnList(unittest.TestCase):
         self.assertEqual(types['pillar_geo_specificity'], 'STRING')
         self.assertEqual(types['pillar_establishment_type'], 'STRING')
 
-    def test_no_new_column_collides_with_an_existing_one(self):
-        existing = {f.name for f in MASTER_BQ_SCHEMA}
+    def test_the_crons_load_schema_knows_about_every_new_column(self):
+        """`MASTER_BQ_SCHEMA` is the load schema for the weekly ingest. It has
+        to cover the migrated table or `append_to_bigquery` silently stops
+        round-tripping these columns."""
+        loaded = {f.name for f in MASTER_BQ_SCHEMA}
         for name, _ in NEW_COLUMNS:
-            self.assertNotIn(name, existing, f"{name} already exists on the table")
+            self.assertIn(name, loaded, f"{name} is missing from MASTER_BQ_SCHEMA")
+
+    def test_the_load_schema_lists_no_column_twice(self):
+        """A duplicate would reach `load_table_from_json` and fail the weekly
+        ingest, which is the one code path here nobody is watching in real time."""
+        names = [f.name for f in MASTER_BQ_SCHEMA]
+        self.assertEqual(len(names), len(set(names)))
 
 
 class TestDdl(unittest.TestCase):
@@ -90,13 +100,23 @@ class TestFingerprint(unittest.TestCase):
 
     def test_the_fingerprint_covers_only_pre_existing_columns(self):
         """Fingerprinting `TO_JSON_STRING(t)` would include the newly added
-        NULL columns and change between the two readings for no reason,
-        making the check useless precisely when it is needed."""
+        columns and change between the two readings for no reason, making the
+        check useless precisely when it is needed. Worse, after Phase 5 fills
+        them a re-run would see a legitimate difference and refuse to proceed."""
         sql = build_fingerprint_query(TABLE)
+        new_names = {name for name, _ in NEW_COLUMNS}
         for field in MASTER_BQ_SCHEMA:
-            self.assertIn(field.name, sql)
-        for name, _ in NEW_COLUMNS:
+            if field.name not in new_names:
+                self.assertIn(field.name, sql)
+        for name in new_names:
             self.assertNotIn(name, sql)
+
+    def test_the_fingerprint_still_covers_the_original_table(self):
+        """The subtraction above must not quietly empty the list -- a
+        fingerprint over nothing would pass every comparison."""
+        self.assertEqual(len(PRE_EXISTING_COLUMNS), 27)
+        self.assertIn('user_rating', PRE_EXISTING_COLUMNS)
+        self.assertIn('gemini_insights_structured', PRE_EXISTING_COLUMNS)
 
     def test_the_fingerprint_counts_the_labels_explicitly(self):
         """411 hand-entered ratings are the one thing in this table that cannot
