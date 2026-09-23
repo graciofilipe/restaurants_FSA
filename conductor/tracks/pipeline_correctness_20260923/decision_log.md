@@ -165,6 +165,48 @@ separate environment exists, the snapshot has to serve both roles.
 
 ---
 
+## D-07 — The auto-deploy trigger is confirmed, and it is region-scoped
+
+*Recorded 2026-09-23, at the Phase 1 checkpoint.*
+
+### Context
+
+The plan flagged that `CLAUDE.md:36` and `README.md:62` both claim a Cloud Build trigger deploys on
+every push to `main`, but that the trigger config is server-side and unverifiable from the repo. The
+whole merge strategy — merge only at green phase boundaries — rests on that claim being true.
+
+A plain `gcloud builds triggers list` returns five triggers, **none of them for this repo**. That
+reading is wrong: the command defaults to the `global` region. The trigger is in `europe-west2`.
+
+### Decision
+
+The docs are accurate. Verified:
+
+| Field | Value |
+|---|---|
+| Trigger | `restaurants-fsa-github` |
+| Region | `europe-west2` (**not** `global` — must be passed explicitly) |
+| Repository | `graciofilipe/restaurants_FSA` via the `filipegraciogithublondonconnection` GitHub connection |
+| Event | push to `^main$` |
+| Build file | `cloudbuild.yaml` |
+| `includedFiles` / `ignoredFiles` | none — every push builds |
+| `disabled` | not set |
+
+Consequences, both now load-bearing for this track:
+
+1. **Any merge to `main` deploys to Cloud Run.** Merge only at green, independently deployable phase
+   boundaries.
+2. **`cloudbuild.yaml:11` is a real gate, not documentation.** `python -m pytest app/ scripts/`
+   fails the build before the image is pushed, so a broken test blocks the deploy rather than
+   shipping alongside it. This is why Phase 1 added `scripts/` to that command.
+
+### Reasoning
+
+Recorded chiefly for the region trap: a future check that omits `--region=europe-west2` will
+conclude no trigger exists and that `main` is safe to merge into freely. It is not.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0. Empty until recon runs.*
