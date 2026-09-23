@@ -1,0 +1,20 @@
+Verification: 345 passed (pytest app/ scripts/). New tests: TestTheDefaultFilterAsksWhetherItIsARestaurant (4), TestManualReviewIsGone (4).
+
+Live evidence for the predicate swap, measured before the change:
+  manual_review distribution over 11,268 rows -- rejected 10,869, NULL 288,
+  pending 109, prending 2. Of the 'rejected', 9,348 are in_scope = TRUE and
+  351 carry a human user_rating, so the value does not mean what it says.
+  33-day window: old predicate 153 rows, in_scope IS NOT FALSE 146 rows.
+  The 7 excluded are in_scope = FALSE (cafes/bakeries).
+
+Dry run of the generated SCRIPT_IDENTIFY_RECENTS SELECT against fsa_master:
+  valid, 10,180,488 bytes.
+
+Callers audited: nothing ever passed review_status_filter to either function;
+nothing calls execute_gemini_enrichment without fhrsids except the UI's
+untargeted path. grep for live manual_review references in app/ and scripts/
+(excluding tests and the spent migration) returns only the explanatory
+comment at app/services/bq_utils.py:114.
+
+Python 3.11 AST parity: clean. The BigQuery column is NOT dropped by this
+commit -- deploy first, drop under separate approval.
