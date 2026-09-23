@@ -145,9 +145,9 @@ SELECT
   fhrsid,
   AI.GENERATE( ('''
   ### RESTAURANT DETAILS
-  Name: ''',businessname,''',
+  Name: ''',COALESCE(businessname, ''),''',
   Address: ''',COALESCE(addressline1, ''),', ',COALESCE(addressline2, ''),', ',COALESCE(addressline3, ''),''',
-  PostCode: ''',postcode,''',
+  PostCode: ''',COALESCE(postcode, ''),''',
   '''),
     connection_id => '{connection_id}',
     endpoint => 'https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_endpoint}',
@@ -159,6 +159,12 @@ FROM
 
 # SCRIPT 3: Merge Insights back to Master
 # Parameters: project_id, dataset_id, source_table_insights, target_table_master
+#
+# `WHEN MATCHED AND S.gemini_insights IS NOT NULL`: AI.GENERATE returns NULL
+# when its prompt is NULL, and merging that would stamp `gemini_profiled_at` on
+# a row that has no profile. Such a row reads as fresh to a staleness sweep and
+# as missing to the JIT guard, so it is retried forever and never refreshed.
+# Observed live on 7 rows during the Phase 6 retrain; see D-16.
 #
 # Dual-write (Phase 6). The raw payload still lands in
 # `gemini_insights_structured` -- it is the audit trail, and the only way to
@@ -178,7 +184,7 @@ SCRIPT_MERGE_INSIGHTS = """
 MERGE `{project_id}.{dataset_id}.{target_table_master}` T
 USING `{project_id}.{dataset_id}.{source_table_insights}` S
 ON T.fhrsid = S.fhrsid
-WHEN MATCHED THEN
+WHEN MATCHED AND S.gemini_insights IS NOT NULL THEN
   UPDATE SET
     T.gemini_insights_structured = S.gemini_insights,
     T.gemini_insights = NULL,

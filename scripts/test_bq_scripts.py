@@ -59,6 +59,19 @@ def test_templates_render(template):
     assert '{' not in rendered.replace("'''", "").replace(sql_json_object_regex(), "")
 
 
+def test_the_prompt_survives_a_null_field():
+    """Concatenating a NULL in BigQuery yields NULL, so one missing column makes
+    the whole prompt NULL and AI.GENERATE returns nothing. The address lines
+    were already guarded; `postcode` and `businessname` were not, which is why
+    7 labelled rows had never been profiled despite being retried on every
+    training and prediction run. See D-16."""
+    for column in ('businessname', 'postcode', 'addressline1', 'addressline2', 'addressline3'):
+        assert f"COALESCE({column}, '')" in SCRIPT_GENERATE_INSIGHTS, column
+    # ...and no bare reference survives alongside the guarded one.
+    for column in ('businessname', 'postcode'):
+        assert f",{column}," not in SCRIPT_GENERATE_INSIGHTS.replace(' ', ''), column
+
+
 def test_scratch_tables_expire():
     """Both scratch tables live in the production dataset; neither may outlive its run."""
     for template in (SCRIPT_IDENTIFY_RECENTS, SCRIPT_GENERATE_INSIGHTS):
@@ -109,6 +122,13 @@ class TestMergeWritesTypedColumns:
     def test_it_reads_the_nested_paths(self):
         assert '$.1_value_and_volume.rating' in SCRIPT_MERGE_INSIGHTS
         assert '1_value_and_volume_rating' not in SCRIPT_MERGE_INSIGHTS
+
+    def test_a_failed_generation_is_not_recorded_as_a_profile(self):
+        """AI.GENERATE returns NULL when its prompt is NULL. Merging that would
+        stamp gemini_profiled_at on a row with no profile, which reads as fresh
+        to a staleness sweep and as missing to the JIT guard -- the row is then
+        retried forever and never refreshed. Observed live on 7 rows."""
+        assert 'WHEN MATCHED AND S.gemini_insights IS NOT NULL THEN' in SCRIPT_MERGE_INSIGHTS
 
     def test_the_braces_in_the_unwrap_regex_are_escaped(self):
         """The template goes through `.format()`. A single brace here raises
