@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery, exceptions as google_cloud_exceptions
 import pandas as pd
+from app.core.pillar_schema import sql_conformance_check, summarise_conformance
 from scripts.bq_scripts import (
     MODEL_PARAMS_JSON,
     SCRIPT_BULK_UPDATE_MERGE,
@@ -32,6 +33,43 @@ FHRSID_COLNAME = "fhrsid"
 def _sql_quote(val: Any) -> str:
     s = str(val).replace("'", "''")
     return f"'{s}'"
+
+def log_insight_conformance(
+    client: "bigquery.Client", project_id: str, dataset_id: str, insights_table_id: str
+) -> Optional[Dict[str, Any]]:
+    """Report how far this run's output strays from the canonical pillar shape.
+
+    Runs against the scratch table *before* the merge, so the numbers describe
+    what was just generated rather than the whole accumulated column.
+
+    Deliberately advisory: it logs and returns, and never raises or blocks the
+    merge. The evidence in D-08 is that the profiler conforms on 2,766 of 2,767
+    rows, so refusing to merge on a single bad path would throw away good
+    profiles over a leaked reasoning trace. What was missing was not
+    enforcement but any way at all to notice -- five features read zero for the
+    life of the model and nothing said so.
+    """
+    table_ref = f"{project_id}.{dataset_id}.{insights_table_id}"
+    try:
+        rows = list(client.query(sql_conformance_check(table_ref)).result())
+        if not rows:
+            return None
+        row = dict(rows[0])
+        total, offenders = summarise_conformance(row)
+        if offenders:
+            detail = ", ".join(f"{name}={count}" for name, count in sorted(offenders.items()))
+            logger.warning(
+                f"Profile conformance: {total} generated, non-conforming paths -- {detail}. "
+                f"The pillar schema may have drifted; see app/core/pillar_schema.py."
+            )
+        else:
+            logger.info(f"Profile conformance: {total} generated, all paths present.")
+        return row
+    except Exception as e:
+        # A failed check must not cost the run the profiles it just paid for.
+        logger.warning(f"Could not run the profile conformance check: {e}")
+        return None
+
 
 def execute_gemini_enrichment(
     project_id: str,
@@ -74,6 +112,8 @@ def execute_gemini_enrichment(
             model_endpoint=model_endpoint, model_params_json=MODEL_PARAMS_JSON
         )
         client.query(q_insights).result()
+
+        log_insight_conformance(client, project_id, dataset_id, insights_table_id)
 
         q_merge = SCRIPT_MERGE_INSIGHTS.format(
             project_id=project_id, dataset_id=dataset_id, source_table_insights=insights_table_id,

@@ -208,16 +208,46 @@ no prompt or model-params change is now planned.*
           grounding the "Culinary Anthropologist" prompt depends on for the same non-benefit.
     - [x] Sub-task: Detect-not-prevent — **chosen**. Zero marginal cost, and it is the part that was
           actually missing: nothing in the repo would have told us the paths were dead.
-- [ ] Task: Define the canonical pillar schema once in code
-    - [ ] Sub-task: Single source of truth for the BigQuery columns, the extraction paths, and the
-          conformance check. Spec §4 is the confirmed content.
-- [ ] Task: Validate conformance
-    - [ ] Sub-task: Contract test running the real extraction against the Phase 0 fixtures in
+- [x] Task: Define the canonical pillar schema once in code — 900fde9
+    - [x] Sub-task: Single source of truth for the BigQuery columns, the extraction paths, and the
+          conformance check. Spec §4 is the confirmed content. **`app/core/pillar_schema.py`: 14
+          `PillarField`s (column, BigQuery type, key path, `is_feature`) plus `NON_JSON_COLUMNS`.
+          The extraction SQL, the Python parser, the feature list, and the conformance query are all
+          generated from that tuple, so Phase 4's DDL and Phase 6's dual-write cannot disagree with
+          it.**
+    - *Deviation:* the schema also carries `is_feature`, which the plan had not asked for. The eight
+      feature columns are what Phase 6's D3 task needs a single definition of, and putting the flag
+      beside the path is what makes "training and prediction agree" a test rather than a convention.
+      It also settles a real question the plan left open: the four free-text fields are **not**
+      features. Unbounded model prose as a training input is memorisation, not signal.
+- [x] Task: Validate conformance — 900fde9, 061a197
+    - [x] Sub-task: Contract test running the real extraction against the Phase 0 fixtures in
           `tests/fixtures/gemini_profiles/` — the current tests provably cannot catch this class of
           bug, which is how D2 survived. Include the one unparseable payload as a negative case.
-    - [ ] Sub-task: Conformance check at merge time: a profile missing a required path is counted
-          and logged, not silently merged as zeros.
-    - [ ] Sub-task: Record the check's first production reading in `decision_log.md`.
+          **`app/core/test_pillar_schema.py`, 46 tests.** Two fixtures were added beyond Phase 0's
+          eight: the unparseable payload (1855447) and a markdown-fenced one (1040595), because the
+          eight captured rows were all the plain shape and a contract test that only sees the happy
+          case is the same blind spot again.
+    - [x] Sub-task: Conformance check at merge time: a profile missing a required path is counted
+          and logged, not silently merged as zeros. **`log_insight_conformance` in `bq_utils.py`,
+          called against the scratch table immediately before `SCRIPT_MERGE_INSIGHTS`.**
+    - [x] Sub-task: Record the check's first production reading in `decision_log.md`. **2,766 of
+          2,767 conform on all 14 paths; the 1 failure is the unparseable row; no partial drift.
+          See D-12.**
+    - *Deviation:* the check is **advisory** — it logs and returns, and cannot fail an enrichment
+      run. The plan said "counted and logged", which this satisfies, but the choice deserves stating:
+      at 2,766/2,767, blocking the merge would throw away a run of good profiles over one leaked
+      reasoning trace. Reasoning in D-12.
+    - *Deviation:* `sql_conformance_check` gained a `where` parameter. The default must stay
+      unfiltered for the scratch table, where a NULL `AI.GENERATE` result is a failed profile, but
+      auditing `fsa_master` without a predicate drops all 8,501 never-profiled rows into the
+      unparseable count. Both behaviours are pinned by tests.
+
+**Phase 3 checkpoint:** `pytest app/ scripts/` green at 184 tests; all four new/edited files parse
+under `ast.parse(feature_version=(3,11))` for Cloud Build parity. No prompt change, no model-params
+change, no BigQuery write — the only production query run was the read-only conformance reading
+(4.5 MiB, £0.00003). Phase 4 can now generate its DDL from `PILLAR_FIELDS` + `NON_JSON_COLUMNS`
+rather than from a hand-copied column list.
 
 ## Phase 4: Expand — Additive Schema
 

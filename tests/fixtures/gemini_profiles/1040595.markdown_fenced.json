@@ -1,0 +1,32 @@
+Based on the analysis of **Salvo's Ristorante & Pizzeria (Wimbledon)**, here is the profile evaluation:
+
+```json
+{
+   "match_score": 76,
+   "1_value_and_volume": {
+       "rating": 5,
+       "verdict": "A true 'Feast' contender. Reviews consistently highlight 'hearty portions' and 'generous' sizes that offer exceptional value for the Wimbledon area. The 'Quality per Pound' ratio is high, with a focus on satisfying, home-cooked abundance rather than delicate plating."
+   },
+   "2_demographic_community": {
+       "score": 4,
+       "evidence": "Strong local community hub vibe. The dining room is described as 'intimate' and filled with 'families' and 'locals' rather than tourists or influencers. While not explicitly an exclusive ethnic enclave, the 'warm hospitality' from the owners creates a distinct 'neighborhood institution' feel."
+   },
+   "3_linguistic_signal": {
+       "score": 3,
+       "menu_type": "The menu is primarily English-facing with standard Italian naming conventions. While the owners are praised for their 'passion for heritage,' there is no evidence of a 'secret' untranslated menu or a linguistic barrier that signals a deep-dive insider spot."
+   },
+   "4_geographic_precision": {
+       "region_identified": "Sicily (Implied)",
+       "specificity_level": "BROAD_REGIONAL"
+   },
+   "5_culinary_uncompromisingness": {
+       "score": 3,
+       "pander_check": "Leans towards 'Comfort Authentic' rather than 'Uncompromising Explorer.' The menu is dominated by 'Greatest Hits' (Carbonara, Bolognese, Lasagna) which are safe crowd-pleasers. However, the 'Siciliana' (swordfish, capers, chili) is a legitimate regional anchor that saves it from being generic."
+   },
+   "6_establishment_integrity": {
+       "is_sit_down_restaurant": true,
+       "type": "RESTAURANT_DINING"
+   },
+   "summary_reasoning": "Salvo's is a perfect 'Healthy Host' spot but a moderate 'Explorer' target. It excels in Value, Integrity, and Community warmth, offering a genuine family-run experience with massive portions. However, it loses points on 'Uncompromising Specificity' as the menu focuses on safe, beloved classics rather than challenging, obscure regional deep-cuts."
+}
+```
