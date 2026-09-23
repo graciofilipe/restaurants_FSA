@@ -728,10 +728,61 @@ Three decisions inside it, each of which could have gone the expensive way:
   the threshold doubles the recurring bill for signal that moves on the scale of a refurbishment.
 
 **The D1 half.** The UI's "Estimated New Gemini Calls" and the enrichment it estimates were two
-implementations of one question; they agreed only because the legacy column they disagreed about is
-NULL on every row. Both now call `needs_gemini_profile`. The estimate also answers correctly when
-"Force Regenerate" is ticked, which it previously ignored — it would show 0 and then bill for the
-whole batch.
+implementations of one question. Both now call `needs_gemini_profile`. The estimate also answers
+correctly when "Force Regenerate" is ticked, which it previously ignored — it would show 0 and then
+bill for the whole batch.
+
+> **Corrected 2026-09-23 (Phase 8).** This entry originally said the two surfaces "agreed only
+> because the legacy column they disagreed about is NULL on every row." That is wrong on both
+> counts. `gemini_insights` is non-NULL on **1,116 rows** — V1 free text, written before the V2
+> merge started nulling the column, on rows that have *no* structured profile. So the two surfaces
+> disagreed on exactly those 1,116: the estimate counted a row as cached if **either** column held
+> anything, the executor asked only about the structured one. Put a V1-text row in a batch and the
+> estimate said 0 calls while the run billed for one. The Phase 7 fix is therefore load-bearing
+> rather than tidy-up, and the direction of the old error was always to under-report the bill. See
+> [D-18], which is the same NULL, mishandled a second way.
+
+---
+
+## D-18 — NaN is truthy, so `a or b` scored 10,152 rows as never profiled (new defect)
+
+**Date:** 2026-09-23 · **Phase:** 8 · **Status:** fixed in `0d02c8c`
+
+Found while measuring whether Phase 8's staleness switch changed any ordering. It changed 1,051
+rows, which it should not have — the two expressions were supposed to be equivalent. They were not,
+and the reason is a Python detail with a five-figure blast radius:
+
+```python
+gemini_val = row.get('gemini_insights') or row.get('gemini_insights_structured')
+```
+
+A BigQuery NULL arrives in a DataFrame as `float('nan')`, and **NaN is truthy**. So for every row
+whose V1 text is NULL — 10,152 of 11,268 — the `or` stopped at the first operand and returned NaN.
+The very next line asks `pd.isna(gemini_val)`, gets True, and awards the maximum staleness score of
+100, which is the "never scored, profile it" bucket.
+
+**1,020 of those rows hold a structured profile *and* a prediction.** They sat at the top of the
+Budget Allocator's queue being offered for re-profiling, indistinguishable from rows that had never
+been touched. The heuristic that exists to direct Gemini spend at the rows that need it was
+directing it at the rows that needed it least.
+
+The mirror-image error rode along: the 1,116 rows that hold **only** V1 text read as profiled, when
+what they have is a text blob from the superseded profiler and no V2 columns at all.
+
+**Fix.** Staleness reads `gemini_profiled_at` — one typed column, written by the V2 merge, measured
+as exactly co-extensive with `gemini_insights_structured` (2,767 each, 0 rows either way), and one
+that survives the Phase 10 drop of the legacy column. `first_present()` now exists for "first
+non-missing of these keys" and the postcode read uses it, because the same trap was laid there:
+`row.get('postcode') or row.get('PostCode')` returned NaN, `str(nan)` is `'nan'`, and the centroid
+lookup resolved that to central London.
+
+**Why the tests did not catch it.** Every fixture in `test_scoring_priority.py` set
+`gemini_insights` and `gemini_insights_structured` explicitly, to `None` or to a string. `None or x`
+returns `x`; only `nan or x` returns `nan`. The frames the tests built could not reproduce the
+frames BigQuery produces. The two new tests pass NaN deliberately.
+
+**Related.** [D-01] is the same conflation of the two columns in the JIT guard; [D-17] records the
+corrected version of what `gemini_insights` actually contains.
 
 ---
 
@@ -790,6 +841,18 @@ whole batch.
 | Profiled rows carrying a `gemini_profiled_at` stamp | **2,767 of 2,767** | 2026-09-23 |
 | Rows stale at the Phase 7 threshold of 180 days | **0**; first eligible 2027-03-22 | 2026-09-23 |
 | Unprofiled rows, whole table / in-scope slice | **8,501** / 1,116; **0 labelled** | 2026-09-23 |
+| Rows holding V1 `gemini_insights` text | **1,116** — all with no structured profile, no stamp, 1,090 in scope | 2026-09-23 |
+| Rows with no coordinates / no coordinates and no placeable postcode | 8,977 / **106** | 2026-09-23 |
+| Postcodes: NULL / empty string / junk | 126 / **0** / 2 (`WATERLOOVI`, `NE`) | 2026-09-23 |
+| Unplaceable rows, proximity before → after | 14.7 (Trafalgar Square, 9.59 km) → **10.0, distance blank** | 2026-09-23 |
+| Rows whose proximity score changes in Phase 8 | **106** — exactly the unplaceable ones | 2026-09-23 |
+| Rows whose staleness score changes (D-18) | **1,051**: 1,020 from a wrong 100 down to their tier, 31 up to 100 | 2026-09-23 |
+| Rows whose priority score changes in Phase 8 | **576** | 2026-09-23 |
+| Unprofiled rows in the top 25 / 100 / 500 of the queue, before → after | 0 → **4** / 7 → **37** / 178 → **315** | 2026-09-23 |
+| Top-25 / top-100 queue overlap, before vs. after | 4/25 / 43/100 | 2026-09-23 |
+| `maps_found`: TRUE / FALSE / NULL | 2,263 / **243** / **8,762** | 2026-09-23 |
+| Rows found on Maps but unrated | **0** — so the metric's number is unchanged, its meaning is not | 2026-09-23 |
+| `-1` sentinels in `maps_rating` / `maps_reviews` / `price_level` / `match_score` | **0 / 0 / 0 / 0** | 2026-09-23 |
 
 ## Cost ledger
 

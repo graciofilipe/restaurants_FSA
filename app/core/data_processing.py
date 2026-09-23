@@ -62,6 +62,33 @@ def normalize_fhrsid(value: Any) -> str:
     except (ValueError, TypeError):
         return str(value).strip().lower()
 
+def extract_fsa_coordinates(est: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
+    """Flattens the FSA API's nested `Geocode` into (latitude, longitude).
+
+    Every establishment the API returns carries one, and until now the ingest
+    dropped it -- `ORIGINAL_COLUMNS_TO_KEEP` is a flat key copy, so a nested
+    object cannot survive it. We then paid Google Places to tell us where the
+    restaurant was. The API sends the numbers quoted; `latitude`/`longitude`
+    are FLOAT64, so anything unparseable becomes None rather than 0.0.
+    """
+    geocode = est.get('Geocode') or est.get('geocode') or {}
+    if not isinstance(geocode, dict):
+        return None, None
+
+    def _as_float(*keys: str) -> Optional[float]:
+        for key in keys:
+            value = geocode.get(key)
+            if value is None or (isinstance(value, str) and not value.strip()):
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    return _as_float('Latitude', 'latitude'), _as_float('Longitude', 'longitude')
+
+
 def process_and_update_master_data(
     master_data: Iterable[Any], api_data: Dict[str, Any], today_date: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
@@ -98,6 +125,7 @@ def process_and_update_master_data(
             if cid not in existing_ids and cid not in processed_ids:
                 est['first_seen'] = today_date
                 est['manual_review'] = "not reviewed"
+                est['latitude'], est['longitude'] = extract_fsa_coordinates(est)
                 new_records.append({k: est.get(k) for k in ORIGINAL_COLUMNS_TO_KEEP})
                 processed_ids.add(cid)
 
@@ -183,17 +211,57 @@ if not LONDON_OUTCODE_CENTROIDS:
         "E8": (51.5450, -0.0750),
     }
 
+# What `extract_outcode` says when there is no postcode to read. It used to say
+# "SW16" -- the anchor's own outcode, 0 km from home and the maximum proximity
+# score (D4). In the live table that path is latent rather than observed: a
+# BigQuery NULL arrives in the frame as NaN, NaN is truthy, so the old
+# `postcode or PostCode` read handed 'nan' to the lookup and it resolved to the
+# central-London fallback instead -- 9.59 km, score 14.7. Both numbers are
+# inventions. 126 rows carry no postcode and 2 carry junk ('WATERLOOVI', 'NE').
+UNKNOWN_OUTCODE = "UNKNOWN"
+
+# What an unplaceable row scores for proximity instead. The decay is
+# `100 * exp(-0.20 * km)`, so this is what a restaurant ~11.5 km from the anchor
+# gets: behind anything we can actually place nearby, but still in the queue,
+# because "we do not know where this is" is not a reason never to look at it.
+UNKNOWN_LOCATION_PROXIMITY_SCORE = 10.0
+
+
+def first_present(row: Any, *keys: str) -> Any:
+    """First value in `row` that is neither absent nor NaN.
+
+    `row.get('a') or row.get('b')` cannot be used on a DataFrame row: pandas
+    fills a missing string with `float('nan')`, and NaN is *truthy*, so the
+    chain stops on the missing value and returns it. That is D-18 -- the
+    staleness rule read `gemini_insights or gemini_insights_structured` and so
+    scored 10,152 rows as never profiled, 1,020 of which had a profile.
+    """
+    for key in keys:
+        value = row.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) and pd.isna(value):
+            continue
+        return value
+    return None
+
+
 def extract_outcode(postcode_str: str) -> str:
-    """Extracts the UK outcode from a postcode string (e.g. 'SW4 7UL' -> 'SW4', 'SW196NW' -> 'SW19')."""
-    if not postcode_str or pd.isna(postcode_str):
-        return "SW16"
+    """Extracts the UK outcode from a postcode string (e.g. 'SW4 7UL' -> 'SW4', 'SW196NW' -> 'SW19').
+
+    Returns `UNKNOWN_OUTCODE` when there is nothing to extract.
+    """
+    if postcode_str is None or (not isinstance(postcode_str, str) and pd.isna(postcode_str)):
+        return UNKNOWN_OUTCODE
     s = str(postcode_str).strip().upper()
+    if not s:
+        return UNKNOWN_OUTCODE
     if ' ' in s:
-        return s.split(' ')[0].strip()
+        return s.split(' ')[0].strip() or UNKNOWN_OUTCODE
     clean = re.sub(r'[^A-Z0-9]', '', s)
     if len(clean) >= 5 and re.match(r'^[A-Z0-9]+[0-9][A-Z]{2}$', clean):
         return clean[:-3]
-    return clean
+    return clean or UNKNOWN_OUTCODE
 
 def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculates the great-circle distance between two points in kilometers."""
@@ -210,23 +278,42 @@ def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) ->
     c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
     return round(r * c, 2)
 
-def get_outcode_coordinates(outcode: str) -> Tuple[float, float]:
-    """Retrieves centroid coordinates (lat, lon) for a UK outcode or postcode."""
-    sw16_c = LONDON_OUTCODE_CENTROIDS.get("SW16", (51.4212, -0.1292))
-    if not outcode or pd.isna(outcode):
-        return sw16_c
-    
+def lookup_outcode_coordinates(outcode: str) -> Optional[Tuple[float, float]]:
+    """Centroid (lat, lon) for a UK outcode or postcode, or None if we cannot place it.
+
+    The None is the point. Scoring a restaurant needs to know the difference
+    between "5 km away" and "no idea", and the old central-London fallback
+    (Trafalgar Square) answered the second question with a number. 106 rows
+    have neither coordinates nor a postcode we can place: 104 with no postcode
+    at all and 2 carrying junk -- 'WATERLOOVI' and 'NE'.
+    """
+    if outcode is None or (not isinstance(outcode, str) and pd.isna(outcode)):
+        return None
+
     clean_oc = extract_outcode(outcode)
+    if clean_oc == UNKNOWN_OUTCODE:
+        return None
     if clean_oc in LONDON_OUTCODE_CENTROIDS:
         return tuple(LONDON_OUTCODE_CENTROIDS[clean_oc])
-    
+
     # Try longest prefix match (e.g. EC2A -> EC2, SW1A -> SW1)
     for k in sorted(LONDON_OUTCODE_CENTROIDS.keys(), key=len, reverse=True):
         if clean_oc.startswith(k):
             return tuple(LONDON_OUTCODE_CENTROIDS[k])
-            
-    # Default fallback to Central London (Trafalgar Square)
-    return (51.5074, -0.1278)
+
+    return None
+
+
+def get_outcode_coordinates(outcode: str) -> Tuple[float, float]:
+    """Centroid (lat, lon) for a UK outcode, defaulting to SW16.
+
+    This is the *anchor* lookup: the UI's "Anchor Postcode" box, where an empty
+    or half-typed value has to resolve to something and the documented default
+    is home. Row locations go through `lookup_outcode_coordinates`, which is
+    allowed to say it does not know.
+    """
+    return lookup_outcode_coordinates(outcode) or LONDON_OUTCODE_CENTROIDS.get(
+        "SW16", (51.4212, -0.1292))
 
 def calculate_restaurant_priority(
     df: pd.DataFrame,
@@ -283,17 +370,29 @@ def calculate_restaurant_priority(
                 has_exact = False
 
         if not has_exact:
-            pc = row.get('postcode') or row.get('PostCode') or ""
-            c_lat, c_lon = get_outcode_coordinates(str(pc))
-            dist = haversine_distance_km(c_lat, c_lon, anchor_lat, anchor_lon)
+            pc = first_present(row, 'postcode', 'PostCode') or ""
+            centroid = lookup_outcode_coordinates(str(pc))
+            # No coordinates and no placeable postcode. NaN, not 0.0: the grid
+            # shows a blank distance and the sorts already put NaN last.
+            dist = (haversine_distance_km(centroid[0], centroid[1], anchor_lat, anchor_lon)
+                    if centroid else float('nan'))
 
         distances.append(dist)
-        s_prox = round(100.0 * math.exp(-0.20 * dist), 1)
+        s_prox = (UNKNOWN_LOCATION_PROXIMITY_SCORE if math.isnan(dist)
+                  else round(100.0 * math.exp(-0.20 * dist), 1))
         prox_scores.append(s_prox)
 
         # 2. Staleness & Re-scoring (100 for unscored, 80 for >=60d, 60 for >=30d, 40 for >=14d, 15 for recent)
         pred_val = row.get('predicted_user_rating')
-        gemini_val = row.get('gemini_insights') or row.get('gemini_insights_structured')
+        # "Has this been profiled?" is the timestamp the V2 merge writes.
+        # `gemini_insights or gemini_insights_structured` was two wrong answers
+        # at once (D-18): the `or` returned NaN for the 10,152 rows with no V1
+        # text, so 1,020 profiled *and* predicted rows read as never scored and
+        # kept the maximum staleness; and the 1,116 rows that hold only V1 text
+        # read as profiled when no V2 profile exists. The stamp is exactly
+        # co-extensive with `gemini_insights_structured` (2,767 rows, 0
+        # disagreement either way) and survives the Phase 10 column drop.
+        gemini_val = row.get('gemini_profiled_at')
         if pd.isna(pred_val) or pd.isna(gemini_val) or pred_val is None or gemini_val is None:
             s_stale = 100.0
         else:

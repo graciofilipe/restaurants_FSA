@@ -29,10 +29,18 @@ DISPLAY_COLUMNS = [
     "postcode", "localauthorityname", "first_seen", "manual_review",
     "price_level", "maps_rating", "maps_reviews",
     "latitude", "longitude", "maps_url", "business_status", "website_url", "maps_types",
+    "maps_found",
     *PILLAR_COLUMNS,
     "gemini_profiled_at",
     "gemini_insights_structured",
 ]
+
+# The three answers `maps_found` can give. "No rating" was one answer covering
+# two of them until Phase 8.
+MAPS_ALL = "All"
+MAPS_FOUND = "Found on Google Maps"
+MAPS_NOT_FOUND = "Not Found on Google Maps"
+MAPS_NEVER_LOOKED_UP = "Not Looked Up Yet"
 
 def display_data(df, key=None):
     event = st.dataframe(
@@ -73,7 +81,7 @@ def filter_and_sort_restaurants(
     user_rating_filter: str = "All",
     pred_rating_filter: str = "All",
     gemini_match_filter: str = "All",
-    maps_rating_filter: str = "All",
+    maps_filter: str = MAPS_ALL,
     min_pred_score: float = 1.0,
     search_query: str = "",
     sort_by: str = "Predicted Rating (High to Low)",
@@ -143,12 +151,18 @@ def filter_and_sort_restaurants(
         elif gemini_match_filter in ["No Gemini Match Score", "No Match Score", "No Gemini Score"]:
             filtered = filtered[filtered["gemini_insights_structured"].isna()]
 
-    # 5. Google Maps Rating Filter
-    if "maps_rating" in filtered.columns:
-        if maps_rating_filter in ["Has Google Maps Rating", "Has Maps Rating", "Has Rating"]:
-            filtered = filtered[filtered["maps_rating"].notna()]
-        elif maps_rating_filter in ["No Google Maps Rating", "No Maps Rating", "No Rating"]:
-            filtered = filtered[filtered["maps_rating"].isna()]
+    # 5. Google Maps Lookup Filter
+    # `maps_found` answers this, not `maps_rating`. A NULL rating means either
+    # "Places has no such restaurant" or "we have not asked yet", and those are
+    # opposite answers: the first must never be re-queried, the second is the
+    # whole enrichment backlog. A found restaurant with no rating is found.
+    if "maps_found" in filtered.columns:
+        if maps_filter == MAPS_FOUND:
+            filtered = filtered[filtered["maps_found"] == True]  # noqa: E712 -- NULL must not match
+        elif maps_filter == MAPS_NOT_FOUND:
+            filtered = filtered[filtered["maps_found"] == False]  # noqa: E712
+        elif maps_filter == MAPS_NEVER_LOOKED_UP:
+            filtered = filtered[filtered["maps_found"].isna()]
 
     # 6. Search Query (businessname, postcode, localauthorityname, fhrsid)
     if search_query:
@@ -343,11 +357,12 @@ def main():
             key="slicer_gemini_match"
         )
 
-        maps_rating_slicer = st.selectbox(
-            "Google Maps Rating",
-            options=["All", "Has Google Maps Rating", "No Google Maps Rating"],
+        maps_slicer = st.selectbox(
+            "Google Maps Lookup",
+            options=[MAPS_ALL, MAPS_FOUND, MAPS_NOT_FOUND, MAPS_NEVER_LOOKED_UP],
             index=0,
-            key="slicer_maps_rating"
+            key="slicer_maps_found",
+            help="'Not Found' means Places was asked and had no match — those are not re-queried. 'Not Looked Up Yet' is the enrichment backlog."
         )
 
         scope_slicer = st.selectbox(
@@ -387,7 +402,7 @@ def main():
             user_rating_filter=user_rating_slicer,
             pred_rating_filter=pred_rating_slicer,
             gemini_match_filter=gemini_match_slicer,
-            maps_rating_filter=maps_rating_slicer,
+            maps_filter=maps_slicer,
             min_pred_score=min_pred_score,
             search_query=search_query,
             sort_by=sort_by
@@ -399,7 +414,10 @@ def main():
         m2.metric("Filtered / Active", len(df_filtered))
         m3.metric("User Rated", len(df_master[df_master['user_rating'].notna()]) if 'user_rating' in df_master.columns else 0)
         m4.metric("ML Predicted", len(df_master[df_master['predicted_user_rating'].notna()]) if 'predicted_user_rating' in df_master.columns else 0)
-        m5.metric("Google Maps", len(df_master[df_master['maps_rating'].notna()]) if 'maps_rating' in df_master.columns else 0)
+        # Found on Maps, not "has a rating" -- a restaurant Places knows about
+        # but nobody has rated is enriched, and counting it as missing is what
+        # made the backlog look bigger than it is.
+        m5.metric("Found on Maps", int((df_master['maps_found'] == True).sum()) if 'maps_found' in df_master.columns else 0)  # noqa: E712
         m6.metric("Gemini Evaluated",
                   len(df_master[df_master["match_score"].notna()]) if "match_score" in df_master.columns else 0)
 

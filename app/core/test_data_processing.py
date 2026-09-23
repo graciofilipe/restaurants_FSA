@@ -42,6 +42,62 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
 
         self.assertEqual(new_restaurants, [])
 
+    def test_the_fsa_coordinates_are_kept_at_ingest(self):
+        """R4. The FSA gives us a lat/lon with every establishment and we were
+        throwing it away, then paying Google Places to tell us where the
+        restaurant is. `Geocode` is nested, so it cannot survive the flat
+        `ORIGINAL_COLUMNS_TO_KEEP` copy without being flattened first."""
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [
+            {'FHRSID': "1", 'BusinessName': 'Waakye Joint',
+             'Geocode': {'Longitude': '-0.129071', 'Latitude': '51.4213'}},
+        ]}}}
+
+        new_restaurants, _ = process_and_update_master_data([], api_data)
+
+        self.assertEqual(new_restaurants[0]['latitude'], 51.4213)
+        self.assertEqual(new_restaurants[0]['longitude'], -0.129071)
+
+    def test_ingest_coordinates_are_numbers_not_the_api_strings(self):
+        """`latitude`/`longitude` are FLOAT64 in `MASTER_BQ_SCHEMA`; the API
+        sends them quoted, and the weekly load would reject the strings."""
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [
+            {'FHRSID': "1", 'Geocode': {'Longitude': '-0.1', 'Latitude': '51.5'}},
+        ]}}}
+
+        new_restaurants, _ = process_and_update_master_data([], api_data)
+
+        self.assertIsInstance(new_restaurants[0]['latitude'], float)
+        self.assertIsInstance(new_restaurants[0]['longitude'], float)
+
+    def test_a_missing_or_unusable_geocode_leaves_the_coordinates_null(self):
+        """Null is the honest answer, and it is what lets Places fill the gap
+        later -- a 0.0 would read as a point in the Gulf of Guinea."""
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [
+            {'FHRSID': "1"},
+            {'FHRSID': "2", 'Geocode': None},
+            {'FHRSID': "3", 'Geocode': {'Longitude': '', 'Latitude': ''}},
+            {'FHRSID': "4", 'Geocode': {'Longitude': 'n/a', 'Latitude': 'n/a'}},
+        ]}}}
+
+        new_restaurants, _ = process_and_update_master_data([], api_data)
+
+        for record in new_restaurants:
+            self.assertIsNone(record['latitude'], record['FHRSID'])
+            self.assertIsNone(record['longitude'], record['FHRSID'])
+
+    def test_a_lowercase_geocode_is_read_too(self):
+        """The FSA API sends `Geocode`/`Latitude`; both spellings are checked
+        at every other boundary in this file, and the API has changed the
+        casing of its keys before."""
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [
+            {'FHRSID': "1", 'geocode': {'longitude': '-0.1', 'latitude': '51.5'}},
+        ]}}}
+
+        new_restaurants, _ = process_and_update_master_data([], api_data)
+
+        self.assertEqual(new_restaurants[0]['latitude'], 51.5)
+        self.assertEqual(new_restaurants[0]['longitude'], -0.1)
+
     def test_add_new_restaurants_and_fields_initialization(self):
                 # Setup mock for datetime.now().strftime()
                 mock_datetime_str = "2023-10-26"
