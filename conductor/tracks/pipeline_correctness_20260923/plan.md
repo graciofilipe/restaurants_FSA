@@ -251,20 +251,40 @@ rather than from a hand-copied column list.
 
 ## Phase 4: Expand — Additive Schema
 
-- [ ] Task: Write `scripts/migrate_pillar_columns.py`
-    - [ ] Sub-task: Follow `scripts/migrate_to_in_scope_workflow.py` — `ADD COLUMN IF NOT EXISTS`,
+- [x] Task: Write `scripts/migrate_pillar_columns.py` — 06212ed
+    - [x] Sub-task: Follow `scripts/migrate_to_in_scope_workflow.py` — `ADD COLUMN IF NOT EXISTS`,
           logged DDL, `--dry-run`, idempotent.
-    - [ ] Sub-task: Columns from the Phase 3 canonical schema, plus `gemini_profiled_at`,
-          `maps_lookup_at`, `maps_found`.
-    - [ ] Sub-task: `pillar_geo_specificity` and `pillar_establishment_type` stay STRING — they are
-          enums, and `CAST(... AS INT64)` is what silently zeroes pillar 4 today.
-- [ ] Task: Review and execute
-    - [ ] Sub-task: Present dry-run output for approval.
-    - [ ] Sub-task: Execute against the snapshot table first; validate; then prod.
-    - [ ] Sub-task: Verify nothing changed — row count and per-column checksum before/after.
-    - [ ] Sub-task: **Ordering** — `ALTER TABLE` lands *before* `MASTER_BQ_SCHEMA` is updated. That
+    - [x] Sub-task: Columns from the Phase 3 canonical schema, plus `gemini_profiled_at`,
+          `maps_lookup_at`, `maps_found`. **17, generated from `PILLAR_FIELDS` + `NON_JSON_COLUMNS`,
+          not retyped.**
+    - [x] Sub-task: `pillar_geo_specificity` and `pillar_establishment_type` stay STRING — they are
+          enums, and `CAST(... AS INT64)` is what silently zeroes pillar 4 today. **Pinned by test.**
+    - *Deviation:* three departures from the script the plan says to follow, all recorded in D-13.
+      Dry run is the **default** here (`--execute` opts in); a failed `ALTER TABLE` **raises**
+      rather than logging a notice; and the dry run **submits** each statement to BigQuery with
+      `dry_run=True` instead of printing it. The third caught a real error immediately —
+      `COUNT(*) AS rows` is a syntax error, `ROWS` being reserved for window frames.
+- [x] Task: Review and execute — 06212ed, 45d77aa
+    - [x] Sub-task: Present dry-run output for approval. **All 17 statements validated against the
+          live table; approved 2026-09-23, "snapshot first, then prod".**
+    - [x] Sub-task: Execute against the snapshot table first; validate; then prod. **Snapshot:
+          44 columns, correct types, all nullable, fingerprint unchanged. Then production: same.**
+    - [x] Sub-task: Verify nothing changed — row count and per-column checksum before/after.
+          **`rows=11268 labels=411 hash=7075448033881697774` before, after, and after a second
+          idempotent run. The snapshot carried the identical hash pre-migration, so the restore
+          point is byte-for-byte production, not merely the same shape.**
+    - [x] Sub-task: **Ordering** — `ALTER TABLE` lands *before* `MASTER_BQ_SCHEMA` is updated. That
           constant is the load schema for the weekly cron's `append_to_bigquery`; if it lists a
           column the live table lacks, the scheduled ingest fails. Nothing reconciles the two.
+          **Held: the DDL ran first, the constant was updated after, and Phase 4 stayed unmerged
+          until both were done. Verified live — 44 declared, 44 present, none missing.**
+    - *Deviation:* updating `MASTER_BQ_SCHEMA` broke the migration's own fingerprint, because
+      `PRE_EXISTING_COLUMNS` was derived from it. Caught by the existing tests. It now subtracts
+      `NEW_COLUMNS`, with a test that the subtraction cannot empty the list. See D-13.
+
+**Phase 4 checkpoint:** `pytest app/ scripts/` green at 204; 3.11 parity checked. Both tables at 44
+columns; data fingerprint identical across every run. Nothing reads the new columns yet, so the
+deployed app is unaffected. Cost: £0 — `ADD COLUMN` is metadata-only.
 
 ## Phase 5: Backfill and Validate
 
