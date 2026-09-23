@@ -482,6 +482,73 @@ that same count and the reading is meaningless. Both behaviours are pinned by te
 
 ---
 
+## D-13 — The migration departs from the script the plan told it to copy
+
+**Date:** 2026-09-23 · **Phase:** 4 · **Status:** decided, executed
+
+### What ran
+
+17 nullable columns added to `fsa_master` and `fsa_master_backup_20260923`, generated from
+`PILLAR_FIELDS` + `NON_JSON_COLUMNS`. Approved as "snapshot first, then prod". Cost £0 —
+`ADD COLUMN` is metadata-only.
+
+| | rows | labels | fingerprint |
+|---|---|---|---|
+| `fsa_master` before | 11,268 | 411 | 7075448033881697774 |
+| `fsa_master` after | 11,268 | 411 | 7075448033881697774 |
+| after a second idempotent run | 11,268 | 411 | 7075448033881697774 |
+| `fsa_master_backup_20260923` before | 11,268 | 411 | 7075448033881697774 |
+| `fsa_master_backup_20260923` after | 11,268 | 411 | 7075448033881697774 |
+
+The snapshot's pre-migration hash equals production's, which is a stronger statement than the row
+and label counts recorded in Phase 0: the restore point is byte-for-byte production, not merely the
+same shape.
+
+### Three departures from `migrate_to_in_scope_workflow.py`
+
+The plan said to follow that script. Three of its habits are wrong for this table.
+
+**Dry run is the default.** It executes unless told otherwise. This one requires `--execute`. The
+table holds the only copy of 411 hand-entered labels and there is no non-production environment;
+the safe default is the one where forgetting a flag costs nothing.
+
+**A failed `ALTER TABLE` raises.** It downgrades DDL failures to `logger.warning` and continues, so
+a partial schema looks like a successful run. Phase 5's backfill targets these columns by name; a
+half-applied schema would surface there instead, further from the cause.
+
+**The dry run submits rather than prints.** It prints the SQL. Printing SQL nobody parsed is not
+validation. Submitting each statement with `dry_run=True` earned its keep on the first run:
+`COUNT(*) AS rows` is a syntax error, `ROWS` being reserved for window frames. That would have
+failed mid-execute, against production, after the approval.
+
+### The fingerprint had to be subtractive, not snapshotted
+
+`PRE_EXISTING_COLUMNS` was first derived from `MASTER_BQ_SCHEMA`. Updating that constant to list the
+new columns — the very next step — silently changed what the fingerprint covered. Two existing tests
+failed, which is the only reason it was noticed.
+
+The consequence would not have shown up here (all 17 columns are NULL, so the hash is unchanged
+either way). It would have shown up in Phase 5: once the backfill populates them, a re-run of the
+migration would compute a legitimately different hash, conclude the data had been corrupted, and
+refuse to proceed. `PRE_EXISTING_COLUMNS` now subtracts `NEW_COLUMNS` from the load schema, which is
+stable across both edits, and a test asserts the subtraction leaves 27 columns — a fingerprint over
+no columns passes every comparison it is given.
+
+### Ordering, held
+
+The DDL ran before `MASTER_BQ_SCHEMA` was updated, and Phase 4 stayed off `main` until both were
+done. That constant is the load schema for the weekly cron; `load_table_from_json` fails the entire
+load if it names a column the table lacks, and `main` auto-deploys. The reverse order is safe — a
+table with columns the load schema omits just gets NULLs — so the risk is one-directional and the
+sequence is not optional. Verified live afterwards: 44 declared, 44 present, none missing.
+
+Nothing in the repo reconciles the two automatically. The 17 fields are now *appended from* the
+canonical schema rather than retyped, so the failure mode that remains is adding a `PillarField`
+without running the migration — which the module docstring calls out, and which a future phase could
+close with a startup assertion if it proves to be a real risk.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
@@ -512,6 +579,9 @@ that same count and the reading is meaningless. Both behaviours are pinned by te
 | `match_score`-only baseline MAE / RMSE / R² / Spearman | **0.697 / 1.095 / 0.668 / 0.603** | 2026-09-23 |
 | Training-mean floor MAE / RMSE | 1.566 / 1.926 | 2026-09-23 |
 | Conformance check, first production reading | **2,766 / 2,767** conform on all 14 paths; 1 unparseable; 0 partial | 2026-09-23 |
+| `fsa_master` data fingerprint (27 pre-existing columns) | `rows=11268 labels=411 hash=7075448033881697774` | 2026-09-23 |
+| Snapshot fingerprint, pre-migration | **identical to production** — byte-for-byte restore point | 2026-09-23 |
+| Columns after Phase 4 (both tables) | **44** (27 + 17), all nullable, types verified | 2026-09-23 |
 
 ## Cost ledger
 
@@ -521,7 +591,7 @@ that same count and the reading is meaningless. Both behaviours are pinned by te
 | Phase 3 conformance reading | 4.5 MiB scanned @ $6.25/TiB | **£0.00003** — spent |
 | Phase 3 conformance check, per enrichment run | one scan of the scratch table, ~KiB | **£0** in practice |
 | Phase 0 snapshot | 11,268 rows ≈ 6 MiB active storage | **< £0.01/month** — spent |
-| Phase 4 `ALTER TABLE ADD COLUMN` × 17 | metadata-only | **£0** |
+| Phase 4 `ALTER TABLE ADD COLUMN` × 17 | metadata-only | **£0** — spent, both tables |
 | Phase 5 backfill (pure SQL over existing JSON) | one full-table `UPDATE`, ~6 MiB | **< £0.01** |
 | Phase 5 `in_scope` re-derivation | one `UPDATE` over 2,766 rows | **< £0.01** |
 | Phase 9 retrain | `BOOSTED_TREE_REGRESSOR` over 404 rows | **~£0.05** |

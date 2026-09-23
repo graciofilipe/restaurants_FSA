@@ -5,7 +5,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery, exceptions as google_cloud_exceptions
 import pandas as pd
-from app.core.pillar_schema import sql_conformance_check, summarise_conformance
+from app.core.pillar_schema import (
+    NON_JSON_COLUMNS,
+    PILLAR_FIELDS,
+    sql_conformance_check,
+    summarise_conformance,
+)
 from scripts.bq_scripts import (
     MODEL_PARAMS_JSON,
     SCRIPT_BULK_UPDATE_MERGE,
@@ -396,4 +401,22 @@ MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('maps_types', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('in_scope', 'BOOLEAN', mode='NULLABLE'),
     bigquery.SchemaField('rating_source', 'STRING', mode='NULLABLE'),
+]
+
+# The pillar columns are appended from the canonical schema rather than retyped,
+# so adding a field in `app/core/pillar_schema.py` cannot leave the cron's load
+# schema behind. `append_to_bigquery` fills anything absent from the DataFrame
+# with NA, so listing columns the weekly ingest never populates is harmless.
+#
+# This list must never name a column the live table lacks -- `load_table_from_json`
+# fails the whole load if it does, and that load is the weekly ingest. Run
+# `scripts/migrate_pillar_columns.py --execute` before extending PILLAR_FIELDS.
+_PILLAR_BQ_TYPES = {'INT64': 'INT64', 'BOOL': 'BOOLEAN', 'STRING': 'STRING',
+                    'TIMESTAMP': 'TIMESTAMP'}
+
+MASTER_BQ_SCHEMA += [
+    bigquery.SchemaField(name, _PILLAR_BQ_TYPES[bq_type], mode='NULLABLE')
+    for name, bq_type in (
+        [(f.column, f.bq_type) for f in PILLAR_FIELDS] + list(NON_JSON_COLUMNS)
+    )
 ]
