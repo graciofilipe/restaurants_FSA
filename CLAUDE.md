@@ -100,13 +100,14 @@ a one-day expiry as a backstop).
 - **The production profiler** is a BigQuery `AI.GENERATE` call. Its prompt is
   `_SYSTEM_INSTRUCTION_TEXT` in `scripts/bq_scripts.py` — the "Healthy Host & Explorer" persona and
   the 6 evaluation pillars. This is what the Streamlit app and the ML pipeline actually use.
-- **The ADK agents** (`app/agent.py` root agent, `app/maps_agent/agent.py`) use
-  `GoogleMapsGroundingTool` and are served by `app/fast_api_app.py`. **Streamlit never calls them.**
-  They exist as the evaluated agent surface for `tests/eval/` and `adk eval`. The Docker image's
-  `CMD` runs Streamlit, so the FastAPI app only runs locally or under test.
+- **The ADK agent** (`app/agent.py`, the root agent) uses `GoogleMapsGroundingTool` and is served by
+  `app/fast_api_app.py`. **Streamlit never calls it.** It exists as the evaluated agent surface for
+  `tests/eval/` and `adk eval`. The Docker image's `CMD` runs Streamlit, so the FastAPI app only
+  runs locally or under test. There was a second, near-identical `app/maps_agent/`; it was removed
+  in Phase 10 — nothing imported it but its own test, and `agents_dir` never discovered it.
 
 Both must stay on `gemini-3.8-flash` (or `gemini-3.1-pro`). Legacy model IDs are prohibited and
-`tests/test_model_upgrades.py` asserts this across agents, SQL, and eval configs.
+`tests/test_model_upgrades.py` asserts this across the agent, SQL, and eval configs.
 
 ### The 6-pillar contract has one definition
 
