@@ -108,9 +108,14 @@ estimate attached.
     - [x] Sub-task: Warn when the cap is hit, via `for`/`else` so it fires only when the loop was
           never broken out of — the case where truncation and a misbehaving API are indistinguishable.
     - [x] Sub-task: Test that a mock API returning full pages forever terminates.
-- [ ] Task: Isolate the temp tables (D10)
-    - [ ] Sub-task: Per-run suffix and expiration on `recents` / `genairesults_temp`.
-    - [ ] Sub-task: Wrap the `bulk_update_reviews` temp-table delete in `finally`.
+- [x] Task: Isolate the temp tables (D10) — 96196fc
+    - [x] Sub-task: Per-run suffix and expiration on `recents` / `genairesults_temp`, plus a
+          `finally` that drops both. All three layers are deliberate: expiry alone leaves a day of
+          clutter per run, and a `finally` alone does not survive the instance being killed mid-run,
+          which is how the current leak happens.
+    - [x] Sub-task: Wrap the `bulk_update_reviews` temp-table delete in `finally`.
+    - [x] *Follow-up for the checkpoint:* the existing production `recents` and `genairesults_temp`
+          tables are now orphaned. Dropping them is destructive and needs explicit go-ahead.
 - [ ] Task: Conductor — User Manual Verification 'Stop the Bleeding' (Protocol in workflow.md)
 - [ ] Task: Merge to `main` and verify the Cloud Run deploy
 
