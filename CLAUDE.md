@@ -11,7 +11,7 @@ source .venv/bin/activate && uv sync    # setup / re-sync deps from pyproject.to
 
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest app/ scripts/                    # 296 offline unit tests — this is what Cloud Build runs
+pytest app/ scripts/                    # 310 offline unit tests — this is what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest tests/                           # NOT offline-safe (see below)
 
@@ -59,7 +59,9 @@ a one-day expiry as a backstop).
 1. **Ingest** — `app/cron/fetch_weekly.py` reads search coordinates from `config_search_params`,
    pages the FSA API (`app/services/api_client.py`), and `process_and_update_master_data` dedupes by
    FHRSID against the IDs already in the master table (`load_fhrsids_from_bq`), appending only
-   genuinely new rows with `first_seen`.
+   genuinely new rows with `first_seen`. `ORIGINAL_COLUMNS_TO_KEEP` is a flat key copy, so the API's
+   nested `Geocode` is flattened by `extract_fsa_coordinates` into `latitude`/`longitude` first —
+   every establishment ships with coordinates and Places is only needed to improve on them.
 2. **Maps enrichment** — `scripts/enrich_maps_data.py` hits Places `searchText` and MERGEs rating,
    review count, price level, coordinates, and types back. Every lookup stamps `maps_lookup_at` and
    `maps_found`; a miss records `maps_found = FALSE` with a NULL rating, and the timestamp — not the
@@ -131,6 +133,14 @@ Google Maps quality prior, and scope confidence. Out-of-scope rows are forced to
 have a human `user_rating` are discounted to 10%. `st_app.py` exposes the weight vectors as strategy
 presets. Distance falls back to outcode centroids from `app/core/london_outcodes.json` (310 UK
 outcodes) when exact lat/lon is missing.
+
+Both inputs are allowed to be missing, and saying so is the whole point of the component:
+`lookup_outcode_coordinates` returns `None` rather than inventing a centroid, so an unplaceable row
+scores `UNKNOWN_LOCATION_PROXIMITY_SCORE` with a NaN distance (`get_outcode_coordinates` keeps the
+SW16 default — it answers for the *anchor* box, not for a row). "Has this been profiled?" is
+`gemini_profiled_at`, never the JSON blob. Never write `row.get('a') or row.get('b')` over a
+DataFrame row: a BigQuery NULL arrives as `float('nan')`, NaN is truthy, and that expression cost
+1,020 rows their correct staleness tier (D-18). `first_present()` is the safe form.
 
 ### UI shape
 

@@ -499,7 +499,7 @@ not now.
 - *Deviation:* both find-queries now select `gemini_insights_structured IS NOT NULL AS has_profile`
   instead of the column. Nothing on either path parsed the JSON, and it is the widest column in the
   table.
-- *Left for Phase 8:* `calculate_restaurant_priority` still reads
+- *Left for Phase 8 — done there, 0d02c8c, and it found [D-18].* `calculate_restaurant_priority` still reads
   `gemini_insights` / `gemini_insights_structured` for its staleness component rather than
   `match_score`. Switching it changes queue *ordering*, and this plan puts ordering changes behind
   a real-data check in Phase 8. Phase 10 has to revisit it anyway, when the legacy column goes.
@@ -545,21 +545,71 @@ sweep buys triage-queue coverage, not model quality. Needs an explicit go-ahead.
 
 ## Phase 8: Honest Missing Data and Free Coordinates (D4, R4)
 
-- [ ] Task: Missing location stops scoring as perfect
-    - [ ] Sub-task: `extract_outcode("")` stops returning `"SW16"`; return an explicit unknown.
-    - [ ] Sub-task: Unknown-location rows get a low-or-neutral proximity score, not the maximum.
-    - [ ] Sub-task: Update `app/core/test_scoring_priority.py`, which asserts the current default.
-    - [ ] Sub-task: Confirm on real data that the top of the queue moves as expected.
-- [ ] Task: Keep FSA coordinates at ingest
-    - [ ] Sub-task: Flatten the API's nested `Geocode` into `latitude`/`longitude` in
-          `process_and_update_master_data`.
-    - [ ] Sub-task: Add them to `ORIGINAL_COLUMNS_TO_KEEP`, which currently drops `Geocode`.
-    - [ ] Sub-task: Remove the dead `Geocode.Latitude` handling from `write_to_bigquery`.
-    - [ ] Sub-task: Test that ingest stores coordinates (the miss-path erasure is already fixed in
-          Phase 1).
-- [ ] Task: Purge sentinel awareness from readers
-    - [ ] Sub-task: UI metric, "Has Google Maps Rating" filter, and sorting read `maps_found`.
-    - [ ] Sub-task: Confirm no feature column can receive `-1`.
+- [x] Task: Missing location stops scoring as perfect — 0d02c8c
+    - [x] Sub-task: `extract_outcode("")` stops returning `"SW16"`; return an explicit unknown. 0d02c8c
+    - [x] Sub-task: Unknown-location rows get a low-or-neutral proximity score, not the maximum. 0d02c8c
+    - [x] Sub-task: Update `app/core/test_scoring_priority.py`, which asserts the current default. 0d02c8c
+    - [x] Sub-task: Confirm on real data that the top of the queue moves as expected. 0d02c8c
+- [x] Task: Keep FSA coordinates at ingest — 0d02c8c
+    - [x] Sub-task: Flatten the API's nested `Geocode` into `latitude`/`longitude` in
+          `process_and_update_master_data`. 0d02c8c
+    - [x] Sub-task: Add them to `ORIGINAL_COLUMNS_TO_KEEP`, which currently drops `Geocode`. 0d02c8c
+    - [x] Sub-task: Remove the dead `Geocode.Latitude` handling from `write_to_bigquery`. 0d02c8c
+    - [x] Sub-task: Test that ingest stores coordinates (the miss-path erasure is already fixed in
+          Phase 1). 0d02c8c
+- [x] Task: Purge sentinel awareness from readers — 0d02c8c
+    - [x] Sub-task: UI metric, "Has Google Maps Rating" filter, and sorting read `maps_found`. 0d02c8c
+    - [x] Sub-task: Confirm no feature column can receive `-1`. 0d02c8c
+- [x] Task: Staleness reads the profile stamp, not the JSON blob (carried from Phase 7) — 0d02c8c
+    - [x] Sub-task: Switch the component to `gemini_profiled_at`. 0d02c8c
+    - [x] Sub-task: Measure the ordering change on the live table before keeping it. 0d02c8c
+- [ ] Task: Conductor — User Manual Verification 'Honest Missing Data' (Protocol in workflow.md)
+
+- *Deviation:* **D4's headline turned out to be latent, not live.** `extract_outcode("")` really does
+  return the anchor's own outcode, and that really would score a blank postcode as 0 km. No row
+  reaches it: 126 postcodes are NULL and **0** are the empty string, and a NULL arrives in the frame
+  as NaN, so the old `postcode or PostCode` read passed `'nan'` to the lookup, which fell through to
+  the central-London fallback — 9.59 km, proximity 14.7. Two inventions rather than one. The fix
+  stands as specified (10.0 and a blank distance for the 106 unplaceable rows), but the queue
+  movement the task predicted comes from the staleness fix below, not from this.
+- *Deviation:* `get_outcode_coordinates` **keeps its SW16 default**, and a new
+  `lookup_outcode_coordinates` returns `Optional`. They are two different questions: the UI's anchor
+  box has to resolve an empty string to somewhere, and a restaurant row must be allowed to have no
+  known location. One function cannot answer both honestly.
+- *Deviation:* the distance for an unplaceable row is **NaN, not 0.0**. Every sort in the UI already
+  passes `na_position="last"` and `.mean()` skips NaN, so the grid shows a blank cell instead of a
+  fabricated distance for free.
+- *Deviation:* the Maps slicer gained a **fourth option**. "No Google Maps Rating" was one answer to
+  two questions — 243 rows Places was asked about and had no match for, which must never be
+  re-queried, and 8,762 nobody has asked about, which are the backlog. Keeping them in one bucket
+  would have left the filter honest about `maps_found` and still useless for finding the backlog.
+- *Deviation (new defect, [D-18]):* the staleness switch was expected to change nothing and changed
+  1,051 rows. `gemini_insights or gemini_insights_structured` returns **NaN** whenever the V1 text is
+  NULL, because NaN is truthy — so 10,152 rows read as never profiled, 1,020 of which hold a profile
+  *and* a prediction and were being offered for re-profiling at maximum priority. The same trap was
+  laid in the postcode read. `first_present()` now exists so it cannot be laid a third time.
+- *Correction:* [D-17] recorded that `gemini_insights` is "NULL on every row". It is non-NULL on
+  **1,116** — V1 text on rows with no V2 profile at all. The entry is corrected in place; the
+  consequence is that the two D1 surfaces did not agree before Phase 7, they disagreed on those
+  1,116 rows and always in the direction of under-reporting the bill.
+
+**Phase 8 checkpoint:** `pytest app/ scripts/` green at **310** tests (was 296: +8 in
+`test_scoring_priority.py`, +4 in `test_data_processing.py`, +2 in `test_st_app_unified_view.py`).
+All edited files parse under `ast.parse(feature_version=(3,11))`. Five read-only BigQuery queries,
+`use_query_cache=False`, no writes, £0. Before/after was measured by importing the pre-merge
+`data_processing.py` from git alongside the new one and scoring the same 11,268 rows through both.
+
+| | before | after |
+|---|---|---|
+| proximity score, 106 unplaceable rows | 14.7 (a fabricated 9.59 km) | **10.0**, distance blank |
+| rows scored as never profiled | 10,152 | **8,501** (the true count) |
+| staleness 100 on a row that holds a profile *and* a prediction | 1,020 rows | **0** |
+| unprofiled rows in the top 25 / 100 / 500 | 0 / 7 / 178 | **4 / 37 / 315** |
+| Maps backlog as the UI reports it | 9,005 ("no rating") | **8,762** never asked + 243 permanent misses |
+
+The queue now puts unprofiled restaurants at the top of the list of restaurants to profile, which it
+did not before. Nothing here spends money by itself — it changes which rows the next budgeted run
+would spend it on.
 
 ## Phase 9: Retrain and Deliver the Verdict
 
