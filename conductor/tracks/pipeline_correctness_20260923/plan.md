@@ -613,7 +613,7 @@ The queue now puts unprofiled restaurants at the top of the list of restaurants 
 did not before. Nothing here spends money by itself — it changes which rows the next budgeted run
 would spend it on.
 
-## Phase 9: Retrain and Deliver the Verdict
+## Phase 9: Retrain and Deliver the Verdict [checkpoint: 10c1f1d]
 
 - [x] Task: Retrain on corrected features — already done in Phase 6
     - [x] Sub-task: `--dry-run` first to validate the generated SQL. Valid, 5.7 MB.
