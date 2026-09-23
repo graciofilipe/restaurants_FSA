@@ -1,0 +1,28 @@
+{
+  "match_score": 12,
+  "1_value_and_volume": {
+    "rating": 3,
+    "verdict": "Offers cheap fried chicken combos, wings, and pizzas with substantial calorie volume per pound, but it delivers fast-food takeaway fare rather than a sit-down cultural feast."
+  },
+  "2_demographic_community": {
+    "score": 1,
+    "evidence": "Functions purely as a neighborhood fast-food and delivery counter catering to passersby and school trade, with no distinctive ethnic enclave or cultural gathering footprint."
+  },
+  "3_linguistic_signal": {
+    "score": 1,
+    "menu_type": "Standard English overhead illuminated takeaway boards listing generic meal deals, burgers, wings, and pizzas with no insider or untranslated items."
+  },
+  "4_geographic_precision": {
+    "region_identified": "Generic British / American Fast Food",
+    "specificity_level": "GENERIC_NATIONAL"
+  },
+  "5_culinary_uncompromisingness": {
+    "score": 1,
+    "pander_check": "Completely standardized commercial fast food relying on processed frozen poultry, standard breading, commercial sauces, and fast-food pizzas with zero culinary authenticity or regional complexity."
+  },
+  "6_establishment_integrity": {
+    "is_sit_down_restaurant": false,
+    "type": "FAST_FOOD_JOINT"
+  },
+  "summary_reasoning": "Directly violates the establishment integrity mandate as a standard takeaway fried chicken shop, lacking table service, cultural specificity, and regional authenticity."
+}

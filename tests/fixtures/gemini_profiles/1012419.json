@@ -1,0 +1,28 @@
+{
+  "match_score": 18,
+  "1_value_and_volume": {
+    "rating": 2,
+    "verdict": "Menu is built around cafe snacks, hot drinks, desserts, and casual bites rather than shared savory feasts or generous dining portions. Does not provide the culinary volume or feast-like value sought by the profile."
+  },
+  "2_demographic_community": {
+    "score": 2,
+    "evidence": "Operates primarily as a local shisha lounge and casual late-night hangout rather than a regional culinary institution anchored by a native food-loving community."
+  },
+  "3_linguistic_signal": {
+    "score": 1,
+    "menu_type": "Standard English menu focused on shisha flavours, coffees, light cafe snacks, and desserts, with no regional dialects, untranslated specials, or cultural insider markers."
+  },
+  "4_geographic_precision": {
+    "region_identified": "Cuba (Thematic/Generic)",
+    "specificity_level": "GENERIC_NATIONAL"
+  },
+  "5_culinary_uncompromisingness": {
+    "score": 1,
+    "pander_check": "Lacks serious savory culinary ambition or traditional technique. Offerings are tailored to generic cafe comfort foods and smoke lounge refreshments rather than deep, challenging, or authentic cultural recipes."
+  },
+  "6_establishment_integrity": {
+    "is_sit_down_restaurant": false,
+    "type": "CAFE_BAKERY_DELI"
+  },
+  "summary_reasoning": "Fails the primary establishment integrity test as a shisha cafe/lounge rather than a full-service culinary restaurant. It lacks regional authenticity, native enclave validation, and substantial feast-style dining."
+}

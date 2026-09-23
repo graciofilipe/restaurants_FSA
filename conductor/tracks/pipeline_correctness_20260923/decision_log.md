@@ -207,19 +207,268 @@ conclude no trigger exists and that `main` is safe to merge into freely. It is n
 
 ---
 
+## D-08 — Recon settles the shape: convention A, stable, no re-profile needed
+
+*Recorded 2026-09-23, from `scripts/recon_pipeline_state.py` over all 11,268 rows. Total query cost
+33.4 MiB scanned, about £0.0002.*
+
+### Context
+
+D-01 made Phase 0 a gate: nothing from Phase 3 on would be designed until a key census over real
+rows settled which of the four conventions `gemini_insights_structured` actually uses. It has run.
+
+### Findings
+
+**1. The shape is convention A, and it is stable.** 2,766 of the 2,767 profiled rows share one
+identical top-level key set:
+
+```
+["1_value_and_volume", "2_demographic_community", "3_linguistic_signal",
+ "4_geographic_precision", "5_culinary_uncompromisingness", "6_establishment_integrity",
+ "match_score", "summary_reasoning"]
+```
+
+The one exception is a single row whose payload contains no JSON object at all. All 17 second-level
+paths in spec §4 resolve on all 2,766 — including the leaf names (`verdict`, `evidence`,
+`menu_type`, `region_identified`, `specificity_level`, `pander_check`, `is_sit_down_restaurant`,
+`type`). **Spec §4 is confirmed unchanged and is no longer provisional.**
+
+Key drift exists but is confined to pillars 4 and 6, and only as *extra* keys alongside the required
+ones — `6_establishment_integrity.note` on 14 rows, `.details` on 9, `.summary_reasoning` on 6, then
+a long tail of 1–2 row variants (`status`, `summary`, `warning`, `integrity_violation`). Nothing the
+schema reads is ever missing.
+
+**2. D2 confirmed, at full severity.** Every one of the five flat pillar paths the production SQL
+reads resolves on **zero** rows:
+
+| Path read by `train_bqml_model.py` / `ml_prediction.py` | Non-null rows | Distinct values |
+|---|---|---|
+| `$.1_value_and_volume_rating` | **0** | 0 |
+| `$.2_demographic_community_score` | **0** | 0 |
+| `$.3_linguistic_signal_score` | **0** | 0 |
+| `$.4_geographic_precision_specificity_level` | **0** | 0 |
+| `$.5_culinary_uncompromisingness_score` | **0** | 0 |
+| `$.match_score` | 2,766 | 91 |
+
+Against the same rows, the nested equivalents resolve 2,766/2,766 with 20, 22, 17, 3 and 23 distinct
+values respectively. **The deployed model has one real Gemini feature — `match_score` — and five
+constant zeros.** `IFNULL(…, 0)` is why this never surfaced as an error.
+
+**3. D13 confirmed and sized.** `'$.6_establishment_integrity_is_sit_down_restaurant'` resolves on
+**0** rows; the nested form resolves on 2,766. The categorisation branches in
+`migrate_to_in_scope_workflow.py` therefore never fired, and `in_scope` was assigned from
+`maps_types` alone. The disagreement against the profiles:
+
+| | Rows |
+|---|---|
+| `in_scope = TRUE` but the profile says **not** a sit-down restaurant | **1,458** |
+| `in_scope = FALSE` but the profile says it **is** a sit-down restaurant | 18 |
+
+1,476 of the 2,766 profiled rows are mis-categorised — over half. `in_scope` is true on 10,693 of
+11,268 rows overall, so the column is doing almost no filtering work, which is exactly what makes
+the Gemini spend broad.
+
+**4. D1 is worse than the plan assumed.** The plan expected
+`COUNT(*) WHERE gemini_insights IS NOT NULL` to be **0**. It is **1,116** — and the V1 and V2
+columns are perfectly disjoint (`v1_and_v2 = 0`). Those 1,116 rows are legacy V1-only profiles that
+never got a V2 structured profile. So the old guard at `ml_prediction.py:46` was wrong in *both*
+directions: it skipped the 1,116 rows that most needed profiling, and re-profiled all 2,767 that
+already had one. The Phase 1 fix (test `gemini_insights_structured`) is correct and now also means
+those 1,116 rows become eligible — a cost item for Phase 7's budget-capped sweep, not free.
+
+**5. The label set is 411, not 50–200.** 404 of them are on profiled rows, so the usable training
+set is 404. Distribution is heavily skewed low:
+
+| `user_rating` | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|
+| rows | 188 | 106 | 35 | 17 | 11 | 27 | 16 | 10 | 1 |
+
+### Decisions that follow
+
+- **Spec §4 stands as written.** The 17 columns and all 17 source paths are confirmed. Phase 5's
+  backfill is a straight nested-path extraction with **no alias `COALESCE`** — D-01's main worry
+  does not apply.
+- **No legacy re-profile.** Every existing profile already carries every field the typed columns
+  need. Phase 5 backfills from SQL alone. The "re-profile legacy rows into the canonical shape"
+  option in Phase 5 is **withdrawn** — it would cost a full Gemini sweep to buy nothing.
+- **Phase 3 (D14) is downscoped.** The drift the recorded ADK outputs showed does **not** appear in
+  the profiler: 2,766/2,766 conformance on the required keys is strong evidence that the profiler's
+  explicit example output already holds the shape. The two-step constrained-decode rework in D-02 is
+  not justified by this evidence. Phase 3 becomes: define the canonical schema once in code, add the
+  contract test against the Phase 0 fixtures, and add a conformance check at merge time so drift is
+  *detected* rather than silently absorbed. Dropping `googleSearch` stays off the table.
+- **Phase 5 gains a D13 re-derivation** of `in_scope` from `pillar_is_sit_down` for the 1,476
+  disagreeing rows, dry-run and diff-counted first. The direction matters: re-deriving will move
+  ~1,458 rows *out* of scope, which reduces future Gemini spend.
+- **The stale-sweep budget must account for the 1,116 V1-only rows**, which Phase 1's fix newly
+  exposes as unprofiled.
+
+### Reasoning
+
+D-01's bet paid off in the opposite direction from the one it feared: the shape is *more* reliable
+than assumed, which removes work (no re-profile, no alias handling, a much smaller Phase 3) rather
+than adding it. The findings that did land — D2 at full severity, D13 at 1,476 rows, D1's 1,116
+hidden unprofiled rows — are all things the original plan would have got wrong by assumption.
+
+---
+
+## D-09 — `train_bqml_model.py --dry-run` can spend money (new defect, D15)
+
+*Found 2026-09-23 while building the Phase 2 harness.*
+
+### Context
+
+`CLAUDE.md` documents `python -m scripts.train_bqml_model --dry-run` as "validate BQML training SQL
+without spending". It does not do that. The JIT pre-flight block at `train_bqml_model.py:26-60` runs
+**unconditionally, before** `if dry_run:` is ever evaluated, and it calls
+`enrich_maps_data.enrich_restaurants_by_fhrsid`, `bq_utils.execute_gemini_enrichment` and
+`enrich_postcode_demographics.enrich_postcodes` for any labelled row missing that data.
+
+There are currently 7 labelled rows with no `gemini_insights_structured`, so a `--dry-run` today
+would issue 7 grounded `AI.GENERATE` calls and an unbounded number of Places lookups.
+
+### Decision
+
+Recorded as **D15** and deferred to Phase 11, not fixed here — Phase 2 must not change the thing it
+is baselining. The fix is to move the JIT block inside the non-dry-run branch.
+
+In the meantime the Phase 2 harness never invokes `train_model()`. It imports
+`build_training_select` and validates the SQL directly, which is why the refactor extracting that
+function was worth doing rather than hand-copying the feature list a third time.
+
+### Reasoning
+
+This is the same failure shape as D1: a guard that reads as a cost control but is evaluated after
+the spend, or on the wrong column. Worth naming separately because the *documentation* actively
+misleads here — a flag called `--dry-run` is the last place anyone would look for a Gemini bill.
+
+---
+
+## D-10 — The `in_scope` filter discards 42 hand-entered labels
+
+*Measured 2026-09-23 while sizing the Phase 2 split.*
+
+### Context
+
+`build_training_select`'s `WHERE` clause is `(m.in_scope = TRUE OR m.in_scope IS NULL) AND
+m.user_rating IS NOT NULL`. Of 411 labelled rows, only **369** satisfy it; 42 are dropped for
+`in_scope = FALSE`. Given D-08 showed `in_scope` is mis-derived on 1,476 of 2,766 profiled rows,
+that is 10% of the hand-entered training data being discarded by a column known to be wrong.
+
+Measured before assuming the worst: the 42 excluded rows have a mean `user_rating` of **1.21**
+against **2.55** for the included ones, and only **2** of them carry a profile saying they *are* a
+sit-down restaurant. The exclusion is therefore substantially correct in effect — these really are
+the places the user rates lowest — and only 2 rows are clearly wrongly dropped.
+
+### Decision
+
+**No change in Phase 2.** The baseline must train on exactly what production trains on, or the
+Phase 9 delta measures the change in row selection rather than the change in features.
+
+Revisit in Phase 9, once the D13 re-derivation has corrected `in_scope`: at that point re-sizing the
+training set is a real question, and worth asking whether 42 unambiguous negatives are data the
+model should see rather than data to filter out.
+
+### Reasoning
+
+Two effects were tangled here and had to be separated: the label count is smaller than the recon's
+411 suggested, but the cause is mostly legitimate filtering rather than the D13 defect. Acting on
+the headline number without measuring the composition would have been a change made on a
+misreading.
+
+---
+
+## D-11 — Baseline: the BQML model is beaten by the single feature it wraps
+
+*Measured 2026-09-23 by `scripts/evaluate_model.py`. 292 training rows, 77 held-out, split by
+`FARM_FINGERPRINT(fhrsid) MOD 5`. Phase 9 must reuse `--holdout_modulus 5` verbatim.*
+
+### The three numbers
+
+| Predictor | Features | MAE | RMSE | R² | Spearman |
+|---|---|---|---|---|---|
+| `BOOSTED_TREE_REGRESSOR`, current features | ~20 | **0.847** | 1.283 | 0.545 | 0.545 |
+| `match_score` alone (`LINEAR_REG`) | 1 | **0.697** | 1.095 | 0.668 | 0.603 |
+| Training mean | 0 | 1.566 | 1.926 | 0.0 | n/a |
+
+**The one-feature baseline beats the twenty-feature boosted tree on every metric** — 18% lower MAE,
+15% lower RMSE, higher R², and a better ranking correlation, which is the property the app actually
+depends on since the queue is sorted by prediction.
+
+Both comfortably beat the mean, so `match_score` carries real signal. The tree then destroys part of
+it.
+
+### Why this is the expected result, not an anomaly
+
+Five of the model's six Gemini features are pinned to `0` by D2. What remains beyond `match_score`
+is largely high-cardinality categoricals — `postcode`, `localauthorityname`, `lsoa`, `msoa`,
+`maps_types_array` — which give a boosted tree ample room to memorise 292 rows. Small data plus wide
+categoricals plus five dead columns is a recipe for exactly this.
+
+### Decision
+
+Recorded as the Phase 2 floor; **no action taken now**. Phase 9 re-runs this harness unchanged and
+reports the delta. Three outcomes are now possible and all are legitimate:
+
+1. Repaired features push the tree past 0.697 MAE — the model earns its place.
+2. It improves but still trails `match_score` — ship the linear baseline and retire BQML.
+3. It does not improve — the pillars carry no signal the label responds to, and the profiler prompt,
+   not the plumbing, is the thing to revisit.
+
+The keep-or-retire recommendation belongs to Phase 9; this phase exists so that recommendation can
+be made on numbers.
+
+### Caveat recorded deliberately
+
+The deployed `restaurant_preference_model` is **not** the model measured here. It was trained on all
+369 in-scope labelled rows including these 77, so its own `ML.EVALUATE` scores data it memorised and
+cannot serve as a baseline. The row above is a fresh model of the same type and features, trained on
+the training split only. That is the honest comparison and the one Phase 9 will repeat.
+
+---
+
 ## Measurements
 
-*Populated by Phase 0. Empty until recon runs.*
+*Populated by Phase 0 recon, 2026-09-23.*
 
 | Measurement | Value | Date |
 |---|---|---|
-| Snapshot row count | _pending_ | |
-| Snapshot `COUNT(user_rating)` | _pending_ | |
-| Observed top-level key census | _pending_ | |
-| Shape stable across rows? | _pending_ | |
-| `COUNT(*) WHERE gemini_insights IS NOT NULL` (expect 0) | _pending_ | |
-| Rows with `maps_rating = -1` | _pending_ | |
-| Rows with lat/lon | _pending_ | |
-| `in_scope` rows assigned by `maps_types` alone | _pending_ | |
-| Baseline model MAE/RMSE | _pending_ | |
-| `match_score`-only baseline | _pending_ | |
+| Snapshot table | `fsa_master_backup_20260923` | 2026-09-23 |
+| Snapshot row count | **11,268** (matches production) | 2026-09-23 |
+| Snapshot `COUNT(user_rating)` | **411** (matches production) | 2026-09-23 |
+| Observed top-level key census | convention A — 6 numeric-prefixed pillar objects + `match_score` + `summary_reasoning` | 2026-09-23 |
+| Shape stable across rows? | **Yes** — 2,766/2,767 identical; 1 unparseable payload | 2026-09-23 |
+| Rows profiled (`gemini_insights_structured`) | 2,767 | 2026-09-23 |
+| `COUNT(*) WHERE gemini_insights IS NOT NULL` (expected 0) | **1,116** — disjoint from V2 | 2026-09-23 |
+| Flat pillar paths resolving (D2) | **0 of 2,766** for all five; `match_score` 2,766 | 2026-09-23 |
+| Nested pillar paths resolving | 2,766 of 2,766 for all 17 | 2026-09-23 |
+| Rows with `maps_rating = -1` | 243 | 2026-09-23 |
+| Rows with a Maps hit | 2,263 | 2026-09-23 |
+| Rows never looked up in Maps | 8,762 | 2026-09-23 |
+| Rows with lat/lon | 2,291 | 2026-09-23 |
+| `in_scope` true / false / null | 10,693 / 427 / 148 | 2026-09-23 |
+| `in_scope` rows contradicting `pillar_is_sit_down` (D13) | **1,476** (1,458 + 18) | 2026-09-23 |
+| Rows with a prediction | 1,065 | 2026-09-23 |
+| Labelled rows / labelled **and** profiled | 411 / **404** | 2026-09-23 |
+| Labelled rows passing the training `in_scope` filter | **369** (42 excluded) | 2026-09-23 |
+| Phase 2 split (`FARM_FINGERPRINT(fhrsid) MOD 5`) | 292 train / 77 holdout | 2026-09-23 |
+| Split mean rating, train / holdout | 2.613 / 2.299 | 2026-09-23 |
+| Baseline model MAE / RMSE / R² / Spearman | **0.847 / 1.283 / 0.545 / 0.545** | 2026-09-23 |
+| `match_score`-only baseline MAE / RMSE / R² / Spearman | **0.697 / 1.095 / 0.668 / 0.603** | 2026-09-23 |
+| Training-mean floor MAE / RMSE | 1.566 / 1.926 | 2026-09-23 |
+
+## Cost ledger
+
+| Item | Basis | Estimate |
+|---|---|---|
+| Phase 0 recon (8 read-only queries) | 33.4 MiB scanned @ $6.25/TiB | **£0.0002** — spent |
+| Phase 0 snapshot | 11,268 rows ≈ 6 MiB active storage | **< £0.01/month** — spent |
+| Phase 4 `ALTER TABLE ADD COLUMN` × 17 | metadata-only | **£0** |
+| Phase 5 backfill (pure SQL over existing JSON) | one full-table `UPDATE`, ~6 MiB | **< £0.01** |
+| Phase 5 `in_scope` re-derivation | one `UPDATE` over 2,766 rows | **< £0.01** |
+| Phase 9 retrain | `BOOSTED_TREE_REGRESSOR` over 404 rows | **~£0.05** |
+| **Legacy re-profile — withdrawn** | would have been 2,767 × `AI.GENERATE` | **avoided** |
+| Phase 7 first stale sweep | 1,116 V1-only rows × grounded `AI.GENERATE` | **to be estimated and approved separately** |
+
+The only line item that needs its own approval is the Phase 7 sweep; everything up to Phase 9 is
+pennies because the backfill turned out to be pure SQL.

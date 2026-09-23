@@ -6,6 +6,56 @@ from google.cloud.exceptions import GoogleCloudError
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
+def build_training_select(
+    project_id: str, dataset_id: str, source_table: str, extra_predicate: str = ""
+) -> str:
+    """The labelled feature set the model trains on.
+
+    Extracted so `scripts/evaluate_model.py` measures the features production
+    actually uses rather than a third hand-copy of them. `extra_predicate` is
+    appended to the WHERE clause, which is how the evaluation harness carves
+    out its train/holdout split without restating any of this.
+
+    NB: as of the Phase 0 recon the five pillar paths below resolve on zero
+    rows and fall through to IFNULL(..., 0). That is D2, and it is deliberate
+    here -- Phase 2 baselines the model as it stands today.
+    """
+    return f"""
+    SELECT
+      m.postcode,
+      m.localauthorityname,
+      m.ratingvalue,
+      m.user_rating,
+      m.price_level,
+      m.maps_rating,
+      m.maps_reviews,
+      m.latitude,
+      m.longitude,
+      m.business_status,
+      SPLIT(REPLACE(m.maps_types, ' ', ''), ',') AS maps_types_array,
+      IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.1_value_and_volume_rating') AS INT64), 0) AS score_1_value_and_volume_rating,
+      IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.2_demographic_community_score') AS INT64), 0) AS score_2_demographic_community_score,
+      IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.3_linguistic_signal_score') AS INT64), 0) AS score_3_linguistic_signal_score,
+      IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.4_geographic_precision_specificity_level') AS INT64), 0) AS score_4_geographic_precision_specificity_level,
+      IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.5_culinary_uncompromisingness_score') AS INT64), 0) AS score_5_culinary_uncompromisingness_score,
+      IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.match_score') AS INT64), 0) AS match_score,
+      d.lsoa,
+      d.msoa,
+      d.imd_rank
+    FROM
+      `{source_table}` AS m
+    LEFT JOIN
+      `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
+    ON
+      REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
+    WHERE
+      (m.in_scope = TRUE OR m.in_scope IS NULL)
+      AND m.user_rating IS NOT NULL
+      {extra_predicate}
+    """
+
+
 def train_model(
     project_id: str, 
     dataset_id: str, 
@@ -67,38 +117,9 @@ def train_model(
       input_label_cols=['user_rating'],
       model_registry='vertex_ai'
     ) AS
-    SELECT
-      m.postcode,
-      m.localauthorityname,
-      m.ratingvalue,
-      m.user_rating,
-      m.price_level,
-      m.maps_rating,
-      m.maps_reviews,
-      m.latitude,
-      m.longitude,
-      m.business_status,
-      SPLIT(REPLACE(m.maps_types, ' ', ''), ',') AS maps_types_array,
-      IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.1_value_and_volume_rating') AS INT64), 0) AS score_1_value_and_volume_rating,
-      IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.2_demographic_community_score') AS INT64), 0) AS score_2_demographic_community_score,
-      IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.3_linguistic_signal_score') AS INT64), 0) AS score_3_linguistic_signal_score,
-      IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.4_geographic_precision_specificity_level') AS INT64), 0) AS score_4_geographic_precision_specificity_level,
-      IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.5_culinary_uncompromisingness_score') AS INT64), 0) AS score_5_culinary_uncompromisingness_score,
-      IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.match_score') AS INT64), 0) AS match_score,
-      d.lsoa,
-      d.msoa,
-      d.imd_rank
-    FROM
-      `{source_table}` AS m
-    LEFT JOIN
-      `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
-    ON
-      REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
-    WHERE
-      (m.in_scope = TRUE OR m.in_scope IS NULL)
-      AND m.user_rating IS NOT NULL
+    {build_training_select(project_id, dataset_id, source_table)}
     """
-    
+
     logger.info(f"Preparing BQML Training Query for {full_model_name}...")
     if dry_run:
         logger.info("Executing DRY RUN to validate query without training.")

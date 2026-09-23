@@ -1,0 +1,28 @@
+{
+   "match_score": 12,
+   "1_value_and_volume": {
+       "rating": 3,
+       "verdict": "Standard gastropub economics. Prices are average (£9 burgers, £13 pastas), but the 'feast' factor is absent. You are paying for the 'chic' decor and the sports screens, not for generous, family-style abundance."
+   },
+   "2_demographic_community": {
+       "score": 1,
+       "evidence": "The crowd is defined by activity (watching Liverpool matches, drinking cocktails) rather than community origin. It caters to a transient, general mix of 'coffeeing couples' and sports fans, lacking any specific ethnic enclave signal."
+   },
+   "3_linguistic_signal": {
+       "score": 0,
+       "menu_type": "Entirely English. The menu uses generic descriptors like 'House Sauce' and 'Secret Soy' rather than native terminology."
+   },
+   "4_geographic_precision": {
+       "region_identified": "Global / Generic",
+       "specificity_level": "GENERIC_NATIONAL"
+   },
+   "5_culinary_uncompromisingness": {
+       "score": 1,
+       "pander_check": "The definition of culinary pandering. The menu is a 'greatest hits' of Western comfort food: Burgers, Pizza, and Pasta. Dishes like 'Cheesy Chicken Linguini' and 'Vegan Baby' burgers are designed for the widest possible appeal with zero cultural specificity."
+   },
+   "6_establishment_integrity": {
+       "is_sit_down_restaurant": true,
+       "type": "RESTAURANT_DINING"
+   },
+   "summary_reasoning": "A textbook 'lowest common denominator' gastropub that fails every explorer metric. It offers a confused 'International' menu (pizza, pasta, burgers) in a sports bar setting. It is a modern, gentrified utility stop, not a cultural destination."
+}

@@ -1,0 +1,28 @@
+{
+  "match_score": 18,
+  "1_value_and_volume": {
+    "rating": 2,
+    "verdict": "Offers standard London cafe pricing for individual sandwiches, toasties, and coffees, but fails the feast test entirely. Satiety comes from single-portion daytime snacks rather than abundant sharing plates."
+  },
+  "2_demographic_community": {
+    "score": 2,
+    "evidence": "Functions as a friendly local neighborhood coffee shop serving South London commuters, hybrid workers, and gym-goers rather than a specific cultural enclave or multi-generational diaspora community."
+  },
+  "3_linguistic_signal": {
+    "score": 1,
+    "menu_type": "Standard English cafe chalkboard and takeout menus featuring generic beverage and sandwich offerings with no untranslated insider items."
+  },
+  "4_geographic_precision": {
+    "region_identified": "London / Contemporary British Cafe",
+    "specificity_level": "GENERIC_NATIONAL"
+  },
+  "5_culinary_uncompromisingness": {
+    "score": 1,
+    "pander_check": "Menu consists of familiar high-street cafe favorites like Reuben sandwiches, protein smoothies, vegan toasties, and specialty lattes. There are no challenging culinary textures, complex regional spices, or fermented traditional dishes."
+  },
+  "6_establishment_integrity": {
+    "is_sit_down_restaurant": false,
+    "type": "CAFE_BAKERY_DELI"
+  },
+  "summary_reasoning": "Rude N Boomin is a neighborhood coffee shop and sandwich counter that triggers an immediate disqualification under the establishment integrity rule. It lacks full sit-down table service, deep cultural specificity, and feast-oriented dining."
+}

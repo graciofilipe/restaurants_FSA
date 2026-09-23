@@ -1,0 +1,28 @@
+{
+  "match_score": 5,
+  "1_value_and_volume": {
+    "rating": 1,
+    "verdict": "This is an in-house coffee corner within a portrait photography studio serving standard coffees, teas, and light snacks rather than meal portions or savory feasts."
+  },
+  "2_demographic_community": {
+    "score": 1,
+    "evidence": "Caters primarily to local families, parents, and clients booking baby, portrait, or passport photography sessions, with no ethnic enclave or culinary community dining presence."
+  },
+  "3_linguistic_signal": {
+    "score": 1,
+    "menu_type": "Standard English cafe board listing hot beverages like flat whites, lattes, and hot chocolate alongside studio photo packages."
+  },
+  "4_geographic_precision": {
+    "region_identified": "United Kingdom",
+    "specificity_level": "GENERIC_NATIONAL"
+  },
+  "5_culinary_uncompromisingness": {
+    "score": 1,
+    "pander_check": "Offers basic cafe beverages and snacks tailored for waiting studio clients; completely lacks traditional culinary focus or regional dishes."
+  },
+  "6_establishment_integrity": {
+    "is_sit_down_restaurant": false,
+    "type": "CAFE_BAKERY_DELI"
+  },
+  "summary_reasoning": "Memory Gate Photo Cafe is a photography studio amenity offering coffee and passport photos, violating the core requirement for a dedicated sit-down savory restaurant."
+}
