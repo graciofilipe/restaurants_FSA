@@ -685,7 +685,17 @@ and it reported 1,263, matching the independent measurement exactly.
 | Places re-query of 243 permanent misses | avoided by the guard move | **~£6 avoided, recurring** |
 | Phase 9 retrain | `BOOSTED_TREE_REGRESSOR` over 404 rows | **~£0.05** |
 | **Legacy re-profile — withdrawn** | would have been 2,767 × `AI.GENERATE` | **avoided** |
-| Phase 7 first stale sweep | 1,116 V1-only rows × grounded `AI.GENERATE` | **to be estimated and approved separately** |
+| Orphaned scratch tables dropped | `recents`, `genairesults_temp`, 2 × `temp_update_reviews_*` | **£0** — done, 2026-09-23 |
+| Phase 7 sweep, tokens | 1,116 × `gemini-3.8-flash` @ $0.75/$3.75 per 1M | **$7–$24** (£6–£19) |
+| Phase 7 sweep, grounding | 1,116+ searches; 5,000/month free across Gemini 3.x, then $14/1,000 | **$0–$35** (£0–£28) |
+| Phase 7 sweep, Places for the 975 without Maps | incurred anyway on first prediction, not by the sweep | **~$31** (£25), separate |
+| **Phase 7 sweep, total** | | **$7–$59 / £6–£47, pending a measured pilot** |
 
 The only line item that needs its own approval is the Phase 7 sweep; everything up to Phase 9 is
 pennies because the backfill turned out to be pure SQL.
+
+The Phase 7 range is wide for two reasons that no amount of arithmetic will close: grounded calls
+inject retrieved search results into the input, and `gemini-3.8-flash` bills thinking tokens as
+output. Both are unobservable from the stored `.result`. `AI.GENERATE` returns `usageMetadata` in
+its `full_response` field, which the current script discards -- a 20-row pilot costing roughly $0.15
+would replace the range with a measured per-call figure before anything is committed.
