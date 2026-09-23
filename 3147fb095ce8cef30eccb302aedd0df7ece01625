@@ -1,0 +1,28 @@
+Task: Stop the Gemini re-enrichment loop (D1) — Phase 1
+
+Summary of changes
+- app/services/ml_prediction.py: both find_query branches select
+  m.gemini_insights_structured instead of m.gemini_insights; the
+  gemini_missing_fhrsids guard tests the structured column.
+- app/services/test_ml_prediction.py (new): 5 tests covering the production
+  state (structured populated, legacy NULL), the unprofiled case, force_gemini
+  override, and the selected column in both query branches.
+- tests/test_ml_prediction.py: DummyRow field renamed to match the column the
+  code now reads; test intent unchanged.
+
+Why
+gemini_insights is NULLed by SCRIPT_MERGE_INSIGHTS on every successful
+enrichment, so the 'needs profiling' guard was always true and every prediction
+run re-paid for AI.GENERATE over the whole targeted batch. train_bqml_model.py
+already checked the correct column, so the two JIT paths disagreed.
+
+Verification
+pytest app/ -> 87 passed (82 before, +5 new). pytest tests/test_ml_prediction.py
+-> 3 passed.
+
+Note for Phase 7
+st_app.py:705 still ORs in the legacy gemini_insights column when estimating
+calls. It is harmless today because that column is always NULL, so the estimate
+already reduced to the structured check and now matches the executor exactly.
+The shared-predicate task in Phase 7 should delete the dead term rather than
+leave the agreement accidental.
