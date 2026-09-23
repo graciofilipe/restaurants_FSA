@@ -662,7 +662,7 @@ would spend it on.
   looked up on Maps has no prior. Re-scoring the 1,022 rows that already carry a Gemini profile
   restores the gradient for the price of `ML.PREDICT`.
 
-## Phase 10: Contract — Remove Legacy Surfaces (R5)
+## Phase 10: Contract — Remove Legacy Surfaces (R5) [checkpoint: 7d4305d]
 
 *Stop writing first; drop columns last.*
 
@@ -719,7 +719,7 @@ would spend it on.
           `fast_api_app.py` passes the repo root as `agents_dir`, which discovers `app/` and not a
           nested package, so `maps_agent` was never served at all. Import verified under
           `INTEGRATION_TEST=TRUE`.
-- [~] Task: Drop `manual_review` (destructive — separate approval)
+- [x] Task: Drop `manual_review` (destructive — separate approval)
     - [x] Sub-task: Confirm by grep that nothing reads it. `app/` and `scripts/`, excluding tests
           and the spent migration, return one hit: the explanatory comment at
           `app/services/bq_utils.py:114`.
@@ -728,8 +728,11 @@ would spend it on.
           naming one the table lacks is safe while the reverse is not. Merge 0efec1e, build
           864764c2-edf6-4cb4-b925-fa03a61488f7 SUCCESS, revision `restaurants-fsa-00229-8pz`,
           HTTP 302.
-    - [ ] Sub-task: `ALTER TABLE ... DROP COLUMN` only on explicit go-ahead. **Not yet given.**
-          No archive proposed: see D-22 for why the column's contents carry no information.
+    - [x] Sub-task: `ALTER TABLE ... DROP COLUMN` on the go-ahead of 2026-09-23. No archive: see
+          D-22 for why the column's contents carry no information. **43 → 42 columns; 11,268 rows,
+          411 labels, 9,465 in scope and 2,774 profiles all unchanged.** `MASTER_BQ_SCHEMA` and the
+          live table agree on all 42 names in both directions, re-checked after the drop.
+          `fsa_master_backup_20260923` still carries the column.
     - *Note:* `gemini_insights` is already dropped, under its own task above. The two were one task
       in the plan; they separated because the V1 text needed archiving and `manual_review` needs a
       replacement predicate written first, which is a behaviour change and not a deletion.
