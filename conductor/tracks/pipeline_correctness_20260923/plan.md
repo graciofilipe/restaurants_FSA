@@ -627,7 +627,8 @@ would spend it on.
           **1,065 cleared** — all of them; 11,268 rows and 411 labels intact.
     - [x] Sub-task: Confirm the queue repopulates as expected. Every row is back in the unscored
           staleness tier, which is correct and has a consequence worth stating — see below.
-- [ ] Task: Conductor — User Manual Verification 'The Verdict' (Protocol in workflow.md)
+- [x] Task: Conductor — User Manual Verification 'The Verdict' (Protocol in workflow.md)
+    - Verdict, bootstrap and top-k tables presented; the user approved the sweep and the merge.
 
 - *Deviation:* **The retrain was pulled forward into Phase 6** and is not repeated here. [D-15]
   records why it had to be: the feature change altered the model's input schema, so `ML.PREDICT`
