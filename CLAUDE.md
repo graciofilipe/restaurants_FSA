@@ -61,8 +61,11 @@ a one-day expiry as a backstop).
    FHRSID against the IDs already in the master table (`load_fhrsids_from_bq`), appending only
    genuinely new rows with `first_seen`.
 2. **Maps enrichment** — `scripts/enrich_maps_data.py` hits Places `searchText` and MERGEs rating,
-   review count, price level, coordinates, and types back. A miss writes sentinel `-1` values so the
-   row is not retried forever.
+   review count, price level, coordinates, and types back. Every lookup stamps `maps_lookup_at` and
+   `maps_found`; a miss records `maps_found = FALSE` with a NULL rating, and the timestamp — not the
+   old `-1` sentinel — is what stops the row being retried forever. The same
+   `maps_lookup_at IS NULL` predicate gates enrichment in `ml_prediction.py` and
+   `train_bqml_model.py`; all three must agree or permanent misses get re-queried at cost.
 3. **Gemini profiling** — `execute_gemini_enrichment` in `bq_utils.py` runs three SQL steps
    (identify recents → `AI.GENERATE` → MERGE) using the templates in `scripts/bq_scripts.py`. The
    result lands in `gemini_insights_structured` as raw JSON; the legacy text column
