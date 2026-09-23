@@ -622,6 +622,44 @@ the shared predicate was deliberate. The alternative — computing the preview f
 is precisely the shape of D1. The rehearsal run is what makes the number visible before production,
 and it reported 1,263, matching the independent measurement exactly.
 
+---
+
+## D-15 — Phase 6 cannot be merged on its own: the fix changes the model's input schema
+
+**Date:** 2026-09-23 · **Phase:** 6 · **Status:** decided, retrain pending approval
+
+The plan's merge rule is that every phase boundary is green *and independently deployable*, because
+`main` auto-deploys to Cloud Run. Phase 6 is the first phase where that does not hold, and the
+reason is worth recording because it is a property of the repair, not an oversight.
+
+Fixing D2 means the `ML.PREDICT` subquery stops emitting `score_1_value_and_volume_rating` and
+starts emitting `pillar_value_rating`. `ML.FEATURE_INFO` on the live
+`restaurant_preference_model` lists **19 input features** under the old names. BQML requires the
+prediction input to carry every column the model was trained on, so the moment this lands,
+"Generate Predictions" fails outright.
+
+Worth being precise that **failing is the good outcome here**. Had the aliases been left unchanged
+and only the paths fixed, the model would have kept predicting — from features it was trained to
+see as constant 0 and would now receive as real values between 1 and 10. That is silent train/serve
+skew producing plausible-looking numbers, and it is exactly the failure mode the D3 parity test was
+written to prevent. The alias change converts it into a loud one.
+
+So the retrain Phase 9 schedules has to happen **before** Phase 6 merges, not after. Phase 9 keeps
+the *evaluation* — the harness re-run, the A-vs-C `in_scope` comparison, the keep-or-retire verdict.
+Only the `CREATE OR REPLACE MODEL` moves forward. This also matches the stated cost principle:
+training is cheap, and it is the Gemini and Places generation that is not.
+
+Measured against production before committing to it — training population 370 rows; the JIT
+pre-flight would fire **0 Places lookups, 0 postcode lookups, 7 Gemini calls**, those 7 being
+labelled rows that have never been profiled. ≈ $0.02 in tokens, grounding inside the free monthly
+allowance, BQML training over a 5.7 MB scan. **Under £0.05.** 363 of the 370 already carry every
+typed pillar column, so the retrain is reading real features on day one rather than waiting for a
+sweep.
+
+There is an unavoidable few-minute window in either order — retrain first and the deployed old code
+sends old aliases to a new-schema model; merge first and the new code hits the old model. Retraining
+first is the better half: the failure is confined to a button the user presses by hand, not to the
+weekly cron.
 
 ---
 
@@ -683,7 +721,7 @@ and it reported 1,263, matching the independent measurement exactly.
 | Phase 5 `in_scope` re-derivation | one `UPDATE` over 1,263 rows | **< £0.01** — spent |
 | Phase 5 rehearsal copy | 11,268 rows, 7-day expiry | **< £0.01** — spent |
 | Places re-query of 243 permanent misses | avoided by the guard move | **~£6 avoided, recurring** |
-| Phase 9 retrain | `BOOSTED_TREE_REGRESSOR` over 404 rows | **~£0.05** |
+| Retrain, pulled forward into Phase 6 | 370 rows; JIT fires 7 Gemini calls, 0 Places, 0 postcodes | **< £0.05** — pending approval |
 | **Legacy re-profile — withdrawn** | would have been 2,767 × `AI.GENERATE` | **avoided** |
 | Orphaned scratch tables dropped | `recents`, `genairesults_temp`, 2 × `temp_update_reviews_*` | **£0** — done, 2026-09-23 |
 | Phase 7 sweep, tokens | 1,116 × `gemini-3.8-flash` @ $0.75/$3.75 per 1M | **$7–$24** (£6–£19) |
