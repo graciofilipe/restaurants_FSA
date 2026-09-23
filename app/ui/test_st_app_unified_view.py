@@ -14,6 +14,7 @@ def sample_restaurants_df():
             "user_rating": 8.0,
             "predicted_user_rating": 8.5,
             "maps_rating": 4.5,
+            "maps_found": True,
             "match_score": 92.0,
             "first_seen": "2026-01-01",
         },
@@ -26,6 +27,7 @@ def sample_restaurants_df():
             "user_rating": None,
             "predicted_user_rating": 7.2,
             "maps_rating": 4.1,
+            "maps_found": True,
             "match_score": None,
             "first_seen": "2026-02-01",
         },
@@ -38,6 +40,7 @@ def sample_restaurants_df():
             "user_rating": None,
             "predicted_user_rating": None,
             "maps_rating": None,
+            "maps_found": False,
             "match_score": None,
             "first_seen": "2026-03-01",
         },
@@ -50,6 +53,7 @@ def sample_restaurants_df():
             "user_rating": None,
             "predicted_user_rating": 6.0,
             "maps_rating": None,
+            "maps_found": None,
             "match_score": 75.0,
             "first_seen": "2026-04-01",
         },
@@ -101,13 +105,32 @@ def test_filter_gemini_match_score(sample_restaurants_df):
     assert set(no_gemini["fhrsid"]) == {"102", "103"}
 
 def test_filter_maps_rating(sample_restaurants_df):
-    has_maps = filter_and_sort_restaurants(sample_restaurants_df, maps_rating_filter="Has Google Maps Rating")
+    has_maps = filter_and_sort_restaurants(sample_restaurants_df, maps_filter="Found on Google Maps")
     assert len(has_maps) == 2
     assert set(has_maps["fhrsid"]) == {"101", "102"}
 
-    no_maps = filter_and_sort_restaurants(sample_restaurants_df, maps_rating_filter="No Google Maps Rating")
-    assert len(no_maps) == 2
-    assert set(no_maps["fhrsid"]) == {"103", "104"}
+    no_maps = filter_and_sort_restaurants(sample_restaurants_df, maps_filter="Not Found on Google Maps")
+    assert len(no_maps) == 1
+    assert set(no_maps["fhrsid"]) == {"103"}
+
+def test_never_looked_up_is_its_own_answer(sample_restaurants_df):
+    """`maps_rating IS NULL` conflated "Places has no such restaurant" with
+    "we have not asked yet" -- the first costs nothing to re-query and the
+    second is the entire enrichment backlog."""
+    never = filter_and_sort_restaurants(sample_restaurants_df, maps_filter="Not Looked Up Yet")
+    assert set(never["fhrsid"]) == {"104"}
+
+def test_a_found_restaurant_with_no_rating_still_counts_as_found(sample_restaurants_df):
+    """Places knows the place but nobody has rated it. Under the old filter it
+    fell in with the misses and got re-queried forever."""
+    df = pd.DataFrame([
+        {"fhrsid": "201", "maps_found": True, "maps_rating": None},
+        {"fhrsid": "202", "maps_found": False, "maps_rating": None},
+    ])
+
+    found = filter_and_sort_restaurants(df, maps_filter="Found on Google Maps")
+
+    assert set(found["fhrsid"]) == {"201"}
 
 def test_search_query_name_and_postcode(sample_restaurants_df):
     by_name = filter_and_sort_restaurants(sample_restaurants_df, search_query="pizza")

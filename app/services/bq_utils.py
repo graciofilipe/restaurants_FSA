@@ -21,9 +21,14 @@ from scripts.bq_scripts import (
 
 logger = logging.getLogger(__name__)
 
+# The fields the weekly ingest copies out of an FSA establishment. Flat keys
+# only -- `process_and_update_master_data` copies by key, so `latitude` and
+# `longitude` are the flattened form of the API's nested `Geocode`, written by
+# `extract_fsa_coordinates` before the copy.
 ORIGINAL_COLUMNS_TO_KEEP = [
     'FHRSID', 'BusinessName', 'AddressLine1', 'AddressLine2', 'AddressLine3',
     'PostCode', 'LocalAuthorityName', 'RatingValue', 'NewRatingPending',
+    'latitude', 'longitude',
     'first_seen', 'manual_review', 'gemini_insights', 'gemini_insights_structured'
 ]
 
@@ -292,10 +297,6 @@ def write_to_bigquery(
             df[col] = pd.NA
     df_sub = df[columns_to_select].copy()
 
-    for geo in ['Geocode.Latitude', 'Geocode.Longitude']:
-        if geo in df_sub.columns:
-            df_sub[geo] = pd.to_numeric(df_sub[geo], errors='coerce')
-
     df_sub.columns = [sanitize_column_name(c) for c in df_sub.columns]
     nrp = sanitize_column_name('NewRatingPending')
     if nrp in df_sub.columns:
@@ -323,7 +324,10 @@ def append_to_bigquery(
             df[col] = pd.NA
     df_sub = df[schema_cols].copy()
 
-    for geo in ['geocode_latitude', 'geocode_longitude']:
+    # The FSA sends its coordinates quoted and the columns are FLOAT64. This
+    # used to name `geocode_latitude`/`geocode_longitude`, which the ingest has
+    # never produced -- it dropped the nested `Geocode` entirely.
+    for geo in ['latitude', 'longitude']:
         if geo in df_sub.columns:
             df_sub[geo] = pd.to_numeric(df_sub[geo], errors='coerce')
 
