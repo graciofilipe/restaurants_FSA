@@ -1,10 +1,17 @@
 import datetime
 import json
+import logging
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 import pandas as pd
 from app.services.api_client import fetch_api_data
 from app.services.bq_utils import ORIGINAL_COLUMNS_TO_KEEP
+
+logger = logging.getLogger(__name__)
+
+# The FSA search returns at most a few thousand establishments within the
+# configured radius, so this is a runaway guard, not an expected limit.
+DEFAULT_MAX_PAGES = 50
 
 def parse_coordinates(coordinate_pairs_str: str) -> Tuple[List[Tuple[float, float]], List[str]]:
     """Parses newline-separated coordinate pairs (lon, lat)."""
@@ -20,12 +27,18 @@ def parse_coordinates(coordinate_pairs_str: str) -> Tuple[List[Tuple[float, floa
             errors.append(f"Error parsing coordinate line {i+1}: '{line}'.")
     return valid_coords, errors
 
-def fetch_data_for_all_coordinates(valid_coords: List[Tuple[float, float]], max_results: int) -> List[Dict[str, Any]]:
-    """Fetches and aggregates API data for coordinates."""
+def fetch_data_for_all_coordinates(
+    valid_coords: List[Tuple[float, float]], max_results: int, max_pages: int = DEFAULT_MAX_PAGES
+) -> List[Dict[str, Any]]:
+    """Fetches and aggregates API data for coordinates.
+
+    `max_pages` bounds each coordinate independently. Without it, an API that
+    keeps returning full pages -- or ignores the page parameter -- pages until
+    the job is killed, sleeping a second and growing the result list each time.
+    """
     all_establishments = []
     for lon, lat in valid_coords:
-        page = 1
-        while True:
+        for page in range(1, max_pages + 1):
             resp = fetch_api_data(lon, lat, max_results, page)
             time.sleep(1)
             if not resp:
@@ -34,28 +47,28 @@ def fetch_data_for_all_coordinates(valid_coords: List[Tuple[float, float]], max_
             all_establishments.extend(ests)
             if len(ests) < max_results:
                 break
-            page += 1
+        else:
+            logger.warning(
+                f"Hit the {max_pages}-page limit for ({lon}, {lat}) without reaching a short page. "
+                f"Results may be truncated, or the API may be ignoring the page parameter."
+            )
     return all_establishments
 
-def load_master_data(
-    project_id: str, dataset_id: str, table_id: str,
-    load_bq_func: Callable[[str, str, str], List[Dict[str, Any]]]
-) -> List[Dict[str, Any]]:
-    """Loads master restaurant data from BigQuery."""
-    data = load_bq_func(project_id, dataset_id, table_id)
-    if data is None:
-        return []
-    if isinstance(data, list):
-        for r in data:
-            if isinstance(r, dict) and r.get("manual_review") is None:
-                r["manual_review"] = "not reviewed"
-        return data
-    raise TypeError(f"Expected list format from {project_id}.{dataset_id}.{table_id}, found {type(data)}.")
+def normalize_fhrsid(value: Any) -> str:
+    """FHRSIDs reach us as ints from the API and strings from BigQuery."""
+    try:
+        return str(int(value))
+    except (ValueError, TypeError):
+        return str(value).strip().lower()
 
 def process_and_update_master_data(
-    master_data: List[Dict[str, Any]], api_data: Dict[str, Any], today_date: Optional[str] = None
+    master_data: Iterable[Any], api_data: Dict[str, Any], today_date: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
-    """Processes API data to identify newly added establishments."""
+    """Processes API data to identify newly added establishments.
+
+    `master_data` is whatever we already hold: either full rows or, from the
+    weekly cron, just the FHRSIDs.
+    """
     today_date = today_date or datetime.datetime.now().strftime("%Y-%m-%d")
     raw_ests = api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
     messages = []
@@ -70,24 +83,16 @@ def process_and_update_master_data(
 
     existing_ids = set()
     for est in master_data:
-        if isinstance(est, dict):
-            fid = est.get('FHRSID') or est.get('fhrsid')
-            if fid is not None:
-                try:
-                    existing_ids.add(str(int(fid)))
-                except (ValueError, TypeError):
-                    existing_ids.add(str(fid).strip().lower())
+        # The cron passes bare FHRSIDs (a `SELECT fhrsid`); other callers pass whole rows.
+        fid = (est.get('FHRSID') or est.get('fhrsid')) if isinstance(est, dict) else est
+        if fid is not None:
+            existing_ids.add(normalize_fhrsid(fid))
 
     new_records = []
     processed_ids = set()
     for est in api_ests:
         if isinstance(est, dict) and est.get('FHRSID') is not None:
-            raw_id = est['FHRSID']
-            try:
-                cid = str(int(raw_id))
-            except (ValueError, TypeError):
-                cid = str(raw_id).strip().lower()
-
+            cid = normalize_fhrsid(est['FHRSID'])
             est['FHRSID'] = cid
             if cid not in existing_ids and cid not in processed_ids:
                 est['first_seen'] = today_date

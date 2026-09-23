@@ -81,7 +81,7 @@ def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int
             MERGE `{table_ref}` T
             USING (SELECT * FROM UNNEST([STRUCT<fhrsid STRING, price_level INT64, maps_rating FLOAT64, maps_reviews INT64, latitude FLOAT64, longitude FLOAT64, maps_url STRING, business_status STRING, website_url STRING, maps_types STRING> {", ".join(val_strs)}])) S
             ON T.fhrsid = S.fhrsid
-            WHEN MATCHED THEN UPDATE SET price_level=S.price_level, maps_rating=S.maps_rating, maps_reviews=S.maps_reviews, latitude=S.latitude, longitude=S.longitude, maps_url=S.maps_url, business_status=S.business_status, website_url=S.website_url, maps_types=S.maps_types
+            WHEN MATCHED THEN UPDATE SET price_level=S.price_level, maps_rating=S.maps_rating, maps_reviews=S.maps_reviews, latitude=IFNULL(S.latitude, T.latitude), longitude=IFNULL(S.longitude, T.longitude), maps_url=S.maps_url, business_status=S.business_status, website_url=S.website_url, maps_types=S.maps_types
             """
             try:
                 client.query(merge_q).result()

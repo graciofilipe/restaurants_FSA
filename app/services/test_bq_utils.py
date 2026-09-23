@@ -4,11 +4,10 @@ import numpy as np
 from unittest.mock import patch, MagicMock, call, ANY # Added ANY
 from app.services.bq_utils import (
     BigQueryExecutionError,
-    write_to_bigquery, sanitize_column_name, load_all_data_from_bq,
-    append_to_bigquery, ORIGINAL_COLUMNS_TO_KEEP
+    write_to_bigquery, sanitize_column_name,
+    load_fhrsids_from_bq, append_to_bigquery, ORIGINAL_COLUMNS_TO_KEEP
 )
 from google.cloud import bigquery, exceptions # Import exceptions for error testing
-from google.auth.exceptions import DefaultCredentialsError # Added import
 
 # Attempt to import GenericGBQException for more specific error testing if available
 try:
@@ -31,93 +30,53 @@ NEW_BQ_SCHEMA = [
     bigquery.SchemaField(sanitize_column_name('gemini_insights'), 'STRING', mode='NULLABLE'),
 ]
 
-# --- Tests for load_all_data_from_bq ---
+# --- Tests for load_fhrsids_from_bq ---
+
+class MockIdRow:
+    def __init__(self, fhrsid):
+        self.fhrsid = fhrsid
+
 
 @patch('google.cloud.bigquery.Client')
-def test_load_all_data_from_bq_success(mock_client_cls):
-    """Test successful data loading and conversion to list of dicts."""
+def test_load_fhrsids_from_bq_selects_only_the_id_column(mock_client_cls):
+    """Deduping the weekly ingest needs the IDs and nothing else.
+
+    `SELECT *` here materialises every column of every row -- including the
+    Gemini JSON blobs -- to build a set of strings.
+    """
     mock_client = mock_client_cls.return_value
-    mock_job = mock_client.query.return_value
-    
-    class MockRow(dict):
-        pass
-        
-    mock_job.result.return_value = [MockRow({'col1': 1, 'col2': 'a'}), MockRow({'col1': 2, 'col2': 'b'})]
+    mock_client.query.return_value.result.return_value = [MockIdRow('1'), MockIdRow('2')]
 
-    project_id = 'test-proj'
-    dataset_id = 'test-dset'
-    table_id = 'test-tbl'
+    result = load_fhrsids_from_bq('test-proj', 'test-dset', 'test-tbl')
 
-    result = load_all_data_from_bq(project_id, dataset_id, table_id)
-    expected_result = [{'col1': 1, 'col2': 'a'}, {'col1': 2, 'col2': 'b'}]
+    assert result == {'1', '2'}
+    mock_client.query.assert_called_once_with(
+        "SELECT fhrsid FROM `test-proj.test-dset.test-tbl`"
+    )
 
-    assert result == expected_result
-    mock_client.query.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`")
 
 @patch('google.cloud.bigquery.Client')
-def test_load_all_data_from_bq_empty_table(mock_client_cls):
-    """Test loading from an empty table returns an empty list."""
+def test_load_fhrsids_from_bq_skips_null_ids(mock_client_cls):
     mock_client = mock_client_cls.return_value
-    mock_job = mock_client.query.return_value
-    mock_job.result.return_value = []
+    mock_client.query.return_value.result.return_value = [MockIdRow('1'), MockIdRow(None)]
 
-    project_id = 'test-proj'
-    dataset_id = 'test-dset'
-    table_id = 'empty-tbl'
+    assert load_fhrsids_from_bq('p', 'd', 't') == {'1'}
 
-    result = load_all_data_from_bq(project_id, dataset_id, table_id)
-
-    assert result == []
-    mock_client.query.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`")
 
 @patch('google.cloud.bigquery.Client')
-@patch('builtins.print')
-def test_load_all_data_from_bq_pandas_gbq_exception(mock_print, mock_client_cls):
-    """Test that Exception is caught and returns an empty list."""
-    project_id = 'test-proj'
-    dataset_id = 'test-dset'
-    table_id = 'gbq-exception-tbl'
-    error_message = "Simulated exception"
-    mock_client_cls.return_value.query.side_effect = Exception(error_message)
+def test_load_fhrsids_from_bq_raises_instead_of_returning_empty(mock_client_cls):
+    """A failed read must not read as 'the table is empty'.
 
-    result = load_all_data_from_bq(project_id, dataset_id, table_id)
+    The caller appends everything the FSA API returned that is not in this set,
+    so swallowing the error would duplicate the entire fetch.
+    """
+    mock_client = mock_client_cls.return_value
+    mock_client.query.side_effect = Exception("credentials expired")
 
-    assert result == []
-    mock_client_cls.return_value.query.assert_called_once_with(f"SELECT * FROM `{project_id}.{dataset_id}.{table_id}`")
-    # Check if error was printed (optional, but good for verifying logging)
-    # mock_print.assert_any_call(f"Error loading data from BigQuery table {project_id}.{dataset_id}.{table_id}: {error_message}")
+    with pytest.raises(BigQueryExecutionError):
+        load_fhrsids_from_bq('p', 'd', 't')
 
-@patch('google.cloud.bigquery.Client')
-@patch('builtins.print')
-def test_load_all_data_from_bq_google_auth_exception(mock_print, mock_client_cls):
-    """Test that DefaultCredentialsError is caught and returns an empty list."""
-    project_id = 'test-proj'
-    dataset_id = 'test-dset'
-    table_id = 'auth-exception-tbl'
-    error_message = "Simulated DefaultCredentialsError"
-    mock_client_cls.side_effect = DefaultCredentialsError(error_message)
 
-    result = load_all_data_from_bq(project_id, dataset_id, table_id)
-
-    assert result == []
-    mock_client_cls.assert_called_once_with(project=project_id)
-    # mock_print.assert_any_call(f"Error loading data from BigQuery table {project_id}.{dataset_id}.{table_id}: {error_message}")
-
-@patch('google.cloud.bigquery.Client')
-@patch('builtins.print')
-def test_load_all_data_from_bq_generic_exception(mock_print, mock_client_cls):
-    """Test that a generic Exception is caught and returns an empty list."""
-    project_id = 'test-proj'
-    dataset_id = 'test-dset'
-    table_id = 'generic-exception-tbl'
-    error_message = "Simulated generic Exception"
-    mock_client_cls.side_effect = Exception(error_message)
-
-    result = load_all_data_from_bq(project_id, dataset_id, table_id)
-
-    assert result == []
-    mock_client_cls.assert_called_once_with(project=project_id)
-    # mock_print.assert_any_call(f"An unexpected error occurred while loading data from BigQuery table {project_id}.{dataset_id}.{table_id}: {error_message}")
 
 # --- Tests for write_to_bigquery ---
 
@@ -464,6 +423,81 @@ class TestBqUtilsGeminiSelection(unittest.TestCase):
         
         self.assertIn("DATE_DIFF", query_executed)
         self.assertNotIn("fhrsid IN", query_executed)
+
+
+class TestGeminiEnrichmentTempTables(unittest.TestCase):
+    """The scratch tables live in the production dataset under fixed names."""
+
+    def _run(self, mock_client_cls):
+        from app.services.bq_utils import execute_gemini_enrichment
+        mock_client = mock_client_cls.return_value
+        execute_gemini_enrichment(
+            project_id='test-proj', dataset_id='test-ds', master_table_id='master',
+            fhrsids=['123'],
+        )
+        return mock_client, [c[0][0] for c in mock_client.query.call_args_list]
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_temp_tables_are_unique_per_run(self, mock_client_cls):
+        """Two concurrent runs sharing `recents` would profile each other's rows.
+
+        Run B's CREATE OR REPLACE lands between run A's create and read, so A
+        pays Gemini for B's selection and merges the result over its own.
+        """
+        _, first = self._run(mock_client_cls)
+        mock_client_cls.reset_mock()
+        _, second = self._run(mock_client_cls)
+
+        self.assertNotIn('`test-proj.test-ds.recents`', first[0])
+        self.assertNotEqual(first[0], second[0])
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_temp_tables_expire(self, mock_client_cls):
+        """A run that dies between create and drop must not leak a table forever."""
+        _, queries = self._run(mock_client_cls)
+
+        self.assertIn('expiration_timestamp', queries[0])
+        self.assertIn('expiration_timestamp', queries[1])
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_temp_tables_are_dropped_after_a_successful_run(self, mock_client_cls):
+        mock_client, _ = self._run(mock_client_cls)
+
+        deleted = [c[0][0] for c in mock_client.delete_table.call_args_list]
+        self.assertEqual(len(deleted), 2)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_temp_tables_are_dropped_when_the_run_fails(self, mock_client_cls):
+        from app.services.bq_utils import execute_gemini_enrichment
+        mock_client = mock_client_cls.return_value
+        mock_client.query.return_value.result.side_effect = [None, Exception("AI.GENERATE failed")]
+
+        ok = execute_gemini_enrichment(
+            project_id='test-proj', dataset_id='test-ds', master_table_id='master',
+            fhrsids=['123'],
+        )
+
+        self.assertFalse(ok)
+        self.assertTrue(mock_client.delete_table.called)
+
+
+class TestBulkUpdateTempTableCleanup(unittest.TestCase):
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    @patch('app.services.bq_utils.write_to_bigquery', return_value=True)
+    def test_temp_table_is_dropped_when_the_merge_fails(self, mock_write, mock_client_cls):
+        """The delete sat after the MERGE inside the try, so a failed MERGE leaked it."""
+        from app.services.bq_utils import bulk_update_reviews
+        mock_client = mock_client_cls.return_value
+        mock_client.query.return_value.result.side_effect = Exception("merge failed")
+
+        success, _ = bulk_update_reviews(
+            'p', 'd', 't', pd.DataFrame({'fhrsid': ['1'], 'manual_review': ['approved']})
+        )
+
+        self.assertFalse(success)
+        self.assertTrue(mock_client.delete_table.called)
+
 
 # If __name__ == '__main__':
 #     unittest.main() # This allows running file directly if not using pytest

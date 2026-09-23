@@ -1,9 +1,14 @@
 import json
 
+# Scratch tables live in the production dataset, so they carry an expiry: a run
+# that dies before its cleanup leaks a full copy of the selection otherwise.
+TEMP_TABLE_OPTIONS = "OPTIONS(expiration_timestamp = TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 1 DAY))"
+
 # SCRIPT 1: Identify recent restaurants or specific selection
 SCRIPT_IDENTIFY_RECENTS = """
 CREATE OR REPLACE TABLE
-  `{project_id}.{dataset_id}.{target_table_recents}` AS
+  `{project_id}.{dataset_id}.{target_table_recents}`
+""" + TEMP_TABLE_OPTIONS + """ AS
 SELECT
   *
 FROM
@@ -132,7 +137,8 @@ MODEL_PARAMS_JSON = json.dumps(_MODEL_PARAMS_STRUCT, ensure_ascii=False)
 # Parameters: project_id, dataset_id, source_table_recents, target_table_insights, connection_id, model_endpoint, model_params_json
 SCRIPT_GENERATE_INSIGHTS = """
 CREATE OR REPLACE TABLE
-`{project_id}.{dataset_id}.{target_table_insights}` AS
+`{project_id}.{dataset_id}.{target_table_insights}`
+""" + TEMP_TABLE_OPTIONS + """ AS
 SELECT
   fhrsid,
   AI.GENERATE( ('''

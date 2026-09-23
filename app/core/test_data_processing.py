@@ -1,53 +1,10 @@
 import unittest # Changed from pytest to unittest for consistency with TestAppendToBigQuery
 from unittest.mock import MagicMock, patch
-from app.core.data_processing import load_master_data, process_and_update_master_data
+from app.core.data_processing import process_and_update_master_data
 from app.services.bq_utils import ORIGINAL_COLUMNS_TO_KEEP # Import ORIGINAL_COLUMNS_TO_KEEP
 from datetime import datetime
 import pandas as pd # Added for potential pd.NA usage if needed by tested functions directly
 import io
-
-# --- Tests for load_master_data (modified) ---
-class TestLoadMasterData(unittest.TestCase):
-    def test_load_master_data_success_and_manual_review_init(self):
-        # Mock for the load_bq_func argument
-        mock_bq_loader = MagicMock(return_value=[
-            {'FHRSID': "1", 'name': 'Restaurant A'}, # FHRSID is string
-            {'FHRSID': "2", 'name': 'Restaurant B', 'manual_review': 'already_reviewed'} # FHRSID is string
-        ])
-
-        project_id = "test_p"
-        dataset_id = "test_d"
-        table_id = "test_t"
-
-        result = load_master_data(project_id, dataset_id, table_id, mock_bq_loader)
-
-        mock_bq_loader.assert_called_once_with(project_id, dataset_id, table_id)
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]['manual_review'], 'not reviewed') # Initialized
-        self.assertEqual(result[1]['manual_review'], 'already_reviewed') # Preserved
-
-    def test_load_master_data_empty_from_bq(self):
-        mock_bq_loader = MagicMock(return_value=[])
-        result = load_master_data("p", "d", "t", mock_bq_loader)
-        self.assertEqual(result, [])
-
-    def test_load_master_data_bq_func_returns_none(self):
-        mock_bq_loader = MagicMock(return_value=None) # Simulate BQ function returning None
-        result = load_master_data("p", "d", "t", mock_bq_loader)
-        self.assertEqual(result, [])
-
-    def test_load_master_data_bq_func_raises_exception(self):
-        mock_bq_loader = MagicMock(side_effect=Exception("BigQuery Load Error"))
-        # Expect exception to propagate
-        with self.assertRaisesRegex(Exception, "BigQuery Load Error"):
-            load_master_data("p", "d", "t", mock_bq_loader)
-
-    def test_load_master_data_non_list_from_bq(self):
-        mock_bq_loader = MagicMock(return_value={"data": "not a list"}) # Simulate BQ function returning non-list
-        # Expect TypeError
-        with self.assertRaises(TypeError):
-            load_master_data("p", "d", "t", mock_bq_loader)
-
 
 # --- Tests for process_and_update_master_data (modified) ---
 class TestProcessAndUpdateMasterData(unittest.TestCase):
@@ -59,6 +16,31 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         
         self.assertEqual(len(new_restaurants), 0)
         self.assertIn("No new restaurant records identified", message)
+
+    def test_accepts_a_bare_set_of_existing_fhrsids(self):
+        """The cron loads IDs only, so master_data arrives as a set of strings.
+
+        Silently ignoring a non-dict here would make every restaurant look new
+        and duplicate the whole table on the next ingest.
+        """
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [
+            {'FHRSID': "1", 'BusinessName': 'Already known'},
+            {'FHRSID': "2", 'BusinessName': 'Genuinely new'},
+        ]}}}
+
+        new_restaurants, _ = process_and_update_master_data({"1"}, api_data)
+
+        self.assertEqual([r['FHRSID'] for r in new_restaurants], ["2"])
+
+    def test_bare_fhrsids_are_normalised_before_comparison(self):
+        """BigQuery hands back the ID as a string; the API sends an int."""
+        api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [
+            {'FHRSID': 1, 'BusinessName': 'Already known'},
+        ]}}}
+
+        new_restaurants, _ = process_and_update_master_data({"1"}, api_data)
+
+        self.assertEqual(new_restaurants, [])
 
     def test_add_new_restaurants_and_fields_initialization(self):
                 # Setup mock for datetime.now().strftime()

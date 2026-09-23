@@ -16,7 +16,7 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
         escaped_target_ids = [fid.replace("'", "''") for fid in target_fhrsids]
         target_ids_str = ", ".join([f"'{fid}'" for fid in escaped_target_ids])
         find_query = f'''
-            SELECT m.fhrsid, m.postcode, m.maps_rating, m.gemini_insights, d.postcode AS d_postcode
+            SELECT m.fhrsid, m.postcode, m.maps_rating, m.gemini_insights_structured, d.postcode AS d_postcode
             FROM `{table_ref}` AS m
             LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
               ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
@@ -24,7 +24,7 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
         '''
     else:
         find_query = f'''
-            SELECT m.fhrsid, m.postcode, m.maps_rating, m.gemini_insights, d.postcode AS d_postcode
+            SELECT m.fhrsid, m.postcode, m.maps_rating, m.gemini_insights_structured, d.postcode AS d_postcode
             FROM `{table_ref}` AS m
             LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
               ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
@@ -43,7 +43,10 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
         if force_gemini:
             gemini_missing_fhrsids = fhrsids.copy()
         else:
-            gemini_missing_fhrsids = [str(row.fhrsid) for row in rows if row.gemini_insights is None]
+            # gemini_insights is NULLed by every successful merge, so it can never
+            # indicate a cached profile. gemini_insights_structured is the V2 column
+            # that actually holds one.
+            gemini_missing_fhrsids = [str(row.fhrsid) for row in rows if row.gemini_insights_structured is None]
             
         postcodes_missing = [str(row.fhrsid) for row in rows if getattr(row, 'd_postcode', None) is None and getattr(row, 'postcode', None) is not None]
     except Exception as e:
