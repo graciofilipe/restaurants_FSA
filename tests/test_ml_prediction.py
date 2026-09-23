@@ -3,10 +3,10 @@ from unittest.mock import patch, MagicMock
 from app.services.ml_prediction import generate_predictions
 
 class DummyRow:
-    def __init__(self, fhrsid, maps_rating, gemini_insights):
+    def __init__(self, fhrsid, maps_rating, gemini_insights_structured):
         self.fhrsid = fhrsid
         self.maps_rating = maps_rating
-        self.gemini_insights = gemini_insights
+        self.gemini_insights_structured = gemini_insights_structured
 
 @patch('app.services.ml_prediction.bigquery.Client')
 @patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
@@ -16,7 +16,7 @@ def test_generate_predictions_skips_when_data_exists(mock_execute_gemini, mock_e
     mock_bq_client.return_value = mock_client_instance
     
     mock_query_job = MagicMock()
-    # Mocking that the targeted restaurant already has both maps_rating and gemini_insights
+    # Mocking that the targeted restaurant already has both maps_rating and a structured profile
     mock_query_job.result.return_value = [
         DummyRow('123', 4.5, '{"match_score": 90}')
     ]
@@ -45,7 +45,7 @@ def test_generate_predictions_triggers_when_data_missing(mock_execute_gemini, mo
     mock_bq_client.return_value = mock_client_instance
     
     mock_query_job = MagicMock()
-    # Data is missing maps_rating and gemini_insights
+    # Data is missing maps_rating and the structured profile
     mock_query_job.result.return_value = [
         DummyRow('124', None, None)
     ]
