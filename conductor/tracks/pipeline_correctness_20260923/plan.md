@@ -662,7 +662,7 @@ would spend it on.
   looked up on Maps has no prior. Re-scoring the 1,022 rows that already carry a Gemini profile
   restores the gradient for the price of `ML.PREDICT`.
 
-## Phase 10: Contract — Remove Legacy Surfaces (R5)
+## Phase 10: Contract — Remove Legacy Surfaces (R5) [checkpoint: 7d4305d]
 
 *Stop writing first; drop columns last.*
 
