@@ -1,0 +1,28 @@
+{
+   "match_score": 78,
+   "1_value_and_volume": {
+       "rating": 5,
+       "verdict": "Exceptional value. The 'platter' concept ensures a feast-like experience where a single plate is often described as 'huge' and 'impossible to finish.' Reviewers consistently mention taking leftovers home, satisfying the user's need for abundance and 'Quality per Pound' without shrinkflation."
+   },
+   "2_demographic_community": {
+       "score": 4,
+       "evidence": "The venue is a 'one-woman show' run by Esme, creating a cult-like community hub where the owner knows the regulars. While located in a trendy arcade (which attracts a younger, hipster demographic), the vibe is described as 'eating in someone's living room,' grounding it in personal connection rather than generic tourism."
+   },
+   "3_linguistic_signal": {
+       "score": 5,
+       "menu_type": "No physical menu. The 'menu' is verbal or based on what Esme cooked that day (e.g., 'Regular or Large'). This lack of written standardization is a high-level insider signal, requiring trust in the chef and alienating casual tourists who need predictable descriptions."
+   },
+   "4_geographic_precision": {
+       "region_identified": "Caribbean Diaspora (Ital/Soul)",
+       "specificity_level": "BROAD_REGIONAL"
+   },
+   "5_culinary_uncompromisingness": {
+       "score": 3,
+       "pander_check": "Mixed bag for this specific profile. While it avoids 'blandness' with genuine spice and 'kick of heat,' it relies on vegan substitutes (Jackfruit, 'Mac no Cheese') and fusion elements (Southern/Asian influences) which technically violate the 'non-Westernized' and 'offal/bone' preferences. However, it is 'wholesome' and 'hearty,' fitting the 'Healthy Host' aspect."
+   },
+   "6_establishment_integrity": {
+       "is_sit_down_restaurant": true,
+       "type": "RESTAURANT_DINING"
+   },
+   "summary_reasoning": "A strong 'Hidden Gem' for the adventurous explorer due to its elusive opening hours (often just Thu/Sat) and 'no menu' policy. It delivers the massive, generous portions the user craves. However, the vegan/fusion nature and hipster-arcade location slightly dilute the 'Traditional Native Enclave' score."
+}

@@ -1,0 +1,28 @@
+{
+  "match_score": 22,
+  "1_value_and_volume": {
+    "rating": 2,
+    "verdict": "Portions and pricing are standard for a casual cafe and shisha lounge, but it does not offer the generous, feast-like culinary abundance or high calorie-to-pound value expected of an authentic family-style dining establishment."
+  },
+  "2_demographic_community": {
+    "score": 2,
+    "evidence": "Patronage is dominated by late-night shisha and sports crowds rather than multi-generational community enclaves or native cultural gatherings seeking authentic heritage cooking."
+  },
+  "3_linguistic_signal": {
+    "score": 1,
+    "menu_type": "Entirely English, mainstream cafe and lounge menu with generic naming and no native dialect specials or cultural linguistic footprint."
+  },
+  "4_geographic_precision": {
+    "region_identified": "Cuba",
+    "specificity_level": "GENERIC_NATIONAL"
+  },
+  "5_culinary_uncompromisingness": {
+    "score": 2,
+    "pander_check": "Food offerings lean into westernized cafe fusion, finger food, and casual bar snacks alongside hookah rather than uncompromising, deeply traditional recipes or intense regional flavors."
+  },
+  "6_establishment_integrity": {
+    "is_sit_down_restaurant": false,
+    "type": "CAFE_BAKERY_DELI"
+  },
+  "summary_reasoning": "Cafe Havana functions primarily as a neighborhood shisha lounge and cafe with basic snack offerings rather than an authentic, destination sit-down restaurant, completely missing the explorer profile's requirement for culinary depth and establishment integrity."
+}

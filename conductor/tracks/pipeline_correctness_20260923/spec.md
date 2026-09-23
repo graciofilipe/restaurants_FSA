@@ -150,10 +150,10 @@ re-query Places for permanent misses.
 
 ## 4. Target schema additions
 
-> **PROVISIONAL.** The source paths below assume convention A (nested, numeric prefix), read off the
-> prompt text rather than observed output. Phase 0's key census confirms or replaces this table
-> before any column is created, and Phase 3 fixes the canonical shape at the source (D14). Treat the
-> column names as settled and the **source paths as pending**.
+> **CONFIRMED** by the Phase 0 key census, 2026-09-23. Convention A is what the column actually
+> holds: all 17 source paths below resolve on 2766 of the 2767 profiled rows (the 1 exception is a
+> single unparseable payload), and every profiled row shares one identical top-level key set. No
+> alias `COALESCE` is needed in the Phase 5 backfill. See D-08 in `decision_log.md`.
 
 All additive. Populated by the enrichment merge; backfilled once from existing
 `gemini_insights_structured` values.

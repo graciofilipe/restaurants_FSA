@@ -1,0 +1,28 @@
+{
+  "match_score": 8,
+  "1_value_and_volume": {
+    "rating": 1,
+    "verdict": "Pre-packaged, single-serving grab-and-go lunch boxes and sushi trays priced at standard high-street corporate retail rates. Offers zero banquet or feast value for sharing."
+  },
+  "2_demographic_community": {
+    "score": 1,
+    "evidence": "Patronized almost exclusively by local office workers and commuters looking for a rapid midday desk lunch; lacks any native diaspora presence or community hub dynamics."
+  },
+  "3_linguistic_signal": {
+    "score": 1,
+    "menu_type": "Standard English corporate branding and retail shelf packaging with no native linguistic elements or insider specials."
+  },
+  "4_geographic_precision": {
+    "region_identified": "Pan-Asian / Western Grab-and-Go",
+    "specificity_level": "GENERIC_NATIONAL"
+  },
+  "5_culinary_uncompromisingness": {
+    "score": 1,
+    "pander_check": "Thoroughly commercialized and diluted flavor profiles designed for mainstream convenience, featuring sweetened teriyaki sauces, California rolls, and grab-and-go poke bowls."
+  },
+  "6_establishment_integrity": {
+    "is_sit_down_restaurant": false,
+    "type": "FAST_FOOD_JOINT"
+  },
+  "summary_reasoning": "Abokado is a daytime corporate grab-and-go chain, completely failing the establishment integrity test and lacking any cultural depth, culinary challenge, or sharing value."
+}
