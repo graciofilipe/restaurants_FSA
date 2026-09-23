@@ -1,10 +1,17 @@
 import datetime
 import json
+import logging
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import pandas as pd
 from app.services.api_client import fetch_api_data
 from app.services.bq_utils import ORIGINAL_COLUMNS_TO_KEEP
+
+logger = logging.getLogger(__name__)
+
+# The FSA search returns at most a few thousand establishments within the
+# configured radius, so this is a runaway guard, not an expected limit.
+DEFAULT_MAX_PAGES = 50
 
 def parse_coordinates(coordinate_pairs_str: str) -> Tuple[List[Tuple[float, float]], List[str]]:
     """Parses newline-separated coordinate pairs (lon, lat)."""
@@ -20,12 +27,18 @@ def parse_coordinates(coordinate_pairs_str: str) -> Tuple[List[Tuple[float, floa
             errors.append(f"Error parsing coordinate line {i+1}: '{line}'.")
     return valid_coords, errors
 
-def fetch_data_for_all_coordinates(valid_coords: List[Tuple[float, float]], max_results: int) -> List[Dict[str, Any]]:
-    """Fetches and aggregates API data for coordinates."""
+def fetch_data_for_all_coordinates(
+    valid_coords: List[Tuple[float, float]], max_results: int, max_pages: int = DEFAULT_MAX_PAGES
+) -> List[Dict[str, Any]]:
+    """Fetches and aggregates API data for coordinates.
+
+    `max_pages` bounds each coordinate independently. Without it, an API that
+    keeps returning full pages -- or ignores the page parameter -- pages until
+    the job is killed, sleeping a second and growing the result list each time.
+    """
     all_establishments = []
     for lon, lat in valid_coords:
-        page = 1
-        while True:
+        for page in range(1, max_pages + 1):
             resp = fetch_api_data(lon, lat, max_results, page)
             time.sleep(1)
             if not resp:
@@ -34,7 +47,11 @@ def fetch_data_for_all_coordinates(valid_coords: List[Tuple[float, float]], max_
             all_establishments.extend(ests)
             if len(ests) < max_results:
                 break
-            page += 1
+        else:
+            logger.warning(
+                f"Hit the {max_pages}-page limit for ({lon}, {lat}) without reaching a short page. "
+                f"Results may be truncated, or the API may be ignoring the page parameter."
+            )
     return all_establishments
 
 def normalize_fhrsid(value: Any) -> str:
