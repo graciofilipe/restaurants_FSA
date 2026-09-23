@@ -11,7 +11,7 @@ source .venv/bin/activate && uv sync    # setup / re-sync deps from pyproject.to
 
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest app/ scripts/                    # 310 offline unit tests — this is what Cloud Build runs
+pytest app/ scripts/                    # 321 offline unit tests — this is what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest tests/                           # NOT offline-safe (see below)
 
@@ -30,8 +30,16 @@ python -m scripts.train_bqml_model --dry-run      # validate BQML training SQL w
 python -m scripts.train_bqml_model --run_async    # kick off Boosted Tree training
 python -m scripts.enrich_maps_data                # Google Places backfill (needs GOOGLE_MAPS_API_KEY)
 python -m scripts.enrich_postcode_demographics    # postcodes.io → uk_postcode_demographics
+python -m scripts.evaluate_model --execute        # held-out MAE/RMSE/ρ vs the match_score baseline
+python -m scripts.invalidate_stale_predictions    # dry run; --execute clears pre-retrain scores
 python -m app.cron.fetch_weekly                   # the weekly FSA ingest, run as a Cloud Run Job
 ```
+
+`evaluate_model.py` splits on `FARM_FINGERPRINT(fhrsid) MOD 5` and trains throwaway `eval_holdout_*`
+models, so it can never touch the served one; reuse `--holdout_modulus 5` or the numbers are not
+comparable across runs. `invalidate_stale_predictions.py` takes its cutoff from the served model's
+own `created` time — a prediction made by a replaced model is wrong, and `predicted_at` records
+when a row was scored, not what scored it.
 
 Deployment is automatic: **a Cloud Build trigger builds and deploys on every push to `main`**. Local
 changes are not live until pushed. Manual: `gcloud builds submit --config cloudbuild.yaml .`
