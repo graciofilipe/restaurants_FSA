@@ -1012,6 +1012,65 @@ does not foreclose it: the archive holds the text, and a V2 profile would not ha
 
 ---
 
+## D-22 — `manual_review` says `rejected` about 9,348 restaurants that are in scope, so it was replaced rather than archived
+
+**Date:** 2026-09-23
+**Phase:** 10
+
+**Context.** `manual_review` is a free-text status column predating `in_scope` and `rating_source`.
+The plan called for replacing, not deleting, the one place it still had teeth: the default filter in
+`execute_gemini_enrichment`, `manual_review IN ('pending', 'not reviewed')`, which decides who gets
+paid for a Gemini profile.
+
+**What the column actually contains,** measured before anything was changed:
+
+| Value | Rows | of which `in_scope = TRUE` | of which labelled |
+|---|---|---|---|
+| `rejected` | 10,869 | **9,348** | **351** |
+| NULL | 288 | — | — |
+| `pending` | 109 | — | — |
+| `prending` | 2 | — | — |
+
+So the dominant value is a no about restaurants the user has separately judged to be in scope, and
+351 of them carry a hand-entered rating — a rejection of things that were not rejected. Add a
+`prending` typo that the `IN (...)` predicate silently excluded from enrichment on two rows. The
+column is not a record of decisions; it is the residue of a workflow that `in_scope` replaced.
+
+**The contrast with [D-21] is the whole decision.** The V1 text was 1,116 distinct Gemini
+evaluations, disjoint from every V2 profile, and dropping it would have destroyed the only copy — so
+it was archived first, at real effort. `manual_review` is one of four values, none of which means
+what it says, all of which are recoverable from the snapshot for as long as the snapshot exists. An
+archive table would be a ceremony performed on noise. **No archive is proposed.**
+
+**The replacement predicate: `in_scope IS NOT FALSE`, not `IS TRUE`.** Rows arrive untriaged with
+`in_scope` NULL, and profiling is usually what answers the question, so `IS TRUE` would mean a new
+restaurant is never looked at — the enrichment queue would drain to nothing. What `IS NOT FALSE`
+does exclude is the already-answered no: a cafe or a bakery, judged by triage or by an earlier
+profile, which there is no reason to pay to profile again.
+
+Measured over the current 33-day window: the old predicate selects **153** rows, the new one **146**.
+The seven dropped are all `in_scope = FALSE`. This is strictly fewer `AI.GENERATE` calls, not a
+different set — the change cannot cost more than it saves. Dry-run validated against `fsa_master`
+before the commit.
+
+**Also removed, and worth naming.** The `review_status_filter` parameter on both
+`execute_gemini_enrichment` and `load_filtered_data_from_bq`. No caller has ever passed either. Two
+public parameters that existed only to let a caller widen the filter, in a codebase where widening
+the filter is what spends money.
+
+**Ordering, again.** Code deployed before the drop, for the reason in [D-21]: `MASTER_BQ_SCHEMA` is
+the weekly cron's load schema, and naming a column the table lacks fails the scheduled ingest in a
+Cloud Run Job nobody watches. The reverse — the table holding a NULLABLE column the schema omits — is
+harmless.
+
+**Open.** The `ALTER TABLE ... DROP COLUMN` itself. Not yet approved; the code no longer reads the
+column, so the table can carry it indefinitely at no cost.
+
+**Related.** [D-21] is the same retirement for a column that did hold information; [D-05] and [D-13]
+are how `in_scope` came to be derived, including the branches that never fired.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
@@ -1102,6 +1161,9 @@ does not foreclose it: the archive holds the text, and a V2 profile would not ha
 | V1 archive integrity | 1,116 = 1,116 rows, `BIT_XOR` hashes equal, 1,526,413 = 1,526,413 chars | 2026-09-23 |
 | `fsa_master` columns after the drop | **43** (was 44); 11,268 rows, 411 labels unchanged | 2026-09-23 |
 | `MASTER_BQ_SCHEMA` vs live table after the drop | 43 = 43, nothing named-but-absent | 2026-09-23 |
+| `manual_review` distribution | `rejected` 10,869 / NULL 288 / `pending` 109 / `prending` 2 | 2026-09-23 |
+| `manual_review = 'rejected'` that are `in_scope = TRUE` | **9,348**; 351 of them carry a `user_rating` | 2026-09-23 |
+| Enrichment filter, 33-day window, old vs new | **153 → 146 rows**; the 7 dropped are all `in_scope = FALSE` | 2026-09-23 |
 
 ## Cost ledger
 
@@ -1129,6 +1191,8 @@ does not foreclose it: the archive holds the text, and a V2 profile would not ha
 | Re-scoring the 43 cleared rows with no profile | 43 × `AI.GENERATE` @ the Phase 6 measured rate | **~£0.30**, incurred only when the user asks |
 | V1 archive table | 1,116 rows, 1.9 MiB scanned to build, ~1.5 MiB stored | **< £0.01/month** — spent |
 | `DROP COLUMN gemini_insights` | metadata-only DDL | **£0** — spent |
+| `manual_review` → `in_scope IS NOT FALSE` | 7 fewer `AI.GENERATE` calls per untargeted run | **small recurring saving** |
+| `DROP COLUMN manual_review` | metadata-only DDL | **£0** — pending approval |
 
 The only line item that needs its own approval is the Phase 7 sweep; everything up to Phase 9 is
 pennies because the backfill turned out to be pure SQL.

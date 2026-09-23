@@ -11,7 +11,7 @@ source .venv/bin/activate && uv sync    # setup / re-sync deps from pyproject.to
 
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest app/ scripts/                    # 337 offline unit tests — this is what Cloud Build runs
+pytest app/ scripts/                    # 345 offline unit tests — this is what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest tests/                           # NOT offline-safe (see below)
 
@@ -82,7 +82,11 @@ a one-day expiry as a backstop).
    result lands in `gemini_insights_structured` as raw JSON. Beware the name collision: the scratch
    table aliases the raw `AI.GENERATE` output as `gemini_insights`, and so does the default
    `column=` of `sql_conformance_check` — the *master* column of that name (the pre-V2 free text)
-   was archived to `gemini_insights_v1_archive_20260923` and dropped.
+   was archived to `gemini_insights_v1_archive_20260923` and dropped. When called without `fhrsids`
+   it selects recent rows with `in_scope IS NOT FALSE` — deliberately not `IS TRUE`, since rows
+   arrive untriaged and profiling is what answers the question; what it excludes is the
+   already-answered no. This replaced a `manual_review` predicate whose dominant value, `rejected`,
+   was set on 9,348 rows that are in scope.
 4. **Demographics** — `scripts/enrich_postcode_demographics.py` fills LSOA/MSOA/IMD from postcodes.io.
 5. **Predict** — `app/services/ml_prediction.py` runs steps 2–4 just-in-time for whatever is missing,
    then `ML.PREDICT` into `predicted_user_rating` + `predicted_at`. Whether step 3 is "missing" is

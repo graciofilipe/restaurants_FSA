@@ -666,11 +666,26 @@ would spend it on.
 
 *Stop writing first; drop columns last.*
 
-- [ ] Task: Retire `manual_review`
-    - [ ] Sub-task: **Replace**, don't delete, the default filter in `execute_gemini_enrichment`
-          with an `in_scope`-based predicate — a behaviour change, not a deletion.
-    - [ ] Sub-task: Remove from ingest, `bulk_update_reviews`, `DISPLAY_COLUMNS`, filter signatures.
-    - [ ] Sub-task: Update the affected tests.
+- [x] Task: Retire `manual_review` — 43b480b
+    - [x] Sub-task: Characterise what the column actually says. **10,869 of 11,268 rows read
+          `rejected`, and 9,348 of those are `in_scope = TRUE`, 351 carry a human `user_rating`.**
+          Plus a `prending` typo on 2 rows. The value does not mean what it says, so unlike the V1
+          text there is nothing here worth archiving (D-22).
+    - [x] Sub-task: **Replace**, don't delete, the default filter in `execute_gemini_enrichment`
+          with an `in_scope`-based predicate — a behaviour change, not a deletion. Chose
+          `in_scope IS NOT FALSE` over `IS TRUE`: rows arrive untriaged and profiling is usually
+          what answers the question, so `IS TRUE` would mean a new restaurant is never looked at.
+          Measured on the live table over the current 33-day window: old predicate 153 rows, new
+          one 146. The 7 excluded are all `in_scope = FALSE`. **Strictly fewer Gemini calls.**
+    - [x] Sub-task: Remove from ingest, `bulk_update_reviews`, `DISPLAY_COLUMNS`, filter signatures
+          **and `MASTER_BQ_SCHEMA`** — the same load-schema ordering constraint as the V1 text.
+          Also dropped the `review_status_filter` parameter from both functions; no caller ever
+          passed it.
+    - [x] Sub-task: Update the affected tests. 8 new across
+          `TestTheDefaultFilterAsksWhetherItIsARestaurant` and `TestManualReviewIsGone`; the
+          fingerprint-coverage test in `test_migrate_pillar_columns.py` swapped its exact column
+          count (27 → 26 → 25 across two phases) for a lower bound, because a number hand-corrected
+          on every deliberate schema change gets corrected without being read.
 - [x] Task: Retire `gemini_insights` (V1 text) — ec3e56d, ef6a002
     - [x] Sub-task: Characterise what would be lost. **1,116 rows, median 1,379 characters, all
           distinct; 1,090 in scope; 0 labelled; 0 that also hold a V2 structured profile — the two
@@ -688,17 +703,31 @@ would spend it on.
     - [x] Sub-task: `ALTER TABLE ... DROP COLUMN gemini_insights`, on the go-ahead of 2026-09-23.
           **44 → 43 columns; 11,268 rows and 411 labels unchanged.** `MASTER_BQ_SCHEMA` and the
           live table now agree on all 43 names, re-checked after the drop.
-- [ ] Task: Remove the non-functional sidebar path input
-    - [ ] Sub-task: Also closes the SQL-injection path recorded in the teamwork handoff note; the
-          broader f-string SQL interpolation stays out of scope.
-- [ ] Task: Remove `app/maps_agent/`
-    - [ ] Sub-task: Delete the package and its test.
-    - [ ] Sub-task: Remove its assertions from `tests/test_model_upgrades.py` and eval config refs.
-    - [ ] Sub-task: Confirm `app/agent.py` still loads and the ADK server still starts.
-- [ ] Task: Drop `manual_review` (destructive — separate approval)
-    - [ ] Sub-task: Confirm by grep that nothing reads it.
-    - [ ] Sub-task: Confirm the Phase 0 snapshot still exists.
-    - [ ] Sub-task: `ALTER TABLE ... DROP COLUMN` only on explicit go-ahead.
+- [x] Task: Remove the non-functional sidebar path input — 531f5f9
+    - [x] Sub-task: Also closes the SQL-injection path recorded in the teamwork handoff note; the
+          broader f-string SQL interpolation stays out of scope. The box was assigned two lines
+          after `bq_path = DEFAULT_BQ_PATH` and never read, so it did nothing while appearing to
+          retarget the app — and it was the only external entry point for a table path into
+          f-string-built SQL.
+    - [x] Sub-task: Test that the widget cannot come back (`'BigQuery Table Path' not in content`).
+- [x] Task: Remove `app/maps_agent/` — a7308df
+    - [x] Sub-task: Delete the package and its test. It duplicated `app/agent.py` — same model,
+          same tool, a looser 4-key JSON instruction.
+    - [x] Sub-task: Remove its assertions from `tests/test_model_upgrades.py` and eval config refs.
+          Its only importers were its own test and one model-ID assertion.
+    - [x] Sub-task: Confirm `app/agent.py` still loads and the ADK server still starts.
+          `fast_api_app.py` passes the repo root as `agents_dir`, which discovers `app/` and not a
+          nested package, so `maps_agent` was never served at all. Import verified under
+          `INTEGRATION_TEST=TRUE`.
+- [~] Task: Drop `manual_review` (destructive — separate approval)
+    - [x] Sub-task: Confirm by grep that nothing reads it. `app/` and `scripts/`, excluding tests
+          and the spent migration, return one hit: the explanatory comment at
+          `app/services/bq_utils.py:114`.
+    - [x] Sub-task: Confirm the Phase 0 snapshot still exists. `fsa_master_backup_20260923`.
+    - [x] Sub-task: Deploy the code first — `MASTER_BQ_SCHEMA` no longer names the column, and
+          naming one the table lacks is safe while the reverse is not.
+    - [ ] Sub-task: `ALTER TABLE ... DROP COLUMN` only on explicit go-ahead. **Not yet given.**
+          No archive proposed: see D-22 for why the column's contents carry no information.
     - *Note:* `gemini_insights` is already dropped, under its own task above. The two were one task
       in the plan; they separated because the V1 text needed archiving and `manual_review` needs a
       replacement predicate written first, which is a behaviour change and not a deletion.
