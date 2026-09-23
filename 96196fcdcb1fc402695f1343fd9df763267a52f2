@@ -1,0 +1,34 @@
+D10 -- shared scratch tables in the production dataset.
+
+Defect: bq_utils.py:48 pinned recents_table_id/insights_table_id to the literals
+'recents' and 'genairesults_temp'. SCRIPT_IDENTIFY_RECENTS and
+SCRIPT_GENERATE_INSIGHTS both CREATE OR REPLACE them. Concurrency window: run A
+creates recents -> run B replaces it -> A's SCRIPT_GENERATE_INSIGHTS reads B's
+rows, bills AI.GENERATE for them, and SCRIPT_MERGE_INSIGHTS writes the output
+onto whatever fhrsids came back. Not theoretical for a Streamlit app that can be
+open in two tabs, and ml_prediction.py calls execute_gemini_enrichment too.
+
+Fix: uuid4().hex[:12] suffix per invocation; both CREATE statements carry
+OPTIONS(expiration_timestamp = TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 1 DAY));
+try/finally drops both.
+
+Both layers are deliberate. Expiration alone leaves a day of clutter per run.
+The finally alone does not survive a Cloud Run instance being killed mid-run,
+which is how the current leak happens.
+
+The finally swallows delete_table failures: the table expires regardless, and
+raising there would turn a successful enrichment into a reported failure and
+lose the merge that already committed.
+
+bulk_update_reviews had the same defect in miniature -- delete_table at line 219
+sat after job.result() inside the try, so a failed MERGE leaked
+temp_update_reviews_<timestamp>. Its name is already per-run (timestamp to the
+second), so only the finally was needed.
+
+Leftovers: the existing production 'recents' and 'genairesults_temp' tables are
+now orphaned. Dropping them is a destructive op needing explicit go-ahead;
+logged for the Phase 1 checkpoint.
+
+Verification: pytest app/ scripts/ -> 95 passed. Red phase: 5 failures.
+Rendered both CTAS statements to confirm OPTIONS sits between the table name and
+AS, which is where BigQuery requires it.
