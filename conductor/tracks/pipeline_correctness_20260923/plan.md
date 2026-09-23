@@ -125,7 +125,14 @@ estimate attached.
           changed code file, and `bq_scripts.py` had none despite holding SQL run against prod.
     - [x] Sub-task: Verified the deploy trigger with `gcloud` before relying on it — see D-07. It is
           real, and region-scoped to `europe-west2`.
-- [ ] Task: Merge to `main` and verify the Cloud Run deploy
+- [x] Task: Merge to `main` and verify the Cloud Run deploy — 89227f3
+    - [x] Sub-task: Merged `--no-ff`; `pytest app/ scripts/` re-run on the merge commit → 106 passed.
+    - [x] Sub-task: Cloud Build `6479c01b` SUCCESS on all four steps
+          (`run-tests`, `build-image`, `push-image`, `deploy-cloud-run`).
+    - [x] Sub-task: Deploy verified by digest, not by the build status alone — live revision
+          `restaurants-fsa-00218-cs2` runs
+          `restaurants-fsa@sha256:e4da6388…`, which Artifact Registry tags `89227f39…`, the merge
+          commit. Service returns HTTP 302 (Streamlit's normal redirect).
 
 ## Phase 2: Baseline the Model Before Repairing It (R7)
 
