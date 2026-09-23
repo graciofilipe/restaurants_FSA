@@ -9,6 +9,7 @@ import string
 
 import pytest
 
+from app.core.pillar_schema import PILLAR_FIELDS, sql_json_object_regex
 from scripts.bq_scripts import (
     MODEL_PARAMS_JSON,
     SCRIPT_BULK_UPDATE_MERGE,
@@ -48,9 +49,14 @@ def test_templates_take_exactly_the_documented_placeholders(template, expected):
 
 @pytest.mark.parametrize("template", EXPECTED_PLACEHOLDERS)
 def test_templates_render(template):
-    """An unescaped brace in the prompt would raise here rather than mid-query."""
+    """An unescaped brace in the prompt would raise here rather than mid-query.
+
+    The JSON-unwrap regex is the one place a brace is meant to survive
+    rendering, so it is stripped before the check rather than exempting the
+    whole template -- a stray brace elsewhere in the merge still fails.
+    """
     rendered = template.format(**{name: 'x' for name in _placeholders(template)})
-    assert '{' not in rendered.replace("'''", "")
+    assert '{' not in rendered.replace("'''", "").replace(sql_json_object_regex(), "")
 
 
 def test_scratch_tables_expire():
@@ -68,3 +74,44 @@ def test_model_params_are_valid_json():
 def test_model_params_carry_no_triple_quote():
     """It is embedded in r'''...''' -- a triple quote inside would terminate the literal early."""
     assert "'''" not in MODEL_PARAMS_JSON
+
+
+class TestMergeWritesTypedColumns:
+    """Phase 6 dual-write. Every new profile must land in the typed columns as
+    well as the JSON blob, or the Phase 5 backfill starts decaying the moment
+    the next enrichment run finishes."""
+
+    def test_every_canonical_column_is_assigned(self):
+        for field in PILLAR_FIELDS:
+            assert f"T.{field.column} =" in SCRIPT_MERGE_INSIGHTS, field.column
+
+    def test_it_reads_the_scratch_table_not_the_master(self):
+        """The raw payload is on S; T's own column is not written until this
+        same statement, so extracting from T would read the previous run."""
+        assert 'T.gemini_insights_structured, ' not in SCRIPT_MERGE_INSIGHTS
+        assert SCRIPT_MERGE_INSIGHTS.count('S.gemini_insights') >= len(PILLAR_FIELDS)
+
+    def test_the_raw_payload_is_still_kept(self):
+        """`gemini_insights_structured` stays the audit trail: it is the only
+        way to re-derive a column after a schema change, and the one row whose
+        profile is unparseable exists only there."""
+        assert 'T.gemini_insights_structured = S.gemini_insights' in SCRIPT_MERGE_INSIGHTS
+
+    def test_it_stamps_the_profile_time(self):
+        """Without this, Phase 7's staleness sweep re-profiles every row the
+        merge just paid for."""
+        assert 'T.gemini_profiled_at = CURRENT_TIMESTAMP()' in SCRIPT_MERGE_INSIGHTS
+
+    def test_missing_scores_are_not_defaulted(self):
+        assert 'IFNULL' not in SCRIPT_MERGE_INSIGHTS
+        assert 'COALESCE' not in SCRIPT_MERGE_INSIGHTS
+
+    def test_it_reads_the_nested_paths(self):
+        assert '$.1_value_and_volume.rating' in SCRIPT_MERGE_INSIGHTS
+        assert '1_value_and_volume_rating' not in SCRIPT_MERGE_INSIGHTS
+
+    def test_the_braces_in_the_unwrap_regex_are_escaped(self):
+        """The template goes through `.format()`. A single brace here raises
+        KeyError mid-enrichment, after the AI.GENERATE call has been paid for."""
+        assert sql_json_object_regex(for_format_template=True) in SCRIPT_MERGE_INSIGHTS
+        assert sql_json_object_regex() not in SCRIPT_MERGE_INSIGHTS

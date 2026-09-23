@@ -1,5 +1,7 @@
 import json
 
+from app.core.pillar_schema import PILLAR_FIELDS, sql_extract
+
 # Scratch tables live in the production dataset, so they carry an expiry: a run
 # that dies before its cleanup leaks a full copy of the selection otherwise.
 TEMP_TABLE_OPTIONS = "OPTIONS(expiration_timestamp = TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 1 DAY))"
@@ -157,14 +159,31 @@ FROM
 
 # SCRIPT 3: Merge Insights back to Master
 # Parameters: project_id, dataset_id, source_table_insights, target_table_master
+#
+# Dual-write (Phase 6). The raw payload still lands in
+# `gemini_insights_structured` -- it is the audit trail, and the only way to
+# re-derive a column after a schema change -- but the typed columns are now
+# filled in the same statement. Without this the Phase 5 backfill would start
+# decaying the moment the next enrichment run finished, leaving newly profiled
+# rows with a JSON blob and fourteen NULLs.
+#
+# Generated from PILLAR_FIELDS rather than written out, for the reason the
+# whole track exists: hand-copied path lists drift, and the drift is invisible.
+_TYPED_COLUMN_ASSIGNMENTS = ",\n    ".join(
+    f"T.{field.column} = {sql_extract(field, 'S.gemini_insights', for_format_template=True)}"
+    for field in PILLAR_FIELDS
+)
+
 SCRIPT_MERGE_INSIGHTS = """
 MERGE `{project_id}.{dataset_id}.{target_table_master}` T
 USING `{project_id}.{dataset_id}.{source_table_insights}` S
 ON T.fhrsid = S.fhrsid
 WHEN MATCHED THEN
-  UPDATE SET 
+  UPDATE SET
     T.gemini_insights_structured = S.gemini_insights,
-    T.gemini_insights = NULL
+    T.gemini_insights = NULL,
+    T.gemini_profiled_at = CURRENT_TIMESTAMP(),
+    """ + _TYPED_COLUMN_ASSIGNMENTS + """
 """
 
 # SCRIPT 4: Bulk Update Manual Reviews
