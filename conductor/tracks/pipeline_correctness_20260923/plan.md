@@ -68,13 +68,13 @@ estimate attached.
 
 *Independent of Phase 0 — runs in parallel. Each task is individually shippable and revertible.*
 
-- [ ] Task: Stop the Gemini re-enrichment loop (D1)
-    - [ ] Sub-task: `ml_prediction.py` selects and tests `gemini_insights_structured`, not
+- [x] Task: Stop the Gemini re-enrichment loop (D1) — 3147fb0
+    - [x] Sub-task: `ml_prediction.py` selects and tests `gemini_insights_structured`, not
           `gemini_insights`, in both the targeted and the untargeted query branch.
-    - [ ] Sub-task: Regression test — a row with a populated profile but NULL `gemini_insights`
+    - [x] Sub-task: Regression test — a row with a populated profile but NULL `gemini_insights`
           (the production state) is excluded when `force_gemini` is false.
-    - [ ] Sub-task: Test that `force_gemini=True` still includes it.
-    - [ ] Sub-task: Test that the query selects the structured column.
+    - [x] Sub-task: Test that `force_gemini=True` still includes it.
+    - [x] Sub-task: Test that the query selects the structured column.
 - [ ] Task: Stop a Places miss from erasing coordinates (D5)
     - [ ] Sub-task: Remove `latitude`/`longitude` from the miss payload in `enrich_maps_data.py`.
     - [ ] Sub-task: Test that a miss leaves existing coordinates intact.
