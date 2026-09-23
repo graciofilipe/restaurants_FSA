@@ -543,7 +543,7 @@ visible in the stored `.result`. The 20-row pilot (~$0.15, reading `usageMetadat
 `full_response`) is still what collapses the range. **0 of the 8,501 are labelled**, so either
 sweep buys triage-queue coverage, not model quality. Needs an explicit go-ahead.
 
-## Phase 8: Honest Missing Data and Free Coordinates (D4, R4)
+## Phase 8: Honest Missing Data and Free Coordinates (D4, R4) [checkpoint: 4aa719e]
 
 - [x] Task: Missing location stops scoring as perfect — 0d02c8c
     - [x] Sub-task: `extract_outcode("")` stops returning `"SW16"`; return an explicit unknown. 0d02c8c
