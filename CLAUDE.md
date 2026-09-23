@@ -11,7 +11,7 @@ source .venv/bin/activate && uv sync    # setup / re-sync deps from pyproject.to
 
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest app/ scripts/                    # 241 offline unit tests — this is what Cloud Build runs
+pytest app/ scripts/                    # 268 offline unit tests — this is what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest tests/                           # NOT offline-safe (see below)
 
@@ -61,8 +61,11 @@ a one-day expiry as a backstop).
    FHRSID against the IDs already in the master table (`load_fhrsids_from_bq`), appending only
    genuinely new rows with `first_seen`.
 2. **Maps enrichment** — `scripts/enrich_maps_data.py` hits Places `searchText` and MERGEs rating,
-   review count, price level, coordinates, and types back. A miss writes sentinel `-1` values so the
-   row is not retried forever.
+   review count, price level, coordinates, and types back. Every lookup stamps `maps_lookup_at` and
+   `maps_found`; a miss records `maps_found = FALSE` with a NULL rating, and the timestamp — not the
+   old `-1` sentinel — is what stops the row being retried forever. The same
+   `maps_lookup_at IS NULL` predicate gates enrichment in `ml_prediction.py` and
+   `train_bqml_model.py`; all three must agree or permanent misses get re-queried at cost.
 3. **Gemini profiling** — `execute_gemini_enrichment` in `bq_utils.py` runs three SQL steps
    (identify recents → `AI.GENERATE` → MERGE) using the templates in `scripts/bq_scripts.py`. The
    result lands in `gemini_insights_structured` as raw JSON; the legacy text column
@@ -87,20 +90,30 @@ a one-day expiry as a backstop).
 Both must stay on `gemini-3.8-flash` (or `gemini-3.1-pro`). Legacy model IDs are prohibited and
 `tests/test_model_upgrades.py` asserts this across agents, SQL, and eval configs.
 
-### The 6-pillar JSON contract spans four files
+### The 6-pillar contract has one definition
 
-The pillar schema defined in the `bq_scripts.py` prompt is consumed by `parse_insight_row`
-(`app/core/data_processing.py`, for the UI), by `JSON_EXTRACT_SCALAR` feature extraction in *both*
-`scripts/train_bqml_model.py` and `app/services/ml_prediction.py`, and by `DISPLAY_COLUMNS` in
-`app/ui/st_app.py`. Changing the prompt's output shape means changing all four.
+`app/core/pillar_schema.py` is it. `PILLAR_FIELDS` — 14 `PillarField`s, each with a `column`, a
+`bq_type`, the JSON `keys`, and an `is_feature` flag — generates the BigQuery columns, the
+extraction SQL, the Python parser, the model feature list, and the conformance check. Adding or
+renaming a field is a one-line change there. The paths are **nested**
+(`"1_value_and_volume": {"rating": …}`), matching what the prompt emits; only `$.match_score` is
+genuinely top-level.
 
-Note a live inconsistency: the prompt emits **nested** objects (`"1_value_and_volume": {"rating": …}`)
-and `parse_insight_row` reads them that way, but the training/prediction SQL reads **flattened** paths
-(`'$.1_value_and_volume_rating'`), which fall through to the `IFNULL(…, 0)` default. Only
-`$.match_score` is a genuine top-level key. Verify against real rows before relying on those features.
+`app/core/model_features.py` builds on it to define the model's input: `feature_select_list()` and
+`feature_source_clause()` are called by *both* `build_training_select` (`train_bqml_model.py`) and
+`build_prediction_input_select` (`ml_prediction.py`), so train/serve parity is structural rather
+than a convention — `app/core/test_model_features.py::TestTrainServeParity` fails if the two
+generated strings ever differ. Missing scores stay NULL; there is no `IFNULL(…, 0)`, because a
+constant-zero feature is indistinguishable from an uninformative one.
 
-**Train/serve parity:** the `SELECT` list in `train_bqml_model.py` and the `ML.PREDICT` subquery in
-`ml_prediction.py` are duplicated by hand and must be edited together, or predictions silently skew.
+**Changing the feature list changes the model's input schema**, so `ML.PREDICT` against a model
+trained on the old one fails. Retrain in the same change.
+
+Two readers are not yet generated from the schema and still need hand-editing: `parse_insight_row`
+(`app/core/data_processing.py`) and `DISPLAY_COLUMNS` (`app/ui/st_app.py`).
+
+The profiler's prompt concatenates row fields directly. **Every field must be `COALESCE`d** — a NULL
+anywhere makes the whole prompt NULL and `AI.GENERATE` returns nothing, silently (D-16).
 
 ### Prioritization heuristic
 

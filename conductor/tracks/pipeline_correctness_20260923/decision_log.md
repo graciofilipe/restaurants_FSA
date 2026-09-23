@@ -622,6 +622,81 @@ the shared predicate was deliberate. The alternative — computing the preview f
 is precisely the shape of D1. The rehearsal run is what makes the number visible before production,
 and it reported 1,263, matching the independent measurement exactly.
 
+---
+
+## D-15 — Phase 6 cannot be merged on its own: the fix changes the model's input schema
+
+**Date:** 2026-09-23 · **Phase:** 6 · **Status:** decided, retrain pending approval
+
+The plan's merge rule is that every phase boundary is green *and independently deployable*, because
+`main` auto-deploys to Cloud Run. Phase 6 is the first phase where that does not hold, and the
+reason is worth recording because it is a property of the repair, not an oversight.
+
+Fixing D2 means the `ML.PREDICT` subquery stops emitting `score_1_value_and_volume_rating` and
+starts emitting `pillar_value_rating`. `ML.FEATURE_INFO` on the live
+`restaurant_preference_model` lists **19 input features** under the old names. BQML requires the
+prediction input to carry every column the model was trained on, so the moment this lands,
+"Generate Predictions" fails outright.
+
+Worth being precise that **failing is the good outcome here**. Had the aliases been left unchanged
+and only the paths fixed, the model would have kept predicting — from features it was trained to
+see as constant 0 and would now receive as real values between 1 and 10. That is silent train/serve
+skew producing plausible-looking numbers, and it is exactly the failure mode the D3 parity test was
+written to prevent. The alias change converts it into a loud one.
+
+So the retrain Phase 9 schedules has to happen **before** Phase 6 merges, not after. Phase 9 keeps
+the *evaluation* — the harness re-run, the A-vs-C `in_scope` comparison, the keep-or-retire verdict.
+Only the `CREATE OR REPLACE MODEL` moves forward. This also matches the stated cost principle:
+training is cheap, and it is the Gemini and Places generation that is not.
+
+Measured against production before committing to it — training population 370 rows; the JIT
+pre-flight would fire **0 Places lookups, 0 postcode lookups, 7 Gemini calls**, those 7 being
+labelled rows that have never been profiled. ≈ $0.02 in tokens, grounding inside the free monthly
+allowance, BQML training over a 5.7 MB scan. **Under £0.05.** 363 of the 370 already carry every
+typed pillar column, so the retrain is reading real features on day one rather than waiting for a
+sweep.
+
+There is an unavoidable few-minute window in either order — retrain first and the deployed old code
+sends old aliases to a new-schema model; merge first and the new code hits the old model. Retraining
+first is the better half: the failure is confined to a button the user presses by hand, not to the
+weekly cron.
+
+---
+
+## D-16 — A NULL postcode silently voided the profile prompt (new defect)
+
+**Date:** 2026-09-23 · **Phase:** 6 · **Status:** fixed in code (e6ad77c); data repair pending
+
+Found by running the retrain, not by reading the code. The JIT pre-flight reported 7 labelled rows
+missing a profile; all 7 came back unparseable, and all 7 have `postcode IS NULL`.
+
+`SCRIPT_GENERATE_INSIGHTS` concatenated `postcode` straight into the prompt while `COALESCE`-ing the
+three address lines on either side of it. Concatenating NULL in BigQuery yields NULL, so the whole
+prompt was NULL and `AI.GENERATE` returned nothing — no error, no cost signal, just a row that stays
+unprofiled. Every prediction run and every training run then retried it, because the JIT guard reads
+`gemini_insights_structured IS NULL` and that is exactly what a failed generation leaves behind.
+
+**126 unprofiled rows have a NULL postcode**, 7 of them labelled (two rated 5 and 7 — among the more
+informative labels the model has). They are not a random 126: `enrich_maps_data.py` searches Places
+by `BusinessName + PostCode`, so a missing postcode degrades that lookup too. The inspected names
+are chains and concessions — `Costa Coffee Drive Thru`, `UNIT R13 VICTORIA PLACE`, `Dub Pan` — the
+FSA rows least likely to carry a clean postcode.
+
+`businessname` had the identical exposure and now gets the identical guard, though nothing currently
+violates it.
+
+**A defect the dual-write introduced, in the same run.** The merge stamped
+`gemini_profiled_at = CURRENT_TIMESTAMP()` unconditionally on match, so those 7 rows are now marked
+profiled while holding no profile. That state is worse than either end of it: a staleness sweep
+reads them as fresh and skips them, while the JIT guard reads them as missing and retries them. The
+merge now carries `WHEN MATCHED AND S.gemini_insights IS NOT NULL`, so a failed generation leaves
+the row untouched. The 7 already-stamped rows need a one-line `UPDATE` to clear.
+
+**The Phase 3 conformance check is what surfaced this**, logging
+`7 generated, non-conforming paths -- ... unparseable=7` at the moment it happened. It was built to
+detect schema drift and caught a prompt bug instead, which is the argument for having built it.
+D-12 recorded the decision to keep it advisory rather than blocking; had it been blocking, this run
+would have aborted before training and the finding would have looked like an outage.
 
 ---
 
@@ -669,6 +744,14 @@ and it reported 1,263, matching the independent measurement exactly.
 | `fsa_master` data fingerprint (27 pre-existing columns) | `rows=11268 labels=411 hash=7075448033881697774` | 2026-09-23 |
 | Snapshot fingerprint, pre-migration | **identical to production** — byte-for-byte restore point | 2026-09-23 |
 | Columns after Phase 4 (both tables) | **44** (27 + 17), all nullable, types verified | 2026-09-23 |
+| Model input features, before / after the Phase 6 retrain | **19 → 21** | 2026-09-23 |
+| `pillar_value_rating` range in the trained model | **constant 0 → 0–8** | 2026-09-23 |
+| `pillar_community_score` / `pillar_linguistic_score` / `pillar_culinary_score` | constant 0 → **0–6 / 0–7 / 0–6** | 2026-09-23 |
+| `pillar_geo_specificity` in the trained model | constant 0 → **3 categories** | 2026-09-23 |
+| `pillar_is_sit_down` / `pillar_establishment_type` | not read → **2 / 3 categories** | 2026-09-23 |
+| `maps_rating` as the model sees it | min −1.0, 0 nulls → **min 2.1, 166 nulls** | 2026-09-23 |
+| Retrain training population / unprofiled | 370 / **7** (all NULL postcode — D-16) | 2026-09-23 |
+| Unprofiled rows with a NULL postcode | **126** of 8,494; 7 labelled | 2026-09-23 |
 
 ## Cost ledger
 
@@ -683,9 +766,19 @@ and it reported 1,263, matching the independent measurement exactly.
 | Phase 5 `in_scope` re-derivation | one `UPDATE` over 1,263 rows | **< £0.01** — spent |
 | Phase 5 rehearsal copy | 11,268 rows, 7-day expiry | **< £0.01** — spent |
 | Places re-query of 243 permanent misses | avoided by the guard move | **~£6 avoided, recurring** |
-| Phase 9 retrain | `BOOSTED_TREE_REGRESSOR` over 404 rows | **~£0.05** |
+| Retrain, pulled forward into Phase 6 | 370 rows; JIT fires 7 Gemini calls, 0 Places, 0 postcodes | **< £0.05** — pending approval |
 | **Legacy re-profile — withdrawn** | would have been 2,767 × `AI.GENERATE` | **avoided** |
-| Phase 7 first stale sweep | 1,116 V1-only rows × grounded `AI.GENERATE` | **to be estimated and approved separately** |
+| Orphaned scratch tables dropped | `recents`, `genairesults_temp`, 2 × `temp_update_reviews_*` | **£0** — done, 2026-09-23 |
+| Phase 7 sweep, tokens | 1,116 × `gemini-3.8-flash` @ $0.75/$3.75 per 1M | **$7–$24** (£6–£19) |
+| Phase 7 sweep, grounding | 1,116+ searches; 5,000/month free across Gemini 3.x, then $14/1,000 | **$0–$35** (£0–£28) |
+| Phase 7 sweep, Places for the 975 without Maps | incurred anyway on first prediction, not by the sweep | **~$31** (£25), separate |
+| **Phase 7 sweep, total** | | **$7–$59 / £6–£47, pending a measured pilot** |
 
 The only line item that needs its own approval is the Phase 7 sweep; everything up to Phase 9 is
 pennies because the backfill turned out to be pure SQL.
+
+The Phase 7 range is wide for two reasons that no amount of arithmetic will close: grounded calls
+inject retrieved search results into the input, and `gemini-3.8-flash` bills thinking tokens as
+output. Both are unobservable from the stored `.result`. `AI.GENERATE` returns `usageMetadata` in
+its `full_response` field, which the current script discards -- a 20-row pilot costing roughly $0.15
+would replace the range with a measured per-call figure before anything is committed.

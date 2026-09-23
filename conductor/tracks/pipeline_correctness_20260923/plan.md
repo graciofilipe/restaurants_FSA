@@ -378,19 +378,88 @@ change, and rehearsing on a throwaway rather than the restore point.
 
 *Writers populate both representations so the deployed app keeps working mid-migration.*
 
-- [ ] Task: Populate the new columns going forward
-    - [ ] Sub-task: `SCRIPT_MERGE_INSIGHTS` writes the typed columns and
+- [x] Task: Populate the new columns going forward — 7d1bdd2
+    - [x] Sub-task: `SCRIPT_MERGE_INSIGHTS` writes the typed columns and
           `gemini_profiled_at = CURRENT_TIMESTAMP()`, keeping `gemini_insights_structured` as the
-          raw audit trail.
+          raw audit trail. **All 14 assignments generated from `PILLAR_FIELDS`, extracting from
+          `S.gemini_insights` (the scratch table) — reading `T` would pick up the previous run's
+          profile, since `T`'s own column is not written until this same statement.**
     - [x] Sub-task: The Places merge writes `maps_found` / `maps_lookup_at` and stops writing `-1`.
           Pulled forward into Phase 5 — 4cf568b.
     - [x] Sub-task: Switch the "needs Maps" guard from `maps_rating IS NULL` to
           `maps_lookup_at IS NULL`, preserving do-not-retry. Pulled forward into Phase 5 — 4cf568b.
           Three sites, not one; see the Phase 5 deviation note.
-- [ ] Task: Single source of truth for model features (D3)
-    - [ ] Sub-task: Build both the training `SELECT` and the `ML.PREDICT` subquery from the Phase 3
-          canonical schema.
-    - [ ] Sub-task: Test that fails if the two feature sets diverge.
+- [x] Task: Single source of truth for model features (D3) — ba61e86
+    - [x] Sub-task: Build both the training `SELECT` and the `ML.PREDICT` subquery from the Phase 3
+          canonical schema. **`app/core/model_features.py`; `feature_select_list()` plus
+          `feature_source_clause()`, the latter not asked for — see the deviation below.**
+    - [x] Sub-task: Test that fails if the two feature sets diverge. **`TestTrainServeParity` in
+          `app/core/test_model_features.py`: the two generated strings must contain the identical
+          fragment, and neither may carry a hand-written `JSON_EXTRACT_SCALAR`.**
+
+- *Deviation:* the `FROM`/`LEFT JOIN` is shared as well as the `SELECT` list. The demographics join
+  normalises the postcode (`REPLACE(UPPER(...), ' ', '')`); two copies of that rule could diverge
+  and skew `lsoa`/`msoa`/`imd_rank` on exactly the rows whose postcodes are formatted
+  inconsistently — the same silent-skew failure the D3 task exists to close, one line further down.
+- *Deviation:* **the feature set grew from 6 to 8, and the `IFNULL(..., 0)` defaults are gone.**
+  Neither was spelled out in the task, but both follow from "build it from the canonical schema":
+  `is_feature` marks eight fields, and `pillar_geo_specificity` / `pillar_establishment_type` are
+  enums the old SQL cast to INT64 while `pillar_is_sit_down` was not read at all. Dropping the
+  defaults is R6 — an always-zero feature is indistinguishable from an uninformative one, which is
+  precisely how D2 survived.
+- *Deviation:* Phase 6 is **not independently deployable**, which the plan's merge rule assumes
+  every phase boundary is. The live model's input schema is the old alias set
+  (`score_1_value_and_volume_rating` … confirmed via `ML.FEATURE_INFO`: 19 features), so
+  `ML.PREDICT` fails against it the moment this lands. **The retrain that Phase 9 schedules has to
+  happen before this merges to `main`.** Priced below.
+- *Deviation:* `scripts/recon_pipeline_state.py`'s `PRODUCTION_FEATURE_PATHS` is renamed
+  `LEGACY_FLAT_FEATURE_PATHS`. Its two tests asserted that production reads those paths; they now
+  assert the generated SQL does *not*, which turns a Phase 0 measurement into a D2 regression guard.
+- *Known stale:* `tests/test_bqml_stress.py` still asserts `IFNULL(..., 0) → 0` against its own
+  inline copy of the old SQL. It never touched the real query (that is why D2 survived it), it is
+  mocked, and it is outside the CI set. Left for the Phase 12 reconciliation rather than edited
+  here, but it now documents a pattern production has stopped using.
+
+**Phase 6 checkpoint:** `pytest app/ scripts/` green at **266** tests (was 241; +16 in
+`test_model_features.py`, +7 in `test_bq_scripts.py`, net +2 rewritten in the recon tests). All
+edited files parse under `ast.parse(feature_version=(3,11))`. Three BigQuery **dry runs**, nothing
+written: `CREATE MODEL` 5.7 MB, the `ML.PREDICT` input subquery 5.8 MB, the dual-write `MERGE`
+11.7 MB. No Gemini call, no Places call, £0.
+
+**Retrain, measured against production before running it** — the training population is 370 rows,
+and the JIT pre-flight would fire **0 Places lookups, 0 postcode lookups, 7 Gemini calls** (the 7
+labelled rows that have never been profiled). At $0.75/1M in and $3.75/1M out that is ≈ $0.02, with
+grounding inside the 5,000/month free allowance; BQML training on 370 rows over a 5.7 MB scan is
+pennies. **Under £0.05 all in.** 363 of the 370 already carry every typed pillar.
+
+**Retrain executed, 2026-09-23 15:00–15:05 UTC** (approved). `ML.FEATURE_INFO` on the replaced model
+reports **21 input features, up from 19**, and D2 is visible as repaired rather than merely fixed in
+source:
+
+| feature | before | after |
+|---|---|---|
+| `pillar_value_rating` | constant 0 | 0–8 |
+| `pillar_community_score` | constant 0 | 0–6 |
+| `pillar_linguistic_score` | constant 0 | 0–7 |
+| `pillar_culinary_score` | constant 0 | 0–6 |
+| `pillar_geo_specificity` | constant 0 | 3 categories |
+| `pillar_is_sit_down` | not read | 2 categories |
+| `pillar_establishment_type` | not read | 3 categories |
+| `maps_rating` | min −1.0, 0 nulls | min 2.1, 166 nulls |
+
+The last row is Phase 5 showing up in the model: the `-1` sentinel was a real value the tree could
+split on, and it is now an honest NULL.
+
+*Caution worth recording:* the first `ML.FEATURE_INFO` reading after the retrain returned the **old**
+19 features. BigQuery served it from the 24-hour result cache, because the identical query had been
+run before training. Any before/after measurement in this track must pass
+`use_query_cache=False` or it will confirm whatever was true beforehand.
+
+- *Deviation:* the retrain surfaced **D-16**, a new defect — a NULL postcode voided the profile
+  prompt, so 7 labelled rows could never be profiled and were retried by every run. 126 unprofiled
+  rows are affected. Fixed in e6ad77c along with a merge guard against recording a failed
+  generation as a profile. The 7 rows carrying a `gemini_profiled_at` with no profile need a
+  one-line `UPDATE` to clear — dry run shown, 11.7 MB, pending approval.
 
 ## Phase 7: Switch Readers, Stale-Aware Refresh (R1)
 

@@ -10,17 +10,20 @@ import re
 
 import pytest
 
+from app.core.pillar_schema import PILLAR_FIELDS, sql_json_object_regex
+from app.services.ml_prediction import build_prediction_input_select
 from scripts.recon_pipeline_state import (
     DEFAULT_BQ_PATH,
     FLAT_SIT_DOWN_PATH,
     JSON_UNWRAP_REGEX,
-    PRODUCTION_FEATURE_PATHS,
+    LEGACY_FLAT_FEATURE_PATHS,
     PROMPT_NESTED_PATHS,
     _format_cost,
     build_queries,
     fixture_query,
     snapshot_query,
 )
+from scripts.train_bqml_model import build_training_select
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -33,12 +36,29 @@ def _paths_in(relative_path):
     return _PATH_RE.findall((REPO_ROOT / relative_path).read_text())
 
 
-@pytest.mark.parametrize(
-    "source", ["scripts/train_bqml_model.py", "app/services/ml_prediction.py"]
-)
-def test_recon_measures_the_paths_production_actually_reads(source):
-    """The whole point of the D2 census. Drift here invalidates the finding."""
-    assert _paths_in(source) == PRODUCTION_FEATURE_PATHS
+PRODUCTION_QUERIES = {
+    'training': build_training_select('p', 'd', 'p.d.t'),
+    'prediction': build_prediction_input_select('p', 'd', 'p.d.t', "'1'"),
+}
+
+
+@pytest.mark.parametrize("name", PRODUCTION_QUERIES)
+def test_production_reads_the_canonical_paths(name):
+    """Phase 6 pointed both surfaces at the nested paths the recon census found
+    in the data. The generated SQL is checked, not the source text, because the
+    paths now live in the canonical schema rather than in either file."""
+    expected = [f.json_path for f in PILLAR_FIELDS if f.is_feature]
+    assert _PATH_RE.findall(PRODUCTION_QUERIES[name]) == expected
+
+
+@pytest.mark.parametrize("name", PRODUCTION_QUERIES)
+def test_the_flat_paths_that_caused_d2_are_gone(name):
+    """The regression guard. Five of these resolve on zero of 2,767 profiled
+    rows, and with the old IFNULL(..., 0) that was indistinguishable from a
+    feature the model had found uninformative."""
+    for path in LEGACY_FLAT_FEATURE_PATHS:
+        if path != '$.match_score':  # the one flat path that was always real
+            assert path not in PRODUCTION_QUERIES[name], path
 
 
 def test_recon_covers_the_path_the_in_scope_migration_gated_on():
@@ -47,12 +67,13 @@ def test_recon_covers_the_path_the_in_scope_migration_gated_on():
 
 
 def test_recon_unwraps_exactly_as_production_does():
-    """Production writes the regex inside a .format() template, so its braces are
-    doubled. Recon's copy is a plain string and must be the same regex once
-    that doubling is undone -- otherwise it parses a different substring."""
-    sql = (REPO_ROOT / "scripts/train_bqml_model.py").read_text()
-    template_regex = re.search(r"REGEXP_EXTRACT\([^,]+, (r'\(\?s\)[^']+')\)", sql).group(1)
-    assert template_regex.replace("{{", "{").replace("}}", "}") == JSON_UNWRAP_REGEX
+    """Recon's copy of the regex is a plain string; production's comes from the
+    canonical schema and is sometimes brace-doubled for `.format()`. They must
+    still be the same regex, or recon parses a different substring than the
+    pipeline it is measuring."""
+    assert JSON_UNWRAP_REGEX == sql_json_object_regex()
+    assert sql_json_object_regex(for_format_template=True).replace("{{", "{").replace(
+        "}}", "}") == JSON_UNWRAP_REGEX
 
 
 def test_every_query_unwraps_before_parsing():
@@ -97,9 +118,9 @@ def test_both_path_conventions_cover_the_same_six_pillars():
     def pillar_numbers(paths):
         return {p[2] for p in paths if p[2].isdigit()}
 
-    assert pillar_numbers(PRODUCTION_FEATURE_PATHS) == {'1', '2', '3', '4', '5'}
+    assert pillar_numbers(LEGACY_FLAT_FEATURE_PATHS) == {'1', '2', '3', '4', '5'}
     assert pillar_numbers(PROMPT_NESTED_PATHS) == {'1', '2', '3', '4', '5', '6'}
-    assert '$.match_score' in PRODUCTION_FEATURE_PATHS
+    assert '$.match_score' in LEGACY_FLAT_FEATURE_PATHS
     assert '$.match_score' in PROMPT_NESTED_PATHS
 
 
