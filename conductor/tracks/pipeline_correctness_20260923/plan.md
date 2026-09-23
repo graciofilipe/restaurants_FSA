@@ -458,8 +458,14 @@ run before training. Any before/after measurement in this track must pass
 - *Deviation:* the retrain surfaced **D-16**, a new defect — a NULL postcode voided the profile
   prompt, so 7 labelled rows could never be profiled and were retried by every run. 126 unprofiled
   rows are affected. Fixed in e6ad77c along with a merge guard against recording a failed
-  generation as a profile. The 7 rows carrying a `gemini_profiled_at` with no profile need a
-  one-line `UPDATE` to clear — dry run shown, 11.7 MB, pending approval.
+  generation as a profile. The 7 orphaned `gemini_profiled_at` stamps were cleared (7 rows, £0);
+  afterwards `profiled` = `have_json` = 2,767, stamped-without-profile = 0, labels 411.
+
+**Phase 6 shipped.** Merged as 18f93a3; Cloud Build `9ca20503` SUCCESS; Cloud Run revision
+`restaurants-fsa-00223-hxc` live. `ML.PREDICT` verified end-to-end against the retrained model on 5
+rows (read-only, no MERGE): predictions 1.305–2.493, no schema error. CLAUDE.md's "live
+inconsistency" and train/serve-parity warnings are deleted — both were true when written and are
+not now.
 
 ## Phase 7: Switch Readers, Stale-Aware Refresh (R1)
 
