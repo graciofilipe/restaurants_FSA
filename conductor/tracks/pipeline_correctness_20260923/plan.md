@@ -38,31 +38,51 @@ estimate attached.
 
 *Gate: nothing from Phase 3 on is designed until these numbers exist.*
 
-- [ ] Task: Establish the track workspace
-    - [ ] Sub-task: Create branch `track/pipeline-correctness`.
-    - [ ] Sub-task: Create `decision_log.md` in this track folder.
-- [ ] Task: Snapshot the master table
-    - [ ] Sub-task: Copy `fsa_master` → `fsa_master_backup_20260923`.
-    - [ ] Sub-task: Verify row count and `COUNT(user_rating)` match the source.
-    - [ ] Sub-task: Record both in `decision_log.md` as the restore reference.
-- [ ] Task: Write and run `scripts/recon_pipeline_state.py` (read-only, `--dry-run` default)
-    - [ ] Sub-task: Full top-level key census of `gemini_insights_structured` via `JSON_KEYS` +
+- [x] Task: Establish the track workspace — d19d204
+    - [x] Sub-task: Create branch `track/pipeline-correctness`.
+    - [x] Sub-task: Create `decision_log.md` in this track folder.
+- [x] Task: Snapshot the master table — 0a00240
+    - [x] Sub-task: Copy `fsa_master` → `fsa_master_backup_20260923`.
+    - [x] Sub-task: Verify row count and `COUNT(user_rating)` match the source. **11,268 / 411,
+          matching exactly.**
+    - [x] Sub-task: Record both in `decision_log.md` as the restore reference.
+    - *Deviation:* the copy uses `CREATE TABLE IF NOT EXISTS`, not `CREATE OR REPLACE`. Re-running
+      the script after a later phase has modified `fsa_master` would otherwise overwrite the restore
+      point with the very state it exists to protect.
+- [x] Task: Write and run `scripts/recon_pipeline_state.py` (read-only, `--dry-run` default) — 0a00240
+    - [x] Sub-task: Full top-level key census of `gemini_insights_structured` via `JSON_KEYS` +
           `UNNEST`, then one level deeper per pillar object. This settles which of the four key
           conventions is real **and** whether the shape is stable across rows (D14).
-    - [ ] Sub-task: `COUNT(*) WHERE gemini_insights IS NOT NULL` — expected 0, confirming D1.
-    - [ ] Sub-task: Distinct-value counts for each flat path the training/prediction SQL reads,
-          confirming D2.
-    - [ ] Sub-task: Does `'$.6_establishment_integrity_is_sit_down_restaurant'` ever resolve
+          **Convention A, stable: 2,766/2,767 rows share one identical key set.**
+    - [x] Sub-task: `COUNT(*) WHERE gemini_insights IS NOT NULL` — expected 0, confirming D1.
+          **It is 1,116, not 0** — see D-08; the defect is worse than the plan assumed, not milder.
+    - [x] Sub-task: Distinct-value counts for each flat path the training/prediction SQL reads,
+          confirming D2. **All five resolve on zero rows; only `$.match_score` resolves.**
+    - [x] Sub-task: Does `'$.6_establishment_integrity_is_sit_down_restaurant'` ever resolve
           non-NULL? If not, count the `in_scope` rows assigned by `maps_types` alone (D13).
-    - [ ] Sub-task: Sizing — total rows, profiled rows, `maps_rating = -1` count, rows with lat/lon,
-          exact `COUNT(user_rating)`.
-    - [ ] Sub-task: Capture real payloads to disk as test fixtures.
-- [ ] Task: Reconcile the specification against the evidence
-    - [ ] Sub-task: Record all numbers in `decision_log.md`.
-    - [ ] Sub-task: Confirm or replace the provisional §4 column table.
-- [ ] Task: Draft the cost ledger
-    - [ ] Sub-task: Backfill is pure SQL over existing JSON — confirm ≈ free.
-    - [ ] Sub-task: Price every candidate re-profile sweep as rows × `AI.GENERATE` unit cost, in £.
+          **Never resolves; 1,476 of 2,766 profiled rows contradict their own profile.**
+    - [x] Sub-task: Sizing — total rows, profiled rows, `maps_rating = -1` count, rows with lat/lon,
+          exact `COUNT(user_rating)`. **11,268 / 2,767 / 243 / 2,291 / 411.**
+    - [x] Sub-task: Capture real payloads to disk as test fixtures.
+          **8 in `tests/fixtures/gemini_profiles/`.**
+    - *Deviation:* implemented as an opt-in `--execute` rather than an opt-out `--dry-run`. Same
+      behaviour, but it reads as a default instead of a flag you must remember. `JSON_KEYS(json, 2)`
+      returns both levels at once, so the depth-2 census is one query rather than seven.
+- [x] Task: Reconcile the specification against the evidence — 0a00240
+    - [x] Sub-task: Record all numbers in `decision_log.md`.
+    - [x] Sub-task: Confirm or replace the provisional §4 column table. **Confirmed unchanged** —
+          all 17 source paths resolve on all 2,766 rows; the PROVISIONAL banner is removed.
+- [x] Task: Draft the cost ledger — 0a00240
+    - [x] Sub-task: Backfill is pure SQL over existing JSON — confirm ≈ free. **Confirmed, < £0.01.**
+    - [x] Sub-task: Price every candidate re-profile sweep as rows × `AI.GENERATE` unit cost, in £.
+          **The legacy re-profile is withdrawn entirely** (the existing JSON already holds every
+          field the typed columns need). The only sweep left needing approval is Phase 7's, over the
+          1,116 V1-only rows Phase 1's D1 fix newly exposes.
+
+**Exit met.** Observed shape and its stability documented; spec §4 confirmed; snapshot verified at
+11,268 / 411; cost ledger in `decision_log.md`. Two findings change later phases: Phase 3 is
+downscoped to a conformance check, and Phase 5 gains a D13 `in_scope` re-derivation. Both recorded
+in D-08.
 
 ## Phase 1: Stop the Bleeding (no schema change, no recon dependency) [checkpoint: 59439e3]
 
@@ -148,26 +168,34 @@ estimate attached.
 
 ## Phase 3: Constrain the Profiler's Output Shape (D14)
 
-*Design the columns against a guaranteed shape, not an observed one. Supersedes the original
-spec §6 exclusion on prompt/model-params changes.*
+> **Downscoped by the Phase 0 recon — see D-08.** The drift that justified this phase came from the
+> ADK recordings, not the profiler. The profiler is at 2,766/2,766 conformance on every required
+> key, so neither the two-step normaliser nor dropping `googleSearch` is warranted: both would spend
+> real money and real grounding quality to fix something that is not currently broken. What remains
+> is making the shape *checked* rather than merely observed, so a future model revision surfaces as
+> a failure instead of five more silent zeros.
 
-- [ ] Task: Choose the mechanism and get approval
-    - [ ] Sub-task: Present the tradeoff with costs. `tools: [{"googleSearch": {}}]` is enabled and
-          grounded search is generally incompatible with constrained decoding, so `responseSchema`
-          is not a drop-in addition.
-    - [ ] Sub-task: Recommended — two-step: keep the grounded call, then a cheap *ungrounded*
-          `AI.GENERATE` with `responseSchema` normalising the result into the canonical shape.
-          Costs one extra call per profile but preserves the grounding the prompt depends on.
-    - [ ] Sub-task: Alternative — drop `googleSearch` for direct constrained decoding. Cheaper, but
-          removes grounding; the Phase 2 harness must quantify the regression before accepting it.
+*Define the columns against a schema that exists in one place, and detect drift rather than absorb
+it. The original spec §6 exclusion on prompt/model-params changes is no longer being superseded —
+no prompt or model-params change is now planned.*
+
+- [x] Task: Choose the mechanism and get approval — decided on the recon evidence, D-08
+    - [x] Sub-task: Two-step ungrounded normaliser — **rejected**: one extra `AI.GENERATE` per
+          profile to normalise output that already conforms.
+    - [x] Sub-task: Drop `googleSearch` for direct constrained decoding — **rejected**: trades the
+          grounding the "Culinary Anthropologist" prompt depends on for the same non-benefit.
+    - [x] Sub-task: Detect-not-prevent — **chosen**. Zero marginal cost, and it is the part that was
+          actually missing: nothing in the repo would have told us the paths were dead.
 - [ ] Task: Define the canonical pillar schema once in code
-    - [ ] Sub-task: Single source of truth for the response schema, the BigQuery columns, and the
-          extraction paths.
+    - [ ] Sub-task: Single source of truth for the BigQuery columns, the extraction paths, and the
+          conformance check. Spec §4 is the confirmed content.
 - [ ] Task: Validate conformance
-    - [ ] Sub-task: Run a small costed-and-approved sample; confirm 100% conformance.
-    - [ ] Sub-task: Contract test running the real extraction against the Phase 0 fixtures — the
-          current tests provably cannot catch this class of bug.
-    - [ ] Sub-task: Record conformance in `decision_log.md`.
+    - [ ] Sub-task: Contract test running the real extraction against the Phase 0 fixtures in
+          `tests/fixtures/gemini_profiles/` — the current tests provably cannot catch this class of
+          bug, which is how D2 survived. Include the one unparseable payload as a negative case.
+    - [ ] Sub-task: Conformance check at merge time: a profile missing a required path is counted
+          and logged, not silently merged as zeros.
+    - [ ] Sub-task: Record the check's first production reading in `decision_log.md`.
 
 ## Phase 4: Expand — Additive Schema
 
@@ -188,15 +216,22 @@ spec §6 exclusion on prompt/model-params changes.*
 
 ## Phase 5: Backfill and Validate
 
-*Legacy rows hold the old shape, new rows the canonical one. The backfill bridges both.*
+> **Simplified by the Phase 0 recon — see D-08.** There is no old shape and no new shape: every one
+> of the 2,767 profiled rows already carries all 17 fields under the same nested paths. The backfill
+> is a straight extraction with no alias handling, and no legacy row needs re-profiling.
 
 - [ ] Task: Write `scripts/backfill_pillar_columns.py`
-    - [ ] Sub-task: Populate typed columns from `gemini_insights_structured`, `COALESCE`-ing across
-          every alias the Phase 0 census actually observed.
+    - [ ] Sub-task: Populate the typed columns from `gemini_insights_structured` using the spec §4
+          nested paths directly. **No alias `COALESCE`** — the census found no alternate spellings
+          of any path the schema reads.
+    - [ ] Sub-task: Handle the 1 unparseable payload and the 22 markdown-fenced ones; the
+          `REGEXP_EXTRACT` unwrap covers the fences, the unparseable row must land as NULL rather
+          than failing the statement.
     - [ ] Sub-task: `--dry-run` reporting affected rows and per-column non-null tallies.
-- [ ] Task: Decide the legacy-row strategy
-    - [ ] Sub-task: Present, with £ figures, whether legacy rows are re-profiled into the canonical
-          shape or left to alias-extraction. Await approval before running either.
+          Expect 2,766 non-null for every pillar column.
+- [x] Task: Decide the legacy-row strategy — **withdrawn**, D-08
+    - [x] Sub-task: Re-profiling legacy rows would cost a full 2,767-row Gemini sweep to produce
+          fields the stored JSON already contains. Not run, not offered.
 - [ ] Task: Backfill the timestamps
     - [ ] Sub-task: `gemini_profiled_at` ← `CURRENT_TIMESTAMP()` for rows that already have a
           profile, following `scripts/migrate_predicted_at.py`. Existing profiles count as fresh, so
@@ -208,9 +243,13 @@ spec §6 exclusion on prompt/model-params changes.*
     - [ ] Sub-task: The timestamp must take over the do-not-retry role `-1` plays in
           `enrich_maps_data.py`, or every run re-queries Places for permanent misses.
     - [ ] Sub-task: Verify `COUNT(*) WHERE maps_rating = -1` is zero afterwards.
-- [ ] Task: Re-derive `in_scope` if recon showed the triage path never resolved (D13)
-    - [ ] Sub-task: Derive from the now-typed `pillar_is_sit_down` for affected rows.
-    - [ ] Sub-task: Dry-run and diff count first — `in_scope` governs what gets profiled at all.
+- [ ] Task: Re-derive `in_scope` — recon confirmed the triage path never resolved (D13)
+    - [ ] Sub-task: Derive from the now-typed `pillar_is_sit_down` for the affected rows. The census
+          measured **1,476 disagreements** out of 2,766 profiled rows: 1,458 marked in-scope that
+          the profile calls not-sit-down, and 18 the other way.
+    - [ ] Sub-task: Dry-run and diff count first — `in_scope` governs what gets profiled at all, and
+          this moves ~1,458 rows *out* of scope, which is a large change to future Gemini spend.
+    - [ ] Sub-task: Leave the 8,501 never-profiled rows alone; there is nothing to derive from.
 - [ ] Task: Validate the backfill
     - [ ] Sub-task: Every pillar column has more than one distinct value.
     - [ ] Sub-task: Spot-check a sample against the raw JSON.
