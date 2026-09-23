@@ -1,0 +1,35 @@
+D6 -- cron full-table scan.
+
+Defect: app/cron/fetch_weekly.py:87 called load_master_data(..., load_all_data_from_bq),
+which ran 'SELECT * FROM fsa_master'. The only consumer,
+process_and_update_master_data, used it solely to build a set of FHRSID strings
+(data_processing.py:71-79). Every other column -- including gemini_insights_structured --
+was scanned, billed and discarded on every weekly run, for every configured coordinate.
+
+Fix: new load_fhrsids_from_bq in bq_utils returning Set[str] from 'SELECT fhrsid'.
+
+Deviations from the plan text, both deliberate:
+
+1. The plan said 'returning a set' but did not say what receives it.
+   process_and_update_master_data guards with isinstance(est, dict), so passing a
+   set of strings straight in would have silently produced an empty existing_ids
+   and marked every fetched restaurant as new -- a full duplicate ingest. The
+   function now reads bare IDs as well as rows, covered by
+   test_accepts_a_bare_set_of_existing_fhrsids.
+
+2. The new loader raises BigQueryExecutionError rather than returning an empty
+   set. Returning [] on failure is the module-wide pattern that D9 (Phase 11)
+   addresses, but here the swallow has a specific consequence -- 'read failed'
+   and 'table is empty' produce opposite correct actions, and the cron's existing
+   try/except at fetch_weekly.py:89 already aborts the sync. Reproducing the
+   swallow to stay consistent, then fixing it in Phase 11, would have left a
+   duplicate-ingest path open in between.
+
+Also removed: load_all_data_from_bq (bq_utils) and load_master_data
+(data_processing), both callerless after the switch, plus their 10 tests. The
+plan authorised dropping the first; the second went with it as it existed only to
+wrap the first. Note load_master_data also injected manual_review='not reviewed'
+defaults on read -- dead weight, and manual_review is slated for removal in Phase 10.
+
+Verification: pytest app/ scripts/ -> 87 passed (97 minus the 10 dead tests).
+Red phase confirmed: ImportError on load_fhrsids_from_bq before implementation.
