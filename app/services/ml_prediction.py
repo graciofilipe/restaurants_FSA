@@ -3,6 +3,7 @@ from google.cloud import bigquery
 from typing import Tuple, List
 from scripts.enrich_maps_data import enrich_restaurants_by_fhrsid
 from app.core.model_features import feature_select_list, feature_source_clause
+from app.core.profile_freshness import needs_gemini_profile
 from app.services.bq_utils import execute_gemini_enrichment
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,8 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
         escaped_target_ids = [fid.replace("'", "''") for fid in target_fhrsids]
         target_ids_str = ", ".join([f"'{fid}'" for fid in escaped_target_ids])
         find_query = f'''
-            SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_insights_structured, d.postcode AS d_postcode
+            SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_profiled_at,
+                   m.gemini_insights_structured IS NOT NULL AS has_profile, d.postcode AS d_postcode
             FROM `{table_ref}` AS m
             LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
               ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
@@ -44,7 +46,8 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
         '''
     else:
         find_query = f'''
-            SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_insights_structured, d.postcode AS d_postcode
+            SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_profiled_at,
+                   m.gemini_insights_structured IS NOT NULL AS has_profile, d.postcode AS d_postcode
             FROM `{table_ref}` AS m
             LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
               ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
@@ -64,14 +67,16 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
             # would re-query 243 permanent misses on every run, at cost.
             maps_missing_fhrsids = [str(row.fhrsid) for row in rows if row.maps_lookup_at is None]
         
-        if force_gemini:
-            gemini_missing_fhrsids = fhrsids.copy()
-        else:
-            # gemini_insights is NULLed by every successful merge, so it can never
-            # indicate a cached profile. gemini_insights_structured is the V2 column
-            # that actually holds one.
-            gemini_missing_fhrsids = [str(row.fhrsid) for row in rows if row.gemini_insights_structured is None]
-            
+        # One predicate, shared with the UI's cost estimate: an estimate
+        # computed differently from the spend it predicts is D1. The query
+        # returns `has_profile` rather than the profile itself -- nothing here
+        # reads the JSON, and it is the largest column in the table.
+        gemini_missing_fhrsids = [
+            str(row.fhrsid) for row in rows
+            if needs_gemini_profile(row.has_profile, row.gemini_profiled_at, force=force_gemini)
+        ]
+        never_profiled = sum(1 for row in rows if not row.has_profile)
+
         postcodes_missing = [str(row.fhrsid) for row in rows if getattr(row, 'd_postcode', None) is None and getattr(row, 'postcode', None) is not None]
     except Exception as e:
         logger.error(f"Error finding target batch: {e}")
@@ -90,7 +95,12 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
 
     # Step 2b: Auto-enrichment Gemini Insights
     if gemini_missing_fhrsids:
-        logger.info(f"Running Gemini enrichment for {len(gemini_missing_fhrsids)} restaurants.")
+        # Split the count: a refresh of an existing profile is a cost decision,
+        # and it should be visible in the log that one happened.
+        refreshed = len(gemini_missing_fhrsids) - min(never_profiled, len(gemini_missing_fhrsids))
+        logger.info(
+            f"Running Gemini enrichment for {len(gemini_missing_fhrsids)} restaurants "
+            f"({never_profiled} never profiled, {refreshed} stale or forced).")
         try:
             execute_gemini_enrichment(project_id, dataset_id, table_id, fhrsids=gemini_missing_fhrsids)
         except Exception as e:

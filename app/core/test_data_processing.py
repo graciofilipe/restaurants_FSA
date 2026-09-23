@@ -385,29 +385,55 @@ if __name__ == '__main__':
 
 
 
-from app.core.data_processing import parse_insight_row
+from app.core.data_processing import enhance_dataframe_with_insights
+from app.core.pillar_schema import ALL_COLUMNS
 import math
 
-class TestParseInsightRow(unittest.TestCase):
-    def test_parse_insight_row_v1_text_success(self):
-        row = {'gemini_insights': 'Some text here FINAL VERDICT: ACCEPTED'}
-        result = parse_insight_row(row)
-        self.assertEqual(result['insight_summary'], 'Some text here FINAL VERDICT: ACCEPTED')
-        self.assertEqual(result['insight_verdict'], 'ACCEPTED')
-        self.assertEqual(result['insight_score'], 90)
 
-    def test_parse_insight_row_v1_text_nan_safe(self):
-        row = {'gemini_insights': float('nan')}
-        result = parse_insight_row(row)
-        # Should not crash and should return default values
-        self.assertEqual(result['insight_summary'], None)
-        self.assertEqual(result['insight_verdict'], 'PENDING')
-        self.assertEqual(result['insight_score'], None)
+class TestEnhanceDataframeWithInsights(unittest.TestCase):
+    """The pillars arrive from BigQuery as typed columns now.
 
-    def test_parse_insight_row_v1_text_empty_str(self):
-        row = {'gemini_insights': '   '}
-        result = parse_insight_row(row)
-        # Should not process empty strings
-        self.assertEqual(result['insight_summary'], None)
-        self.assertEqual(result['insight_verdict'], 'PENDING')
-        self.assertEqual(result['insight_score'], None)
+    This used to call `parse_insight_row` on every row of every Streamlit
+    rerun, each call running `json.loads` over the raw profile and rebuilding a
+    flat naming convention that existed nowhere else. The Phase 5 backfill and
+    the Phase 6 dual-write made that work redundant; the columns are already
+    there and already typed.
+    """
+
+    def test_the_typed_columns_pass_through_untouched(self):
+        df = pd.DataFrame([{'fhrsid': '1', 'match_score': 88, 'pillar_value_rating': 7,
+                            'pillar_geo_specificity': 'HYPER_REGIONAL'}])
+        out = enhance_dataframe_with_insights(df)
+        self.assertEqual(out.loc[0, 'match_score'], 88)
+        self.assertEqual(out.loc[0, 'pillar_value_rating'], 7)
+        self.assertEqual(out.loc[0, 'pillar_geo_specificity'], 'HYPER_REGIONAL')
+
+    def test_every_pillar_column_exists_afterwards(self):
+        """`DISPLAY_COLUMNS` names all fourteen; a frame that lacks one would
+        leave the grid ordering a column that is not there."""
+        out = enhance_dataframe_with_insights(pd.DataFrame([{'fhrsid': '1'}]))
+        for column in ALL_COLUMNS:
+            self.assertIn(column, out.columns)
+
+    def test_a_missing_column_reads_as_missing_not_zero(self):
+        out = enhance_dataframe_with_insights(pd.DataFrame([{'fhrsid': '1'}]))
+        self.assertTrue(pd.isna(out.loc[0, 'match_score']))
+
+    def test_the_raw_json_is_no_longer_parsed(self):
+        """The blob stays as the audit trail, but nothing reads it per row. A
+        profile whose typed columns were never backfilled stays empty rather
+        than being re-derived on the fly."""
+        df = pd.DataFrame([{'fhrsid': '1',
+                            'gemini_insights_structured': '{"match_score": 91}'}])
+        out = enhance_dataframe_with_insights(df)
+        self.assertTrue(pd.isna(out.loc[0, 'match_score']))
+        self.assertEqual(out.loc[0, 'gemini_insights_structured'], '{"match_score": 91}')
+
+    def test_an_empty_frame_is_returned_unchanged(self):
+        empty = pd.DataFrame()
+        self.assertTrue(enhance_dataframe_with_insights(empty).empty)
+
+    def test_it_does_not_mutate_the_frame_it_was_given(self):
+        df = pd.DataFrame([{'fhrsid': '1'}])
+        enhance_dataframe_with_insights(df)
+        self.assertEqual(list(df.columns), ['fhrsid'])
