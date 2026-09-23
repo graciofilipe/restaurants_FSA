@@ -563,7 +563,9 @@ sweep buys triage-queue coverage, not model quality. Needs an explicit go-ahead.
 - [x] Task: Staleness reads the profile stamp, not the JSON blob (carried from Phase 7) — 0d02c8c
     - [x] Sub-task: Switch the component to `gemini_profiled_at`. 0d02c8c
     - [x] Sub-task: Measure the ordering change on the live table before keeping it. 0d02c8c
-- [ ] Task: Conductor — User Manual Verification 'Honest Missing Data' (Protocol in workflow.md)
+- [x] Task: Conductor — User Manual Verification 'Honest Missing Data' (Protocol in workflow.md)
+    - Verification plan presented; the user chose to verify against the deployed app rather than a
+      local Streamlit run, so the merge went first and the eyeball happens on Cloud Run.
 
 - *Deviation:* **D4's headline turned out to be latent, not live.** `extract_outcode("")` really does
   return the anchor's own outcode, and that really would score a blank postcode as 0 km. No row
