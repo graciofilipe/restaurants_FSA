@@ -905,6 +905,22 @@ visible before the write rather than after it. 32 of the cleared rows carry a hu
 they lose a displayed prediction from a retired model and are recoverable from
 `fsa_master_backup_20260923`.
 
+**Executed 2026-09-23 with explicit user approval: 1,065 cleared**, row count and label count
+unchanged. The first `--execute` attempt was refused by the sandbox's auto-mode classifier, which
+read the bulk `UPDATE` as a mass delete; nothing was written in the interim.
+
+### What the empty column does to the queue, until it is refilled
+
+With no predictions anywhere, staleness is **constant 100 on all 11,268 rows**. The component still
+computes; it just no longer discriminates, so the queue falls back to proximity, the Maps quality
+prior and scope confidence. That temporarily *inverts* the Phase 8 result — unprofiled rows in the
+top 25 go 4 → 0 — because the Maps prior now breaks every tie and a row nobody has looked up on
+Maps has no prior to offer. Nothing is wrong with either number; they are answers to different
+questions, and the second one is what "nothing here has been scored" actually looks like.
+
+The gradient comes back as soon as rows are re-scored. 1,022 of the cleared rows already hold a
+Gemini profile and a Maps lookup, so re-scoring them runs `ML.PREDICT` and nothing else.
+
 **Related.** [D-19] is the verdict that makes the sweep necessary; [D-15] is the retrain that made
 every one of these predictions stale.
 
@@ -991,6 +1007,9 @@ every one of these predictions stale.
 | Mean true rating of top-5 / top-10, `match_score` | **6.60 / 6.10** (oracle 7.00 / 6.70; overall 2.30) | 2026-09-23 |
 | Predictions predating the Phase 6 retrain | **1,065 of 1,065**; 0 current | 2026-09-23 |
 | Stale predictions profiled / unprofiled / labelled | 1,022 / **43** / 32 | 2026-09-23 |
+| Stale predictions cleared | **1,065**; rows 11,268 and labels 411 unchanged | 2026-09-23 |
+| Staleness tiers after the clear | **100.0 on all 11,268** — nothing is scored by the current model | 2026-09-23 |
+| Unprofiled rows in the top 25 / 100 / 500, after the clear | **0** / 9 / 189 (was 4 / 37 / 315) | 2026-09-23 |
 
 ## Cost ledger
 

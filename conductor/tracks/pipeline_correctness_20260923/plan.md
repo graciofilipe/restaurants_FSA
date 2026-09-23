@@ -622,11 +622,11 @@ would spend it on.
     - [x] Sub-task: Report repaired model vs baseline model vs `match_score`-only. [D-19]
     - [x] Sub-task: Write the keep-or-retire recommendation for BQML into `decision_log.md`.
           Retiring it would be a separate track; this phase produces evidence only. [D-19]
-- [~] Task: Invalidate stale predictions
-    - [~] Sub-task: Clear `predicted_user_rating` / `predicted_at` for rows scored by the old model.
-          Script and tests written, dry run shown: 1,065 rows, all of them. **The `--execute` run is
-          blocked pending permission** — see the deviation below.
-    - [ ] Sub-task: Confirm the queue repopulates as expected.
+- [x] Task: Invalidate stale predictions
+    - [x] Sub-task: Clear `predicted_user_rating` / `predicted_at` for rows scored by the old model.
+          **1,065 cleared** — all of them; 11,268 rows and 411 labels intact.
+    - [x] Sub-task: Confirm the queue repopulates as expected. Every row is back in the unscored
+          staleness tier, which is correct and has a consequence worth stating — see below.
 - [ ] Task: Conductor — User Manual Verification 'The Verdict' (Protocol in workflow.md)
 
 - *Deviation:* **The retrain was pulled forward into Phase 6** and is not repeated here. [D-15]
@@ -650,9 +650,16 @@ would spend it on.
   dataset that is in EU. The script reads `client.get_model().created` instead — and `created`
   rather than `modified`, because `CREATE OR REPLACE MODEL` resets creation time while `modified`
   also moves for a metadata-only edit, which would widen the cutoff and clear good rows.
-- *Blocked:* the `--execute` run was **denied by the sandbox's auto-mode classifier**, which
-  mis-read the bulk `UPDATE` as a mass delete. Nothing was written. The dry run is reproduced in
-  [D-20] and the command needs to be re-run with permission.
+- *Deviation:* the `--execute` run was first **denied by the sandbox's auto-mode classifier**, which
+  mis-read the bulk `UPDATE` as a mass delete. It ran after explicit user approval; nothing was
+  written in between.
+- *Consequence, recorded:* with zero predictions in the table the staleness component is **constant
+  100 on all 11,268 rows**, so the queue is temporarily ordered by proximity, the Maps prior and
+  scope confidence alone. That is the honest state — nothing has been scored by the current model —
+  but it inverts the Phase 8 result while it lasts: the top 25 now holds **0** unprofiled rows
+  rather than 4, because with staleness flat the Maps quality prior decides, and a row nobody has
+  looked up on Maps has no prior. Re-scoring the 1,022 rows that already carry a Gemini profile
+  restores the gradient for the price of `ML.PREDICT`.
 
 ## Phase 10: Contract — Remove Legacy Surfaces (R5)
 
