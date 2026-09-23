@@ -1,3 +1,13 @@
+"""Spent migration: `manual_review` -> `in_scope` + `rating_source`.
+
+It has run. It cannot run again: its DML reads `manual_review`, and Phase 10
+retired that column once `in_scope` had fully taken over. Kept because it is
+the record of how `in_scope` was derived -- and because that derivation is
+partly wrong. Its two categorisation branches gate on a JSON path
+(`$.6_establishment_integrity_is_sit_down_restaurant`) that resolves on zero
+rows, so they never fired and `in_scope` came from `maps_types` alone for
+those rows. See D-13.
+"""
 import os
 import argparse
 import logging
