@@ -872,6 +872,8 @@ would spend it on.
 - [x] Task: Full regression — `pytest app/`, then the live suite deliberately
     - [x] Sub-task: **496 passed, 10 deselected**, 300 subtests, ~7s offline.
     - [x] Sub-task: **10 passed** on `pytest -m integration`, 79s, real Vertex calls.
+    - [x] Sub-task: Re-run after D-32/D-33 changed the SQL: **512 passed / 10 deselected** offline,
+          **10 passed** live in 72s. `uvx ruff check` not run in this session — it needs the network.
 - [x] Task: Update `CLAUDE.md` — the pillar-mismatch and legacy-surface notes become obsolete `2965ca8`
     - [x] Sub-task: Its last convention bullet warned that `README.md`/`GEMINI.md` name an
           uninstalled `agents-cli`; `cb1dd21` fixed both, so the warning described nothing.
