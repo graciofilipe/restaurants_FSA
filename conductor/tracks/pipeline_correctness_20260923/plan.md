@@ -753,17 +753,49 @@ would spend it on.
           that becomes true rather than needing a correction. **Verified live:** the dry run logs
           the skip, validates the SQL against the 42-column table (5,719,647 bytes), and
           `INFORMATION_SCHEMA.JOBS` shows zero query jobs in the window.
-- [ ] Task: Make failures visible (D9)
-    - [ ] Sub-task: BigQuery helpers raise, or return an error-carrying result, instead of
-          `[]`/`False`.
-    - [ ] Sub-task: Surface the message in the UI so an auth failure stops reading as "No data
-          found matching criteria."
-    - [ ] Sub-task: Adjust the tests that assert the swallowing behaviour.
-- [ ] Task: Vectorise priority scoring (D8)
-    - [ ] Sub-task: Replace `.iterrows()` with vectorised pandas/numpy.
-    - [ ] Sub-task: Hoist the 310-key `sorted()` out of the per-row path into a precomputed lookup.
-    - [ ] Sub-task: Cache so a Streamlit rerun does not recompute it twice.
-    - [ ] Sub-task: Assert identical output on a fixture before/after.
+- [x] Task: Make failures visible (D9) — 0d9ddc1
+    - [x] Sub-task: BigQuery helpers raise, or return an error-carrying result, instead of
+          `[]`/`False`. `load_filtered_data_from_bq`, `get_distinct_local_authorities` and
+          `get_distinct_outcodes` raise `BigQueryExecutionError` with the original chained.
+    - [x] Sub-task: Surface the message in the UI so an auth failure stops reading as "No data
+          found matching criteria." *The UI already had the `except` clauses — they were
+          unreachable, because the helpers swallowed first.* A 403 rendered as advice to widen
+          filters no filter can reach. The sidebar dropdowns still catch and fall back to an empty
+          list: they render before the user can press anything, so raising there would take the
+          page down and leave nowhere to read the message.
+    - [x] Sub-task: Adjust the tests that assert the swallowing behaviour. 11 new tests across
+          `test_bq_utils.py` and the new `app/ui/test_st_app_error_surfacing.py`, including the
+          converse — a load that genuinely matched nothing still warns about the filters.
+    - [x] *Not in the plan, but the same defect and worse:* `fetch_weekly.main()` caught everything
+          and returned, so the weekly Cloud Run Job exited 0 whatever happened. Exit status is the
+          only signal Cloud Run reads. A month of failed ingests would have looked like success,
+          evidenced only by a `first_seen` gap nobody would attribute to it. One bad search area
+          still does not cost the others their run — failures are collected and reported together
+          — and an *empty* config table stays a warning, because emptying it is how the cron gets
+          paused. A failed `append_to_bigquery` now raises too: it reported failure by returning
+          `False`, and the caller logged it and returned, dropping the new restaurants.
+- [x] Task: Vectorise priority scoring (D8) — 762933d, 4eab3d8
+    - [x] Sub-task: Replace `.iterrows()` with vectorised pandas/numpy. The four components are
+          array expressions; the awkward coercions were *not* re-derived — outcode resolution, the
+          timestamp parse and the `in_scope` ladder are still the same scalar functions, called
+          once per distinct value via `_per_distinct_value`. Re-deriving those rules as array
+          expressions was the one way this refactor could have been subtly wrong.
+    - [x] Sub-task: Hoist the 310-key `sorted()` out of the per-row path into a precomputed lookup.
+          `_OUTCODE_PREFIXES_LONGEST_FIRST`, sorted once at import. Worth little on its own — 2,000
+          worst-case lookups measured 0.06s — but free and provably order-preserving.
+    - [x] Sub-task: Cache so a Streamlit rerun does not recompute it twice. `priority_for_current_frame`,
+          keyed on a `data_version` counter that only `set_enriched_frame` moves, guarded by an
+          `ast` test that no other site assigns `df_enriched`. Deliberately not `@st.cache_data`,
+          which hashes the frame's contents to build its key — about the cost of the scoring.
+    - [x] Sub-task: Assert identical output on a fixture before/after. 59 rows, one per branch,
+          captured from the pre-refactor implementation and mutation-checked. **Also verified
+          against the live table**, which is what caught the one real regression: `np.round`
+          scales-and-rints where Python's `round` converts exactly to decimal, and the two
+          disagreed on 703 of 11,268 composite scores by 0.1. Invisible in the grid; not invisible
+          to a queue that is sorted on that column and profiles its top 25 at Gemini prices.
+          `_round_like_python` restores the original semantics, after which old and new agree on
+          all 901,440 values (16 anchor/preset configurations × 5 columns × 11,268 rows) with
+          identical ranked order in every one. Full pass 0.80s → 0.08s; warm rerun → 0.002s.
 - [ ] Task: Make the test suite runnable (D11)
     - [ ] Sub-task: Mark live tests `integration`; register markers in `pyproject.toml`.
     - [ ] Sub-task: Default a bare `pytest` to offline tests only.

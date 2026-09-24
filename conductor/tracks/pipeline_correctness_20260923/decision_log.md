@@ -1076,6 +1076,114 @@ are how `in_scope` came to be derived, including the branches that never fired.
 
 ---
 
+## D-23 — The error handling that was already there had never run (D9)
+
+**Date.** 2026-09-24. **Phase 11.** Commit `0d9ddc1`.
+
+`load_data_into_state` in `st_app.py` wraps its BigQuery read in `try`/`except` and calls
+`st.error` on failure. Two more `try`/`except` blocks guard the sidebar dropdowns. All three were
+**unreachable**. `load_filtered_data_from_bq`, `get_distinct_local_authorities` and
+`get_distinct_outcodes` each caught their own exception, logged it, and returned `[]` — so the
+caller's handler never saw anything to handle, and `[]` is also exactly what "nothing matched your
+filters" looks like.
+
+The observable result: an expired credential rendered as **"No data found matching criteria."**
+That is worse than an unhelpful message. It is a specific, confident, wrong diagnosis — it tells
+the user their filters are too narrow, so the reasonable next action is to widen them, and no
+amount of widening reaches a 403.
+
+The three readers now raise `BigQueryExecutionError` with the original chained. The two dropdown
+call sites still catch and fall back to an empty list, which is a deliberate asymmetry: the sidebar
+renders before the user can press anything, so raising there would take the whole page down and
+leave nowhere to read the message. An empty dropdown *next to a visible error* is not claiming the
+table is empty.
+
+**The worse half of the same defect, found while fixing it.** `fetch_weekly.main()` — the weekly
+Cloud Run Job, the top of the entire pipeline — caught every exception, logged it, and returned.
+The process therefore exited 0 and Cloud Run recorded a success. Nobody watches this job, which is
+the point of scheduling it; a month of failed ingests would have looked identical to a month of
+quiet weeks, evidenced only by a `first_seen` gap nobody would attribute to it. Exit status is the
+only signal Cloud Run reads, so it has to be true.
+
+Three distinctions kept, because "raise on everything" would just get the alert muted:
+
+- One bad search area does not cost the others their run. Failures are collected and reported
+  together in the exit message, with a count — three of three failing is an outage, one of three is
+  a bad config row.
+- An **empty** config table stays a warning. Emptying it is how the cron gets paused.
+- An unreadable config table fails, and fails first. It is the earliest BigQuery call the job makes
+  and therefore where a dead credential surfaces.
+
+`append_to_bigquery` reports failure by returning `False`; the caller logged "Append failed." and
+returned normally, so the new restaurants were dropped and the run still counted as a success. It
+raises now.
+
+**Related.** [D-18] is the other defect of this family — a wrong answer that looked like an answer,
+rather than an error that looked like a result.
+
+---
+
+## D-24 — `np.round` is not `round`, and the priority queue is sorted on the difference (D8)
+
+**Date.** 2026-09-24. **Phase 11.** Commits `762933d` (fixture), `4eab3d8` (refactor).
+
+`calculate_restaurant_priority` walked 11,268 rows with `.iterrows()` and re-sorted the 310-key
+outcode dictionary inside the per-row fallback. Measured: **0.80s per full pass**, and the
+Streamlit ML Predictions tab re-scores the whole frame on *every rerun* — every slider drag, every
+checkbox anywhere on the page — so that was per interaction, not per load.
+
+The interesting part was not the speed-up. It was establishing that the rewrite changed nothing.
+
+**What was not re-derived.** The scoring loop's rules live in `try`/`except` and `isinstance`
+chains: outcode resolution, the timestamp coercion that accepts a tz-aware `Timestamp` or an ISO
+string or nothing, the `in_scope` ladder that answers to `True` and `1` and `"true"`. Rewriting
+those as array expressions means re-deriving them, and a re-derivation can be wrong in ways nothing
+here would notice. They are still the same scalar functions, called once per *distinct value*
+through `_per_distinct_value` — which is both exactly equivalent and fast, because a production
+frame holds far fewer distinct postcodes than rows and a batch of predictions shares one
+`predicted_at` to the microsecond.
+
+**What the fixture missed and the live table caught.** A 59-row fixture, one row per branch,
+captured from the pre-refactor implementation, passed on the first run of the vectorised version.
+It was still wrong. Replaying old against new over the real 11,268 rows showed the four component
+columns matching exactly and the **composite differing on 703 rows by 0.1**.
+
+The cause: `np.round(x, 1)` multiplies by ten, applies `rint`, and divides back; Python's
+`round(x, 1)` converts the float exactly to decimal. The scaled value is not always exactly
+representable, so the two disagree on values sitting on a boundary — and the composite lands on one
+often, since a proximity score ending in `.5` against a weight of `0.30` is enough.
+
+0.1 does not matter to a human reading the grid. It matters because the queue is **sorted** on that
+column and a batch takes the top 25, so a tie broken the other way is a different restaurant
+profiled at Gemini prices. `_round_like_python` restores the original semantics at all five
+rounding sites.
+
+**Verification.** After the fix, old and new agree on **all 901,440 values** — 16 anchor/preset
+configurations × 5 columns × 11,268 rows — with identical ranked order in every configuration. The
+fixture is kept as the offline guard and was mutation-checked (moving the 14-day staleness tier to
+15 fails it, naming the case and the column).
+
+The general lesson is the one this track keeps re-learning: a fixture proves the branches you
+thought of. Floating-point equivalence is not a branch, and only real data at real scale surfaced
+it.
+
+**The cache.** `priority_for_current_frame` memoizes across reruns, keyed on a `data_version`
+counter that only `set_enriched_frame` moves, with an `ast` test asserting no other site assigns
+`df_enriched`. Deliberately *not* `@st.cache_data`: that hashes the frame's contents to build its
+key, which for 11,268 rows costs about what the scoring saves. A cache over a frame the app mutates
+is the same hazard `reset_selection_state` exists for, so the tests care more about every way it
+must miss — new anchor, new preset, reloaded frame, same-sized frame with changed values, new day —
+than about the hit.
+
+| | before | after |
+|---|---|---|
+| Full scoring pass, 11,268 rows | 0.80s | **0.08s** |
+| Rerun with nothing changed | 0.80s | **0.002s** |
+
+**Related.** [D-18] is the other defect in this function, and the reason `first_present` exists.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
@@ -1170,6 +1278,10 @@ are how `in_scope` came to be derived, including the branches that never fired.
 | `manual_review = 'rejected'` that are `in_scope = TRUE` | **9,348**; 351 of them carry a `user_rating` | 2026-09-23 |
 | Enrichment filter, 33-day window, old vs new | **153 → 146 rows**; the 7 dropped are all `in_scope = FALSE` | 2026-09-23 |
 | `fsa_master` columns after both Phase 10 drops | **42** (was 44); 11,268 rows, 411 labels, 2,774 profiles unchanged | 2026-09-23 |
+| Priority scoring, full pass over 11,268 rows | **0.80s → 0.08s**; warm rerun **0.002s** | 2026-09-24 |
+| Old vs new scoring, live table | **0 mismatches / 901,440 values** (16 configs × 5 cols × 11,268 rows) | 2026-09-24 |
+| `np.round` vs Python `round` on the composite | **703 of 11,268 rows** differed by 0.1 before `_round_like_python` | 2026-09-24 |
+| Offline suite | **405 passed**, 300 subtests (was 345 at the Phase 10 checkpoint) | 2026-09-24 |
 
 ## Cost ledger
 
