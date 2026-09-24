@@ -3,6 +3,7 @@ import json
 import logging
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+import numpy as np
 import pandas as pd
 from app.core.pillar_schema import ALL_COLUMNS
 from app.services.api_client import fetch_api_data
@@ -219,6 +220,13 @@ if not LONDON_OUTCODE_CENTROIDS:
 # inventions. 126 rows carry no postcode and 2 carry junk ('WATERLOOVI', 'NE').
 UNKNOWN_OUTCODE = "UNKNOWN"
 
+# The prefix search order for `lookup_outcode_coordinates`, sorted once at
+# import rather than once per lookup. 310 keys re-sorted for every unplaceable
+# row is the hot loop D8 names; the sort is stable and the dictionary is never
+# mutated after import, so hoisting it cannot change which prefix wins.
+_OUTCODE_PREFIXES_LONGEST_FIRST: Tuple[str, ...] = tuple(
+    sorted(LONDON_OUTCODE_CENTROIDS.keys(), key=len, reverse=True))
+
 # What an unplaceable row scores for proximity instead. The decay is
 # `100 * exp(-0.20 * km)`, so this is what a restaurant ~11.5 km from the anchor
 # gets: behind anything we can actually place nearby, but still in the queue,
@@ -296,7 +304,7 @@ def lookup_outcode_coordinates(outcode: str) -> Optional[Tuple[float, float]]:
         return tuple(LONDON_OUTCODE_CENTROIDS[clean_oc])
 
     # Try longest prefix match (e.g. EC2A -> EC2, SW1A -> SW1)
-    for k in sorted(LONDON_OUTCODE_CENTROIDS.keys(), key=len, reverse=True):
+    for k in _OUTCODE_PREFIXES_LONGEST_FIRST:
         if clean_oc.startswith(k):
             return tuple(LONDON_OUTCODE_CENTROIDS[k])
 
@@ -314,6 +322,142 @@ def get_outcode_coordinates(outcode: str) -> Tuple[float, float]:
     return lookup_outcode_coordinates(outcode) or LONDON_OUTCODE_CENTROIDS.get(
         "SW16", (51.4212, -0.1292))
 
+def _column_or_missing(df: pd.DataFrame, name: str) -> pd.Series:
+    """`df[name]`, or an all-missing column of the right length and index.
+
+    The scalar loop used `row.get(name)`, which quietly yields None for a
+    column the frame does not have. Callers routinely hand this function a
+    frame missing `maps_rating` or `in_scope` entirely, so that tolerance is
+    load-bearing rather than incidental.
+    """
+    if name in df.columns:
+        return df[name]
+    return pd.Series([None] * len(df), index=df.index, dtype=object)
+
+
+def _absent_mask(series: pd.Series) -> pd.Series:
+    """Where `first_present` would skip a value: None, or non-string NaN.
+
+    A string is never absent, even an empty one -- that is `first_present`'s
+    rule, and the reason it exists (D-18).
+    """
+    is_str = series.map(lambda v: isinstance(v, str)).astype(bool)
+    return (~is_str) & series.isna()
+
+
+def _first_present_column(df: pd.DataFrame, *names: str) -> pd.Series:
+    """`first_present` over whole columns instead of a row at a time.
+
+    Still per-row in effect -- a frame carrying both `postcode` and `PostCode`
+    can take one from each row -- but expressed as two masked assignments
+    rather than 11,268 dictionary walks.
+    """
+    present = [n for n in names if n in df.columns]
+    if not present:
+        return pd.Series([None] * len(df), index=df.index, dtype=object)
+    out = df[present[0]].astype(object).copy()
+    for name in present[1:]:
+        out = out.where(~_absent_mask(out), df[name])
+    return out
+
+
+def _per_distinct_value(series: pd.Series, fn, na_result):
+    """Call `fn` once per distinct value rather than once per row.
+
+    The scalar helpers this wraps -- outcode resolution, timestamp coercion,
+    the `in_scope` truthiness ladder -- are the parts of the scoring loop whose
+    rules live in awkward `try`/`except` and `isinstance` chains. Rewriting
+    them as array expressions would mean re-deriving those rules, and a
+    re-derivation can be subtly wrong in a way nothing here would notice.
+    Mapping over `factorize`'s uniques keeps the original scalar function as
+    the definition while still collapsing the work: a production frame holds
+    far fewer distinct postcodes than rows, and a batch of predictions shares
+    one `predicted_at` to the microsecond.
+
+    `factorize` codes missing values as -1, which indexes the appended
+    `na_result` -- so `fn` is never called on a NaN it was never called on
+    before.
+    """
+    codes, uniques = pd.factorize(series)
+    results = [fn(value) for value in uniques]
+    results.append(na_result)
+    return [results[code] for code in codes]
+
+
+def _round_like_python(values, ndigits: int):
+    """Element-wise `round()`, because `np.round` is not the same function.
+
+    Python's `round` converts the float exactly to decimal and rounds half to
+    even. `np.round` multiplies by a power of ten, applies `rint`, and divides
+    back, and the scaled value is not always exactly representable -- so the
+    two disagree on values that land on a boundary. Measured on the live
+    table, `np.round` moved 703 of 11,268 composite scores by 0.1: small, but
+    the priority queue is sorted on exactly these numbers and D8 is supposed
+    to change none of them.
+
+    A Python-level loop over the array is still one pass instead of the
+    per-row object churn it replaced -- tens of milliseconds against the
+    0.8 seconds the loop cost.
+    """
+    flat = np.asarray(values, dtype=float)
+    rounded = np.array([round(v, ndigits) for v in flat.ravel().tolist()], dtype=float)
+    return rounded.reshape(flat.shape)
+
+
+def _haversine_km_array(lat, lon, anchor_lat: float, anchor_lon: float):
+    """`haversine_distance_km` over arrays, to the same two decimal places.
+
+    NaN in, NaN out: an unplaceable row has no distance, and saying so is the
+    point of the component.
+    """
+    r = 6371.0  # Earth's radius in km
+    phi1 = np.radians(lat)
+    phi2 = np.radians(anchor_lat)
+    delta_phi = np.radians(anchor_lat - lat)
+    delta_lambda = np.radians(anchor_lon - lon)
+    a = (np.sin(delta_phi / 2.0) ** 2
+         + np.cos(phi1) * np.cos(phi2) * np.sin(delta_lambda / 2.0) ** 2)
+    c = 2.0 * np.arctan2(np.sqrt(a), np.sqrt(1.0 - a))
+    return _round_like_python(r * c, 2)
+
+
+def _staleness_days(score_ts: Any, curr_date: datetime.date) -> int:
+    """How many days ago a row was scored; 45 when the timestamp is unreadable.
+
+    Lifted unchanged out of the scoring loop. `predicted_at` reaches here as a
+    tz-aware `Timestamp` from BigQuery, a `date`, an ISO string, or nothing at
+    all, and the 45-day default is what an unparseable value falls back to.
+    """
+    days_ago = 45  # Default medium staleness
+    if score_ts and pd.notna(score_ts):
+        try:
+            if isinstance(score_ts, str):
+                score_date = datetime.datetime.strptime(score_ts[:10], "%Y-%m-%d").date()
+            elif isinstance(score_ts, (datetime.date, datetime.datetime, pd.Timestamp)):
+                score_date = score_ts.date() if hasattr(score_ts, 'date') else score_ts
+            else:
+                score_date = curr_date
+            days_ago = max(0, (curr_date - score_date).days)
+        except Exception:
+            days_ago = 45
+    return days_ago
+
+
+def _scope_score(in_scope: Any) -> float:
+    """100 for in scope, 0 for out, 50 for not yet triaged.
+
+    Lifted unchanged. The ladder is wider than `is True` because `in_scope`
+    arrives as a BigQuery BOOL, as 1/0 through a DataFrame upcast, and as a
+    string from the triage widgets. A 0.0 here means out of scope and nothing
+    else, which is what lets the caller read the verdict back off the score.
+    """
+    if in_scope is True or in_scope == 1 or str(in_scope).lower() in ("true", "1"):
+        return 100.0
+    if in_scope is False or in_scope == 0 or str(in_scope).lower() in ("false", "0"):
+        return 0.0
+    return 50.0
+
+
 def calculate_restaurant_priority(
     df: pd.DataFrame,
     anchor_lat: Optional[float] = None,
@@ -324,6 +468,12 @@ def calculate_restaurant_priority(
     """
     Computes distance, proximity score, staleness score, Google Maps prior, and composite priority score.
     Returns the DataFrame augmented with 'distance_km' and 'priority_score'.
+
+    Column-at-a-time since D8. The Streamlit ML Predictions tab re-scores the
+    whole frame on every rerun -- every slider drag, every checkbox -- so this
+    ran once per interaction, not once per load. The four components are array
+    expressions; the awkward coercions stay as the scalar functions above and
+    run once per distinct value via `_per_distinct_value`.
     """
     if df is None or df.empty:
         return df
@@ -347,116 +497,100 @@ def calculate_restaurant_priority(
     curr_date = today_date or datetime.date.today()
     res_df = df.copy()
 
-    distances = []
-    prox_scores = []
-    stale_scores = []
-    prior_scores = []
-    scope_scores = []
-    priority_scores = []
+    # 1. Proximity & Distance
+    lat = pd.to_numeric(_column_or_missing(res_df, 'latitude'), errors='coerce')
+    lon = pd.to_numeric(_column_or_missing(res_df, 'longitude'), errors='coerce')
+    # `errors='coerce'` stands in for the loop's `try: float(...)`: a string
+    # that will not parse becomes NaN and fails the bounding box, exactly as
+    # the raised ValueError used to leave `has_exact` False.
+    has_exact = (lat.between(45.0, 60.0) & lon.between(-10.0, 5.0)).to_numpy()
+    exact_dist = _haversine_km_array(lat.to_numpy(dtype=float),
+                                     lon.to_numpy(dtype=float),
+                                     anchor_lat, anchor_lon)
 
-    for _, row in res_df.iterrows():
-        # 1. Proximity & Distance
-        lat = row.get('latitude')
-        lon = row.get('longitude')
-        has_exact = False
-        if pd.notna(lat) and pd.notna(lon):
-            try:
-                lat_f, lon_f = float(lat), float(lon)
-                if 45.0 <= lat_f <= 60.0 and -10.0 <= lon_f <= 5.0:
-                    dist = haversine_distance_km(lat_f, lon_f, anchor_lat, anchor_lon)
-                    has_exact = True
-            except (ValueError, TypeError):
-                has_exact = False
+    # Rows with usable coordinates never consult their postcode, so masking
+    # here is not just an optimisation -- it keeps the outcode lookup off the
+    # 97% of the table that ships with coordinates from the FSA.
+    postcodes = _first_present_column(res_df, 'postcode', 'PostCode')
+    postcodes = postcodes.where(~has_exact, other=None)
+    centroids = _per_distinct_value(
+        postcodes,
+        lambda pc: lookup_outcode_coordinates(str(pc) if pc else ""),
+        None)
+    cent_lat = np.array([c[0] if c else np.nan for c in centroids], dtype=float)
+    cent_lon = np.array([c[1] if c else np.nan for c in centroids], dtype=float)
+    # No coordinates and no placeable postcode. NaN, not 0.0: the grid shows a
+    # blank distance and the sorts already put NaN last.
+    fallback_dist = _haversine_km_array(cent_lat, cent_lon, anchor_lat, anchor_lon)
 
-        if not has_exact:
-            pc = first_present(row, 'postcode', 'PostCode') or ""
-            centroid = lookup_outcode_coordinates(str(pc))
-            # No coordinates and no placeable postcode. NaN, not 0.0: the grid
-            # shows a blank distance and the sorts already put NaN last.
-            dist = (haversine_distance_km(centroid[0], centroid[1], anchor_lat, anchor_lon)
-                    if centroid else float('nan'))
+    distances = np.where(has_exact, exact_dist, fallback_dist)
+    prox_scores = np.where(
+        np.isnan(distances),
+        UNKNOWN_LOCATION_PROXIMITY_SCORE,
+        _round_like_python(100.0 * np.exp(-0.20 * np.nan_to_num(distances, nan=0.0)), 1))
 
-        distances.append(dist)
-        s_prox = (UNKNOWN_LOCATION_PROXIMITY_SCORE if math.isnan(dist)
-                  else round(100.0 * math.exp(-0.20 * dist), 1))
-        prox_scores.append(s_prox)
+    # 2. Staleness & Re-scoring (100 for unscored, 80 for >=60d, 60 for >=30d, 40 for >=14d, 15 for recent)
+    predicted = _column_or_missing(res_df, 'predicted_user_rating')
+    # "Has this been profiled?" is the timestamp the V2 merge writes.
+    # `gemini_insights or gemini_insights_structured` was two wrong answers
+    # at once (D-18): the `or` returned NaN for the 10,152 rows with no V1
+    # text, so 1,020 profiled *and* predicted rows read as never scored and
+    # kept the maximum staleness; and the 1,116 rows that hold only V1 text
+    # read as profiled when no V2 profile exists. The stamp is exactly
+    # co-extensive with `gemini_insights_structured` (2,767 rows, 0
+    # disagreement either way) and survives the Phase 10 column drop.
+    profiled = _column_or_missing(res_df, 'gemini_profiled_at')
+    unscored = (predicted.isna() | profiled.isna()).to_numpy()
 
-        # 2. Staleness & Re-scoring (100 for unscored, 80 for >=60d, 60 for >=30d, 40 for >=14d, 15 for recent)
-        pred_val = row.get('predicted_user_rating')
-        # "Has this been profiled?" is the timestamp the V2 merge writes.
-        # `gemini_insights or gemini_insights_structured` was two wrong answers
-        # at once (D-18): the `or` returned NaN for the 10,152 rows with no V1
-        # text, so 1,020 profiled *and* predicted rows read as never scored and
-        # kept the maximum staleness; and the 1,116 rows that hold only V1 text
-        # read as profiled when no V2 profile exists. The stamp is exactly
-        # co-extensive with `gemini_insights_structured` (2,767 rows, 0
-        # disagreement either way) and survives the Phase 10 column drop.
-        gemini_val = row.get('gemini_profiled_at')
-        if pd.isna(pred_val) or pd.isna(gemini_val) or pred_val is None or gemini_val is None:
-            s_stale = 100.0
-        else:
-            score_ts = row.get('predicted_at') if pd.notna(row.get('predicted_at')) else row.get('first_seen')
-            days_ago = 45 # Default medium staleness
-            if score_ts and pd.notna(score_ts):
-                try:
-                    if isinstance(score_ts, str):
-                        score_date = datetime.datetime.strptime(score_ts[:10], "%Y-%m-%d").date()
-                    elif isinstance(score_ts, (datetime.date, datetime.datetime, pd.Timestamp)):
-                        score_date = score_ts.date() if hasattr(score_ts, 'date') else score_ts
-                    else:
-                        score_date = curr_date
-                    days_ago = max(0, (curr_date - score_date).days)
-                except Exception:
-                    days_ago = 45
+    predicted_at = _column_or_missing(res_df, 'predicted_at')
+    score_ts = predicted_at.where(predicted_at.notna(),
+                                  _column_or_missing(res_df, 'first_seen'))
+    # Blanked for unscored rows so the coercion is never asked about a
+    # timestamp the loop would not have looked at.
+    score_ts = score_ts.astype(object).where(~unscored, other=None)
+    days_ago = np.array(
+        _per_distinct_value(score_ts, lambda ts: _staleness_days(ts, curr_date), 45),
+        dtype=float)
 
-            if days_ago >= 60:
-                s_stale = 80.0
-            elif days_ago >= 30:
-                s_stale = 60.0
-            elif days_ago >= 14:
-                s_stale = 40.0
-            else:
-                s_stale = 15.0
-        stale_scores.append(s_stale)
+    stale_scores = np.select(
+        [unscored, days_ago >= 60, days_ago >= 30, days_ago >= 14],
+        [100.0, 80.0, 60.0, 40.0],
+        default=15.0)
 
-        # 3. Google Maps Quality Prior (FSA excluded)
-        mr = row.get('maps_rating')
-        if pd.notna(mr):
-            try:
-                base_mr = max(0.0, (float(mr) - 3.0) * 50.0)
-                mrev = row.get('maps_reviews')
-                rev_num = float(mrev) if pd.notna(mrev) else 0.0
-                boost = min(15.0, math.log10(max(1.0, rev_num + 1.0)) * 5.0)
-                s_prior = round(min(100.0, base_mr + boost), 1)
-            except Exception:
-                s_prior = 50.0
-        else:
-            s_prior = 50.0
-        prior_scores.append(s_prior)
+    # 3. Google Maps Quality Prior (FSA excluded)
+    maps_rating = _column_or_missing(res_df, 'maps_rating')
+    maps_reviews = _column_or_missing(res_df, 'maps_reviews')
+    rating_num = pd.to_numeric(maps_rating, errors='coerce')
+    reviews_num = pd.to_numeric(maps_reviews, errors='coerce')
+    # The loop wrapped both conversions in one `try`, so an unreadable review
+    # count discarded a perfectly good rating and fell back to 50. Preserved
+    # deliberately: this is a behaviour-neutral refactor, and a review count
+    # that will not parse is a reason to distrust the row, not half of it.
+    unreadable = (rating_num.isna() | (maps_reviews.notna() & reviews_num.isna())).to_numpy()
+    usable = maps_rating.notna().to_numpy() & ~unreadable
+    base = np.maximum(0.0, (np.nan_to_num(rating_num.to_numpy(dtype=float)) - 3.0) * 50.0)
+    reviews = np.nan_to_num(reviews_num.to_numpy(dtype=float), nan=0.0)
+    boost = np.minimum(15.0, np.log10(np.maximum(1.0, reviews + 1.0)) * 5.0)
+    prior_scores = np.where(usable, _round_like_python(np.minimum(100.0, base + boost), 1), 50.0)
 
-        # 4. Scope Confidence
-        in_sc = row.get('in_scope')
-        is_out_of_scope = False
-        if in_sc is True or in_sc == 1 or str(in_sc).lower() in ("true", "1"):
-            s_scope = 100.0
-        elif in_sc is False or in_sc == 0 or str(in_sc).lower() in ("false", "0"):
-            s_scope = 0.0
-            is_out_of_scope = True
-        else:
-            s_scope = 50.0
-        scope_scores.append(s_scope)
+    # 4. Scope Confidence
+    scope_scores = np.array(
+        _per_distinct_value(_column_or_missing(res_df, 'in_scope'), _scope_score, 50.0),
+        dtype=float)
+    is_out_of_scope = scope_scores == 0.0
 
-        # Composite Priority Score
-        if is_out_of_scope:
-            p = 0.0
-        else:
-            p = round((w_prox * s_prox) + (w_stale * s_stale) + (w_prior * s_prior) + (w_scope * s_scope), 1)
-            # If restaurant already has a human user_rating, lower priority for ML scoring
-            user_rt = row.get('user_rating')
-            if pd.notna(user_rt) and str(user_rt).strip() != "":
-                p = round(p * 0.1, 1)
-
-        priority_scores.append(p)
+    # Composite Priority Score
+    priority_scores = _round_like_python(
+        (w_prox * prox_scores) + (w_stale * stale_scores)
+        + (w_prior * prior_scores) + (w_scope * scope_scores), 1)
+    # If restaurant already has a human user_rating, lower priority for ML scoring
+    user_rating = _column_or_missing(res_df, 'user_rating')
+    already_rated = (user_rating.notna()
+                     & (user_rating.astype(str).str.strip() != "")).to_numpy()
+    priority_scores = np.where(already_rated,
+                               _round_like_python(priority_scores * 0.1, 1),
+                               priority_scores)
+    priority_scores = np.where(is_out_of_scope, 0.0, priority_scores)
 
     res_df['distance_km'] = distances
     res_df['priority_score'] = priority_scores

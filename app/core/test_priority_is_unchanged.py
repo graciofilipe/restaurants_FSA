@@ -22,7 +22,11 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from app.core.data_processing import calculate_restaurant_priority
+from app.core.data_processing import (
+    _per_distinct_value,
+    _round_like_python,
+    calculate_restaurant_priority,
+)
 
 # Frozen so `curr_date` cannot drift the staleness tiers out from under us.
 TODAY = datetime.date(2026, 9, 24)
@@ -361,6 +365,79 @@ class TestTheDegenerateInputsStillReturnEarly(unittest.TestCase):
         for pos, src in enumerate((5, 2, 40)):
             self.assertAlmostEqual(
                 float(out.iloc[pos]['priority_score']), EXPECTED[src][5], places=6)
+
+
+class TestRoundingMatchesPythonNotNumpy(unittest.TestCase):
+    """The one place the vectorised rewrite did change an answer.
+
+    `np.round(x, 1)` scales by ten, applies `rint`, and divides back; Python's
+    `round(x, 1)` converts exactly to decimal. They disagree on values sitting
+    on a boundary, and the composite score lands on one often -- a proximity
+    score ending in .5 against a weight of 0.30 is enough. Swapping in
+    `np.round` moved 703 of the 11,268 live rows by 0.1.
+
+    0.1 does not matter to a human reading the grid. It matters because the
+    queue is *sorted* on this column and a batch takes the top 25, so a tie
+    broken the other way is a different restaurant profiled at Gemini prices.
+    """
+
+    def test_it_matches_python_round_where_numpy_does_not(self):
+        divergent = [57.55, 51.85, 80.35, 53.45, 52.85]
+        for value in divergent:
+            with self.subTest(value=value):
+                self.assertEqual(float(_round_like_python([value], 1)[0]), round(value, 1))
+
+    def test_at_least_one_of_those_really_does_diverge(self):
+        """Guards the guard: if numpy ever agreed everywhere, this test would
+        be asserting nothing and should be deleted rather than left passing."""
+        divergent = [57.55, 51.85, 80.35, 53.45, 52.85]
+        self.assertTrue(
+            any(float(np.round(v, 1)) != round(v, 1) for v in divergent),
+            "no sampled value diverges any more -- re-derive the sample or drop this")
+
+    def test_nan_survives_rounding(self):
+        self.assertTrue(math.isnan(float(_round_like_python([float('nan')], 1)[0])))
+
+    def test_it_rounds_a_whole_array_and_keeps_its_shape(self):
+        out = _round_like_python(np.array([1.234, 5.678, 9.0]), 2)
+        self.assertEqual(out.shape, (3,))
+        self.assertEqual(list(out), [1.23, 5.68, 9.0])
+
+
+class TestDistinctValueMapping(unittest.TestCase):
+    """`_per_distinct_value` is how the messy scalar coercions survived the
+    rewrite: they are still the definition, just called once per distinct
+    value. If it ever mapped a value to the wrong row the scores would be
+    quietly attributed to the wrong restaurant, which is the worst failure
+    mode available here."""
+
+    def test_each_row_gets_its_own_value_back(self):
+        s = pd.Series(['a', 'b', 'a', 'c', 'b'])
+        self.assertEqual(_per_distinct_value(s, str.upper, '?'), ['A', 'B', 'A', 'C', 'B'])
+
+    def test_the_function_runs_once_per_distinct_value(self):
+        calls = []
+        s = pd.Series(['a', 'a', 'a', 'b'])
+        _per_distinct_value(s, lambda v: calls.append(v) or v, '?')
+        self.assertEqual(calls, ['a', 'b'])
+
+    def test_missing_values_take_the_fallback_without_calling_the_function(self):
+        calls = []
+        s = pd.Series(['a', None, float('nan'), 'a'])
+        out = _per_distinct_value(s, lambda v: calls.append(v) or v.upper(), 'FALLBACK')
+        self.assertEqual(out, ['A', 'FALLBACK', 'FALLBACK', 'A'])
+        self.assertEqual(calls, ['a'])
+
+    def test_an_all_missing_column_calls_nothing(self):
+        calls = []
+        s = pd.Series([None, None], dtype=object)
+        out = _per_distinct_value(s, lambda v: calls.append(v), 'FALLBACK')
+        self.assertEqual(out, ['FALLBACK', 'FALLBACK'])
+        self.assertEqual(calls, [])
+
+    def test_a_non_default_index_does_not_shift_the_alignment(self):
+        s = pd.Series(['a', 'b', 'c'], index=[7, 3, 99])
+        self.assertEqual(_per_distinct_value(s, str.upper, '?'), ['A', 'B', 'C'])
 
 
 if __name__ == '__main__':

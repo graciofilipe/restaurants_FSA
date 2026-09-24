@@ -1,3 +1,5 @@
+import datetime
+
 import streamlit as st
 import pandas as pd
 from app.services.bq_utils import (
@@ -197,6 +199,53 @@ def filter_and_sort_restaurants(
     return filtered
 
 
+def set_enriched_frame(df):
+    """The only way `df_enriched` is allowed to change.
+
+    `data_version` is what `priority_for_current_frame` keys its memo on, so a
+    frame swapped in behind its back would serve scores computed from the
+    previous load. Routing every assignment through here means the bump cannot
+    be forgotten at a new call site -- the same reasoning as
+    `reset_selection_state`, which exists because Streamlit's positional row
+    indices go stale the moment the frame underneath them changes.
+    """
+    st.session_state.df_enriched = df
+    st.session_state.data_version = st.session_state.get('data_version', 0) + 1
+    st.session_state.pop('priority_cache', None)
+
+
+def priority_for_current_frame(df, anchor_lat, anchor_lon, weights):
+    """`calculate_restaurant_priority`, memoized for the life of one frame.
+
+    The ML Predictions tab re-scores the whole table on every rerun, and
+    Streamlit reruns the script on every widget interaction anywhere on the
+    page -- dragging the batch-size slider, ticking a checkbox in another tab.
+    Nothing about those changes the scores, so the answer is the same one the
+    previous rerun computed (D8).
+
+    Not `@st.cache_data`: that hashes the DataFrame's contents to build its
+    key, which for 11,268 rows is the same order of work as the scoring it
+    would save. The version counter is O(1) and `set_enriched_frame` is the
+    only thing that moves it.
+    """
+    key = (
+        st.session_state.get('data_version'),
+        float(anchor_lat), float(anchor_lon),
+        tuple(sorted(weights.items())),
+        datetime.date.today(),  # staleness tiers are measured against today
+    )
+    cached = st.session_state.get('priority_cache')
+    if cached is not None and cached[0] == key:
+        return cached[1].copy()
+
+    scored = calculate_restaurant_priority(
+        df, anchor_lat=anchor_lat, anchor_lon=anchor_lon, weights=weights)
+    st.session_state['priority_cache'] = (key, scored)
+    # A copy, so a caller that mutates what it got back cannot poison the memo
+    # for the next rerun. This is what the uncached call always returned.
+    return scored.copy()
+
+
 @st.cache_data
 def get_cached_outcodes(project_id, dataset_id, table_id):
     return get_distinct_outcodes(project_id, dataset_id, table_id)
@@ -244,11 +293,11 @@ def load_data_into_state(
 
                 df_enriched = calculate_restaurant_priority(df_enriched)
 
-                st.session_state.df_enriched = df_enriched
+                set_enriched_frame(df_enriched)
                 st.session_state.data_loaded = True
                 reset_selection_state()
             else:
-                st.session_state.df_enriched = pd.DataFrame()
+                set_enriched_frame(pd.DataFrame())
                 st.session_state.data_loaded = True
                 reset_selection_state()
                 st.warning("No data found matching criteria.")
@@ -260,7 +309,7 @@ def main():
     st.title("🍔 FSA Restaurant Explorer & Scoring Engine")
     
     if 'df_enriched' not in st.session_state:
-        st.session_state.df_enriched = pd.DataFrame()
+        set_enriched_frame(pd.DataFrame())
     if 'data_loaded' not in st.session_state:
         st.session_state.data_loaded = False
 
@@ -691,7 +740,7 @@ def main():
                 active_weights = preset_weights.get(strategy_preset, preset_weights["Balanced Active Discovery"])
 
                 # Recompute priorities based on current anchor & weights
-                df_candidates = calculate_restaurant_priority(df_master, anchor_lat=c_lat, anchor_lon=c_lon, weights=active_weights)
+                df_candidates = priority_for_current_frame(df_master, c_lat, c_lon, active_weights)
 
                 # Filter candidate pool based on target_mode and scope (exclude confirmed out_of_scope)
                 if "in_scope" in df_candidates.columns:
