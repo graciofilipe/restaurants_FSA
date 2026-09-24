@@ -76,6 +76,17 @@ skip = "./locust_env/*,uv.lock,.venv,./frontend,**/package-lock.json"
 [tool.pytest.ini_options]
 pythonpath = "."
 asyncio_default_fixture_loop_scope = "function"
+# A bare `pytest` is offline. Everything that needs live GCP, a network call or
+# a listening port is marked `integration` and deselected by default, so the
+# obvious command is the safe one -- it used to spin up a uvicorn server on
+# port 8000 and bill real Gemini calls (D11).
+#   pytest                      offline, the whole repo
+#   pytest -m integration       the live suite, deliberately
+#   pytest -m ""                everything, markers ignored
+addopts = "-m 'not integration'"
+markers = [
+    "integration: needs live GCP credentials, network, or a local server (deselected by default)",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app","frontend"]

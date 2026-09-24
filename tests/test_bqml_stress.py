@@ -2,6 +2,10 @@ import pytest
 from google.cloud import bigquery
 from scripts.train_bqml_model import train_model
 
+# Real `bigquery.Client()`, no mock: these run their SQL against the live
+# dataset to prove BQML tolerates malformed JSON.
+pytestmark = pytest.mark.integration
+
 def test_bqml_training_with_bad_json():
     # We will test the query generation by executing a select statement derived from the script
     client = bigquery.Client()

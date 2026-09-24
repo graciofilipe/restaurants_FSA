@@ -26,6 +26,9 @@ import pytest
 import requests
 from requests.exceptions import RequestException
 
+# Starts a uvicorn server on port 8000 in a subprocess and talks HTTP to it.
+pytestmark = pytest.mark.integration
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
