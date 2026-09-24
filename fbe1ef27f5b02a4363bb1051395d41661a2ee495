@@ -1,0 +1,39 @@
+Phase 12 verification report — 2026-09-24
+
+Regression
+  512 offline tests, 10 deselected, 300 subtests, ~7s
+  10 integration tests, live Vertex calls, 72s
+  Re-run after D-32 changed the SQL both training and prediction build on;
+  the earlier 496/10 run did not cover it.
+  uvx ruff check not run — it needs the network, unavailable here.
+
+Fixed in this phase
+  D-28  Model Training tab: dry run, a lock derived from a polled job id
+        rather than a flag set nowhere, and an outcome the UI reports.
+        Guard mutation-checked in both directions.        f9195aa
+  D-31  Find query counted joined rows, not restaurants.  fbb02ea
+  D-32  The demographics join fanned 103 restaurants into 226 rows and
+        killed every ML.PREDICT MERGE that touched one, after paying for
+        the Gemini pre-flight. Two production batches lost that afternoon.
+  D-33  ...because the enrichment fetched one row per raw postcode
+        spelling while every reader joins on the normalised key.  7d00660
+
+Measured
+  ML.PREDICT input over the 103 affected rows   226/103 -> 103/103
+  all 103 now carrying real demographics, not the all-NULL duplicate
+  build_training_select over the labelled set   370 -> 369
+  (the served model was trained with one label double-weighted)
+  Predictions restored                          0 -> 75
+  Feature list unchanged, so no retrain forced.
+
+Recorded, not fixed
+  D-29  65% coverage against an 80% gate, accepted with the breakdown.
+  D-30  13 acceptance criteria walked; 11 met, 1 met live on the last
+        day, 1 deliberately not met (superseded by D-08).
+  D-34  Closing entry: fifteen defects, and every carried item with the
+        trigger that reopens it.
+
+Left for the user
+  scripts/backfill_predictions --execute, 1,910 rows, dry run shown, £0
+  Cloud Run digest check against the merge SHA
+  Both blocked in this session, neither blocked on a decision.
