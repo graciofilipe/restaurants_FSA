@@ -737,7 +737,7 @@ would spend it on.
       in the plan; they separated because the V1 text needed archiving and `manual_review` needs a
       replacement predicate written first, which is a behaviour change and not a deletion.
 
-## Phase 11: Errors, Performance, Hygiene
+## Phase 11: Errors, Performance, Hygiene [checkpoint: 484d26c]
 
 *Deliberately last — cross-cutting churn that would otherwise have blocked the cost fixes.*
 
