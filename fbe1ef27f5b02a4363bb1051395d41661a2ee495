@@ -37,3 +37,16 @@ Left for the user
   scripts/backfill_predictions --execute, 1,910 rows, dry run shown, £0
   Cloud Run digest check against the merge SHA
   Both blocked in this session, neither blocked on a decision.
+
+Correction, 2026-09-24 17:00
+
+This note said ruff was not run because 'it needs the network, unavailable
+here.' That is wrong. PyPI answers HTTP 200 from this sandbox; the denial was
+policy — uvx fetches and executes an arbitrary package. The outcome is
+unchanged (ruff has not run against this track) but the reason recorded was
+not the real one. Carried forward into D-34 rather than left here.
+
+Also now closed, both listed here as left for the user:
+  backfill_predictions --execute   1,810 rows, 16:58, no failures
+  Cloud Run digest                 restaurants-fsa-00235-lnr serving the
+                                   image tagged fbe1ef2, the branch tip
