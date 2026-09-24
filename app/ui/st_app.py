@@ -21,6 +21,10 @@ st.set_page_config(page_title="FSA Restaurant Explorer", layout="wide")
 
 DEFAULT_BQ_PATH = "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_master"
 
+# The served model. `invalidate_stale_predictions.py` and `ml_prediction.py`
+# name the same one; it is the only model this app trains or predicts with.
+TRAINING_MODEL_NAME = "restaurant_preference_model"
+
 # The pillar half of this list is generated: it is the same 14 columns the
 # profiler writes, in the order the prompt emits them. Before Phase 7 it was a
 # hand-kept copy of a fourth naming convention -- flat, numeric-prefixed names
@@ -345,6 +349,85 @@ def load_data_into_state(
                 
         except Exception as e:
             st.error(f"Error loading data: {e}")
+
+def render_model_training_tab(project_id: str, dataset_id: str, table_id: str):
+    """Validate the training SQL, or train on it, and say which happened.
+
+    Extracted from `main` so the three D-28 defects on it are testable: the tab
+    could only take the expensive path, its double-click guard never engaged,
+    and it never reported how the job it started turned out.
+
+    The guard is derived from a tracked job rather than kept as its own flag.
+    The old `training_lock` was initialised `False`, passed to `disabled=`, and
+    assigned `True` nowhere in the repo -- a lock with no key and no lock.
+    """
+    from scripts.train_bqml_model import train_model, training_job_status
+
+    st.subheader("Train BQML Boosted Tree Regressor")
+    st.caption("Trains continuous preference regression model using all in-scope rated restaurants (`user_rating` 1-10).")
+
+    # Poll a tracked job until it finishes, then remember the outcome and stop
+    # polling. `run_async` returns in a second; the job takes ten to fifteen
+    # minutes, and Streamlit only reruns when something is pressed.
+    tracked = st.session_state.get("training_job_id")
+    if tracked:
+        try:
+            status = training_job_status(project_id, dataset_id, tracked)
+        except Exception as e:
+            st.warning(f"Could not read training job {tracked}: {e}. Unlocking the "
+                       f"button -- check BigQuery before starting another run.")
+            st.session_state.pop("training_job_id", None)
+            status = None
+        if status and status["state"] == "DONE":
+            st.session_state["training_last_outcome"] = {"job_id": tracked, "error": status["error"]}
+            st.session_state.pop("training_job_id", None)
+
+    running = st.session_state.get("training_job_id")
+    outcome = st.session_state.get("training_last_outcome")
+    if running:
+        st.info(f"⏳ Training job `{running}` is running. A boosted tree takes 10-15 minutes.")
+        st.button("🔄 Refresh status", key="btn_train_refresh")
+    elif outcome:
+        # DONE is not the same as succeeded: a failed query is a finished job
+        # with an error on it, which is exactly how a silent failure used to
+        # look like a success here.
+        if outcome["error"]:
+            st.error(f"Training job `{outcome['job_id']}` failed: {outcome['error']}")
+        else:
+            st.success(f"✅ Training job `{outcome['job_id']}` finished. `restaurant_preference_model` has been replaced.")
+
+    if st.button("🔍 Validate Training SQL (Dry Run)", key="btn_train_dry_run"):
+        try:
+            with st.spinner("Validating the training query..."):
+                scanned = train_model(
+                    project_id=project_id,
+                    dataset_id=dataset_id,
+                    table_id=table_id,
+                    model_name=TRAINING_MODEL_NAME,
+                    dry_run=True,
+                )
+            st.success(f"Query is valid. It would process {scanned:,} bytes. Nothing was "
+                       f"trained, and no Places or Gemini calls were made (D15).")
+        except Exception as e:
+            st.error(f"Training SQL is invalid: {e}")
+
+    if st.button("🚀 Train BQML Model (Async)", disabled=bool(running), key="btn_train_model_unified"):
+        try:
+            with st.spinner("Starting BQML model training..."):
+                job_id = train_model(
+                    project_id=project_id,
+                    dataset_id=dataset_id,
+                    table_id=table_id,
+                    model_name=TRAINING_MODEL_NAME,
+                    dry_run=False,
+                    run_async=True,
+                )
+            st.session_state["training_job_id"] = job_id
+            st.session_state.pop("training_last_outcome", None)
+            st.success(f"Started model training. Job ID: {job_id}")
+        except Exception as e:
+            st.error(f"Failed to start training: {e}")
+
 
 def main():
     st.title("🍔 FSA Restaurant Explorer & Scoring Engine")
@@ -838,26 +921,7 @@ def main():
         # SUB-TAB 4: MODEL TRAINING & OPERATIONS
         # -------------------------------------------------------------
         with tab_model:
-            st.subheader("Train BQML Boosted Tree Regressor")
-            st.caption("Trains continuous preference regression model using all in-scope rated restaurants (`user_rating` 1-10).")
-
-            if "training_lock" not in st.session_state:
-                st.session_state.training_lock = False
-                
-            if st.button("🚀 Train BQML Model (Async)", disabled=st.session_state.training_lock, key="btn_train_model_unified"):
-                try:
-                    from scripts.train_bqml_model import train_model
-                    with st.spinner("Starting BQML model training..."):
-                        job_id = train_model(
-                            project_id=project_id,
-                            dataset_id=dataset_id,
-                            table_id=table_id,
-                            model_name="restaurant_preference_model",
-                            run_async=True
-                        )
-                        st.success(f"Started model training. Job ID: {job_id}")
-                except Exception as e:
-                    st.error(f"Failed to start training: {e}")
+            render_model_training_tab(project_id, dataset_id, table_id)
 
     elif st.session_state.data_loaded and st.session_state.df_enriched.empty:
         st.warning("No data found. Try adjusting filters in the sidebar and clicking 'Load Data'.")

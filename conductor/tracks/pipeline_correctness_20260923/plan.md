@@ -480,7 +480,7 @@ not now.
     - [ ] Sub-task: The first stale sweep is budget-capped, with its £ cost stated before it runs.
           **Not run — and nothing is stale until 2027-03-22.** Priced below; needs a go-ahead.
     - [x] Sub-task: Tests for fresh / stale / never-profiled / forced. 0abf4e2
-- [ ] Task: Conductor — User Manual Verification 'Rewire' (Protocol in workflow.md)
+- [~] Task: Conductor — User Manual Verification 'Rewire' (Protocol in workflow.md)
 
 - *Deviation:* `parse_insight_row` is **deleted, not reduced.** Reducing it to "read fourteen
   columns off the row" left a function whose single caller no longer needed it —
@@ -869,26 +869,68 @@ would spend it on.
 
 ## Phase 12: Close Out
 
-- [ ] Task: Full regression — `pytest app/`, then the live suite deliberately
-- [ ] Task: Update `CLAUDE.md` — the pillar-mismatch and legacy-surface notes become obsolete
-- [ ] Task: Reconcile `README.md` / `GEMINI.md` (both still document the uninstalled `agents-cli`)
+- [x] Task: Full regression — `pytest app/`, then the live suite deliberately
+    - [x] Sub-task: **496 passed, 10 deselected**, 300 subtests, ~7s offline.
+    - [x] Sub-task: **10 passed** on `pytest -m integration`, 79s, real Vertex calls.
+    - [x] Sub-task: Re-run after D-32/D-33 changed the SQL: **512 passed / 10 deselected** offline,
+          **10 passed** live in 72s. `uvx ruff check` not run in this session — it needs the network.
+- [x] Task: Update `CLAUDE.md` — the pillar-mismatch and legacy-surface notes become obsolete `2965ca8`
+    - [x] Sub-task: Its last convention bullet warned that `README.md`/`GEMINI.md` name an
+          uninstalled `agents-cli`; `cb1dd21` fixed both, so the warning described nothing.
+    - [x] Sub-task: Counts resynced (447→496 tests, 64%→65%), Model Training tab shape added,
+          `backfill_predictions.py` documented alongside its mirror image.
+- [x] Task: Reconcile `README.md` / `GEMINI.md` (both still document the uninstalled `agents-cli`) `cb1dd21`
 - [ ] Task: Deploy and verify on Cloud Run
 - [ ] Task: Drop the Phase 0 snapshot once the new pipeline has run clean for a full cycle
-- [ ] Task: Fix the Model Training tab (D-28, found during the Phase 11 manual verification)
-    - [ ] Sub-task: `training_lock` is dead. It is initialised to `False` at `st_app.py:844-845`,
+    - [ ] Sub-task: **Not in this track.** The weekly cron last ran 2026-09-21, before any of this
+          landed; the next is Mon 28 Sep and is the first ingest to exercise the D9 change. The
+          snapshot is the only copy of the pre-track table, including the 411 hand-entered labels.
+- [x] Task: Fix the Model Training tab (D-28, found during the Phase 11 manual verification) `f9195aa`
+    - [x] Sub-task: `training_lock` is dead. It is initialised to `False` at `st_app.py:844-845`,
           feeds `disabled=` at `:847`, and is never set `True` anywhere in the repo. Nothing stops
           a double click submitting two concurrent `CREATE OR REPLACE MODEL` jobs against one model
           name. Either set it, or drop it and say the button is unguarded.
-    - [ ] Sub-task: Give the UI the dry run. D15 fixed `--dry-run` on the CLI; `st_app.py:851` calls
+          → Replaced by a tracked job id polled through `training_job_status`; the guard is now
+          derived from state that changes. Mutation-checked in both directions.
+    - [x] Sub-task: Give the UI the dry run. D15 fixed `--dry-run` on the CLI; `st_app.py:851` calls
           `train_model` with `run_async=True` and takes the `dry_run=False` default, so the safe
           path exists only for someone at a terminal. The pre-flight it skips is the half that
           spends — Places and grounded `AI.GENERATE` for every labelled row missing a profile.
-    - [ ] Sub-task: Report the outcome. `run_async=True` returns a job ID and the UI never mentions
+          → "Validate Training SQL (Dry Run)", never locked; `train_model` returns the byte estimate.
+    - [x] Sub-task: Report the outcome. `run_async=True` returns a job ID and the UI never mentions
           it again — no polling, no status. A click that worked and a click that did nothing look
           the same, which is how the question in the first place got asked.
-- [ ] Task: Close the coverage gap, or record it as accepted
-    - [ ] Sub-task: `pytest --cov=app --cov=scripts` reports **64%** of production code against
+          → Polled until DONE, then remembered. `DONE` and *succeeded* are read separately.
+- [x] Task: Close the coverage gap, or record it as accepted `2965ca8`
+    - [x] Sub-task: `pytest --cov=app --cov=scripts` reports **64%** of production code against
           `workflow.md`'s >80% gate (68% excluding the one-shot migration scripts, 77% also
           excluding `st_app.py`). Carried from Phase 11 with the user's agreement rather than
           rounded up: the honest number needed `[tool.coverage.run] omit`, since counting the test
           files themselves reports 84% and measures nothing.
+          → Recorded as accepted in **D-29**. Re-measured at close-out: 65.0% / 67.8% / 75.0%.
+- [x] Task: Walk the 13 acceptance criteria in `spec.md §5` and name the evidence for each `4942ef3`
+    - [x] Sub-task: 11 met, 1 pending the live two-run check, 1 deliberately unmet (criterion 3,
+          superseded by D-08). Recorded in **D-30**.
+- [x] Task: Refill the prediction column the D-20 sweep emptied `9e2f90d`
+    - [x] Sub-task: `scripts/backfill_predictions.py`, dry run by default, verifies every chunk is
+          free through the production predicate and refuses rather than spending.
+    - [x] Sub-task: Dry run against live BigQuery: **1,941 candidates**, 8 chunks, all verified free.
+    - [ ] Sub-task: `--execute` — awaiting go-ahead.
+- [x] Task: Fix the find query's demographics fan-out (D-31, found by the backfill's dry run) `fbb02ea`
+    - [x] Sub-task: 15 duplicated postcodes in `uk_postcode_demographics`, 103 `fsa_master` rows
+          affected. A counting defect, not a spending one: `LIMIT 50` counted joined rows.
+    - [x] Sub-task: Wrong about the blast radius — see D-32 below.
+- [x] Task: Fix the same fan-out where it is fatal (D-32/D-33, found in production) `7d00660`
+    - [x] Sub-task: Two prediction batches failed on 2026-09-24 with "UPDATE/MERGE must match at
+          most one source row for each target row", each *after* paying for `AI.GENERATE`. This is
+          the layer under D-28: clicking did run, did spend, and threw the result away.
+    - [x] Sub-task: `feature_source_clause` joins a deduplicated subquery. `ROW_NUMBER … NULLS LAST`,
+          not `ANY_VALUE` — 1 of the 15 duplicate sets genuinely disagrees.
+    - [x] Sub-task: Training pre-flight's copy → correlated subquery, as the find query's was.
+    - [x] Sub-task: `build_missing_postcodes_query` groups by the normalised key, so the table stops
+          accumulating one row per raw spelling.
+    - [x] Sub-task: Measured 226→103 rows for the 103 affected restaurants; 370→369 training rows.
+          Feature list unchanged, so no retrain forced. 512 offline tests.
+    - [ ] Sub-task: Clean the 16 surplus rows out of `uk_postcode_demographics` — hygiene, not a
+          fix, since every reader is now safe. Needs the user's go-ahead.
+- [ ] Task: Decision-log closing entry, `metadata.json` → `complete`, checkpoint, merge

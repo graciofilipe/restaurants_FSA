@@ -14,10 +14,10 @@ uv export --no-dev --no-hashes --no-emit-project -o requirements.txt
 
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest                                  # 447 offline tests, ~8s — and what Cloud Build runs
+pytest                                  # 512 offline tests, ~8s — and what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest -m integration                   # the 10 live tests, deliberately (costs money)
-pytest --cov=app --cov=scripts          # 64% of production code; test files are omitted
+pytest --cov=app --cov=scripts          # 65% of production code; test files are omitted
 
 uvx ruff check .                        # ruff is configured in pyproject.toml but not installed in .venv
 ```
@@ -43,6 +43,7 @@ python -m scripts.enrich_maps_data                # Google Places backfill (need
 python -m scripts.enrich_postcode_demographics    # postcodes.io → uk_postcode_demographics
 python -m scripts.evaluate_model --execute        # held-out MAE/RMSE/ρ vs the match_score baseline
 python -m scripts.invalidate_stale_predictions    # dry run; --execute clears pre-retrain scores
+python -m scripts.backfill_predictions            # dry run; --execute re-scores rows that cost nothing
 python -m scripts.retire_v1_insights --drop       # done; the drop refuses without a full archive
 python -m app.cron.fetch_weekly                   # the weekly FSA ingest, run as a Cloud Run Job
 ```
@@ -51,7 +52,10 @@ python -m app.cron.fetch_weekly                   # the weekly FSA ingest, run a
 models, so it can never touch the served one; reuse `--holdout_modulus 5` or the numbers are not
 comparable across runs. `invalidate_stale_predictions.py` takes its cutoff from the served model's
 own `created` time — a prediction made by a replaced model is wrong, and `predicted_at` records
-when a row was scored, not what scored it.
+when a row was scored, not what scored it. `backfill_predictions.py` is its mirror image and scores
+only rows whose enrichment is already paid for; it re-derives that at run time through
+`split_enrichment_targets`, the same function `generate_predictions` uses, and aborts rather than
+buying anything — including on a dry run, since finding the bill after `--execute` is too late.
 
 Deployment is automatic: **a Cloud Build trigger builds and deploys on every push to `main`**. Local
 changes are not live until pushed. Manual: `gcloud builds submit --config cloudbuild.yaml .`
@@ -98,7 +102,11 @@ a one-day expiry as a backstop).
    arrive untriaged and profiling is what answers the question; what it excludes is the
    already-answered no. This replaced a `manual_review` predicate whose dominant value, `rejected`,
    was set on 9,348 rows that are in scope.
-4. **Demographics** — `scripts/enrich_postcode_demographics.py` fills LSOA/MSOA/IMD from postcodes.io.
+4. **Demographics** — `scripts/enrich_postcode_demographics.py` fills LSOA/MSOA/IMD from
+   postcodes.io into `uk_postcode_demographics`. Every reader joins it on
+   `REPLACE(UPPER(postcode), ' ', '')`, so it fetches one row per *normalised* key, not per raw
+   spelling — `SW3 5UH` and `SW3 5 UH` are two spellings and one key, and fetching both is how 15
+   duplicate keys got in (D-33). They are still there; the readers defend themselves.
 5. **Predict** — `app/services/ml_prediction.py` runs steps 2–4 just-in-time for whatever is missing,
    then `ML.PREDICT` into `predicted_user_rating` + `predicted_at`. Whether step 3 is "missing" is
    decided by `needs_gemini_profile` (`app/core/profile_freshness.py`) — no profile, or one older
@@ -140,6 +148,16 @@ than a convention — `app/core/test_model_features.py::TestTrainServeParity` fa
 generated strings ever differ. Missing scores stay NULL; there is no `IFNULL(…, 0)`, because a
 constant-zero feature is indistinguishable from an uninformative one.
 
+`feature_source_clause` joins a **deduplicated subquery** over `uk_postcode_demographics`, never the
+table. Its key is not unique there, and the duplicates are fatal on the prediction side rather than
+untidy: they reach `ML.PREDICT`'s MERGE, which refuses a source matching a target twice — *after* the
+caller has paid for the Gemini pre-flight. Two production batches died that way before it was found
+(D-32). The row is picked by `ROW_NUMBER ... ORDER BY … NULLS LAST` and not `ANY_VALUE`, because one
+duplicate set genuinely disagrees and an independent choice at train and serve time is the skew this
+module exists to prevent. Any new query joining that table needs the same treatment; a correlated
+subquery is the right form where only "did it resolve?" is read (`build_find_query`, the training
+pre-flight).
+
 **Changing the feature list changes the model's input schema**, so `ML.PREDICT` against a model
 trained on the old one fails. Retrain in the same change.
 
@@ -178,6 +196,13 @@ Triage → Manual Rating → ML Predictions → Model Training. Selection state 
 (`reset_selection_state`) after every write, because Streamlit returns positional row indices that go
 stale when the underlying frame shrinks.
 
+The Model Training tab (`render_model_training_tab`, the one tab extracted from `main` so it can be
+tested) has two asymmetric buttons: a dry run that validates the generated SQL and returns a byte
+estimate without touching the pre-flight, and the real async train. Its double-click guard is derived
+from a tracked job id polled through `training_job_status`, not from a flag — the previous
+`training_lock` was initialised `False` and set `True` nowhere. BigQuery marks a *failed* query
+`DONE`, so "finished" and "succeeded" are separate reads (D-28).
+
 ## Conventions
 
 - **SQL is built by f-string interpolation**, not parameterized queries; string values go through
@@ -195,5 +220,6 @@ stale when the underlying frame shrinks.
 - Work is tracked under `conductor/tracks/<name>/plan.md` following the TDD workflow in
   `conductor/workflow.md`; `conductor/code_styleguides/` holds the Google Python style summary.
   Commits follow `type(scope): description`.
-- `README.md` and `GEMINI.md` reference `agents-cli eval run …`; that CLI is not installed in `.venv`.
-  Use `adk eval` (the `adk` binary is present) with `tests/eval/evalsets/restaurant_eval.evalset.json`.
+- The evaluation command is `adk eval app tests/eval/evalsets/restaurant_eval.evalset.json`. `adk` is
+  in `.venv`; the `agents-cli` that `README.md` and `GEMINI.md` used to name never was. It bills a
+  live Gemini call per case, so it is not part of `pytest`.

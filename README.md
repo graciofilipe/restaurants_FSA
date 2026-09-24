@@ -41,13 +41,17 @@ streamlit run app/ui/st_app.py
 The app will be accessible at `http://localhost:8501`.
 
 ### Running Tests & Evaluations
-To execute the test suite and agent evaluations:
 ```bash
-# Run pytest unit and evaluation tests
+# The offline suite. No credentials, no network, no listening port -- and what
+# Cloud Build gates on. Tests needing live GCP are marked `integration` and
+# deselected by `addopts` in pyproject.toml.
 pytest
 
-# Run ADK agents-cli evaluation dataset
-agents-cli eval run --evalset tests/eval/evalsets/restaurant_eval.evalset.json
+# The live tests, deliberately. These make real Vertex calls and cost money.
+pytest -m integration
+
+# The ADK evaluation dataset.
+adk eval app tests/eval/evalsets/restaurant_eval.evalset.json
 ```
 
 ## AI Agents & Evaluation Flywheel

@@ -202,28 +202,81 @@ fields. The free-text pillar columns are display-only and must stay out of the f
 
 ## 5. Acceptance criteria
 
+*Walked one by one on 2026-09-24 and recorded in D-30. Each tick names its evidence; the two that
+are not ticked say why rather than being left silently blank.*
+
 - [ ] A second consecutive "Generate Predictions" run over the same selection issues **zero**
       `AI.GENERATE` calls, and the UI's "Estimated New Gemini Calls" matches what actually runs.
-- [ ] Profiles older than the staleness threshold are refreshed; fresher ones are not.
+      — *Pending the live two-run check (Part A). The estimate and the spend already call the same
+      predicate, `needs_gemini_profile`, from `count_needing_gemini_profile` and
+      `generate_predictions`; what is outstanding is the observation, not the wiring.*
+- [x] Profiles older than the staleness threshold are refreshed; fresher ones are not.
+      — `app/core/test_profile_freshness.py`, 20 tests. **Not observable in production:** 0 rows are
+      stale at the 180-day threshold and the first becomes eligible 2027-03-22.
 - [ ] New profiles conform to a single canonical output shape, verified on a sample — the shape is
       guaranteed by configuration, not requested in prose (D14).
-- [ ] A contract test runs the **real** extraction SQL against a payload recorded from production,
+      — **Deliberately not met; superseded by D-08.** Constrained decoding is unavailable alongside
+      `googleSearch` grounding, and dropping grounding stayed off the table. Recon measured
+      2,766/2,766 nested paths resolving, so the prose example already holds the shape and the
+      two-step rework bought nothing. What shipped instead is detection: one definition in
+      `pillar_schema.py`, the contract test below, and `sql_conformance_check` at merge time.
+- [x] A contract test runs the **real** extraction SQL against a payload recorded from production,
       so a path/shape mismatch fails the build rather than silently zeroing a feature.
-- [ ] Every pillar feature reaching BQML has a non-degenerate distribution — verified by a
+      — `app/core/test_pillar_schema.py` against 10 payloads recorded from production in
+      `tests/fixtures/gemini_profiles/` (8 clean, 1 markdown-fenced, 1 unparseable). The parser and
+      the extraction SQL are both generated from `PILLAR_FIELDS`, and
+      `test_generated_sql_reads_the_nested_paths_not_the_flat_ones` pins the SQL to the same paths
+      the fixtures are parsed with. The SQL's own live reading is `sql_conformance_check`:
+      2,766/2,767 conform on all 14 paths.
+- [x] Every pillar feature reaching BQML has a non-degenerate distribution — verified by a
       `SELECT COUNT(DISTINCT ...)` check, not by inspection.
-- [ ] The training feature list and the `ML.PREDICT` feature list derive from a single definition;
+      — Built by `recon_pipeline_state.py:91` and `backfill_pillar_columns.py:188`. Measured:
+      match_score 91, value 20, community 22, linguistic 17, culinary 23, geo_specificity 3,
+      is_sit_down 2, establishment_type 3 — every one ≥ 2. Before the fix four of them were
+      constant 0 *inside the trained model*.
+- [x] The training feature list and the `ML.PREDICT` feature list derive from a single definition;
       a test fails if they diverge.
-- [ ] A restaurant with a blank or unmappable postcode does not outrank a known-nearby restaurant.
-- [ ] No row has `maps_rating = -1`; UI counts, filters, and sorting reflect true Maps coverage;
+      — `app/core/test_model_features.py::TestTrainServeParity`. Confirmed against the served model:
+      21/21 exact match with `feature_select_list()`, label excluded.
+- [x] A restaurant with a blank or unmappable postcode does not outrank a known-nearby restaurant.
+      — `test_scoring_priority.py`: `test_a_missing_postcode_is_unknown_not_sw16`,
+      `test_an_unknown_location_does_not_score_as_perfect_proximity`,
+      `test_an_unknown_location_still_beats_nothing`,
+      `test_a_nan_postcode_is_unknown_rather_than_the_string_nan`. Live: the 106 unplaceable rows
+      went from 14.7 (scored as Trafalgar Square, 9.59 km) to 10.0 with a blank distance, and they
+      are exactly the rows whose proximity changed.
+- [x] No row has `maps_rating = -1`; UI counts, filters, and sorting reflect true Maps coverage;
       permanent Places misses are still not re-queried.
-- [ ] Newly ingested restaurants have `latitude`/`longitude` before any Places call, and a Places
+      — 0 surviving sentinels in `maps_rating`, `maps_reviews`, `price_level` and `match_score`.
+      Coverage is now three states rather than two: `maps_found` TRUE 2,263 / FALSE 243 / NULL 8,762.
+      Re-query guard: `test_a_permanent_miss_is_not_re_queried` and
+      `test_a_miss_records_the_lookup_instead_of_a_sentinel`; the same `maps_lookup_at IS NULL`
+      predicate now gates all three call sites.
+- [x] Newly ingested restaurants have `latitude`/`longitude` before any Places call, and a Places
       miss does not clear them.
-- [ ] Held-out evaluation reports the model's error against a `match_score`-ranking baseline, with a
+      — `test_the_fsa_coordinates_are_kept_at_ingest`,
+      `test_ingest_coordinates_are_numbers_not_the_api_strings`,
+      `test_places_miss_does_not_erase_existing_coordinates`,
+      `test_hit_without_location_preserves_coordinates`.
+- [x] Held-out evaluation reports the model's error against a `match_score`-ranking baseline, with a
       documented recommendation on whether to keep the BQML path.
-- [ ] `manual_review`, `gemini_insights`, the path input, and `app/maps_agent/` are gone with no
+      — Phase 9, 292 train / 77 holdout on `FARM_FINGERPRINT(fhrsid) MOD 5`. Tree 0.737 MAE / ρ
+      0.689 against `match_score` 0.679 / 0.645; paired bootstrap ΔMAE +0.058, 95% CI
+      [−0.073, +0.210]. Recommendation recorded and reasoned: **keep BQML, do not trust it above
+      `match_score` yet**, re-measure at ~600 in-scope labels.
+- [x] `manual_review`, `gemini_insights`, the path input, and `app/maps_agent/` are gone with no
       dangling references.
-- [ ] `pytest` at the repo root runs only offline tests; live tests run behind an explicit marker.
-- [ ] `pytest app/` stays green throughout; Cloud Build passes on Python 3.11.
+      — Columns dropped: `fsa_master` is 42 columns, from 44. `app/maps_agent/` has zero references
+      outside `conductor/`. The BigQuery path is the `DEFAULT_BQ_PATH` constant, no longer a text
+      box. The surviving mentions of the two column names are a spent migration script that
+      documents itself as unrunnable, and tests asserting their absence.
+- [x] `pytest` at the repo root runs only offline tests; live tests run behind an explicit marker.
+      — `addopts = "-m 'not integration'"` (D11): 469 passed, 10 deselected. `pytest -m integration`
+      runs the 10 deliberately; `pytest -m ""` runs everything.
+- [x] `pytest app/` stays green throughout; Cloud Build passes on Python 3.11.
+      — Cloud Build `3ca778b8`, Python 3.11.16, 457 collected / 10 deselected / 447 selected, all
+      green, deployed as revision `restaurants-fsa-00232-hxh`. Until D12 the CI gate had never run
+      `tests/` at all.
 
 ## 6. Out of scope
 

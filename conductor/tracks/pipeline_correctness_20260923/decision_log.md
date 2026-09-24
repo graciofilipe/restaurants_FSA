@@ -1316,6 +1316,239 @@ The verification value here is not the defect but where it came from. A checkpoi
 verification is supposed to be the step where a claim meets the product; this one worked as
 designed, and the claim it caught was mine.
 
+**Resolved, `f9195aa`.** One commit, because fixing (2) and (3) is one mechanism. The tab moved into
+`render_model_training_tab` — it was inline in `main()`, which nothing can call, so none of this was
+testable before the extraction. A "Validate Training SQL (Dry Run)" button now takes the `dry_run=True`
+path and is never locked, since "what would this do?" is the question someone asks precisely when a
+job is already running; `train_model` returns the byte estimate rather than logging and discarding it.
+The lock is derived from a tracked job id polled by the new `training_job_status`, which resolves the
+job's location from the dataset's because `jobs.get` needs it outside the US. It reads `error_result`
+separately from `state`: BigQuery marks a failed query `DONE`, which is exactly how problem (3) hid.
+
+Mutation-checked in both directions rather than asserted: hard-coding `disabled=False` kills
+`test_a_running_job_disables_the_train_button`; hard-coding `True` kills two others. A guard that
+cannot fail a test is how `training_lock` got to production in the first place.
+
+---
+
+## D-29 — The coverage gate, measured and accepted rather than met
+
+**Date.** 2026-09-24. **Phase 12.** **User decision:** record the gap, do not chase 80%.
+
+`conductor/workflow.md` wants 80% coverage. The track ends at **65.0%** (2,089 statements, 732
+missed), and that number is being recorded as accepted rather than quietly left unmet.
+
+| Scope | Statements | Missed | Covered |
+|---|---|---|---|
+| Everything under `app/` and `scripts/` | 2,089 | 732 | **65.0%** |
+| Excluding one-shot `scripts/migrate_*.py` | 1,938 | 624 | **67.8%** |
+| Also excluding `app/ui/st_app.py` | 1,511 | 377 | **75.0%** |
+
+The gap is two things, and neither is pipeline logic:
+
+- **Migrations that have already run.** Six of the seven `migrate_*.py` files sit at 0% — 103
+  statements of `ALTER TABLE ADD COLUMN` that executed once against the live table and are kept as
+  the record of what was done. Testing them now would test a mock's memory of a schema change that
+  is already visible in `MASTER_BQ_SCHEMA`. `migrate_pillar_columns.py` is the exception at 89%,
+  tested because Phase 4 was still writing it.
+- **Streamlit render code.** `st_app.py` is 42%, and the uncovered span is one region: `433-929`,
+  the body of `main()`. It is not callable — it renders against a live `st` context. The parts of
+  that file worth testing have been pulled out of it one at a time across this track
+  (`filter_and_sort_restaurants`, `load_data_into_state`, `priority_for_current_frame`,
+  `render_model_training_tab` at D-28) and each extraction is covered. That is the mechanism by
+  which this number improves, and it improves a function at a time.
+
+What the figure does *not* include: the 10 `integration` tests are deselected by `addopts` (D11), so
+the live paths they exercise count as uncovered here. Measuring with `-m ""` would flatter the number
+without testing anything more.
+
+The honest summary is that 75% is the real coverage of code that can be unit-tested, and the 5-point
+shortfall against the gate is spread thin rather than concentrated on anything load-bearing. Closing
+it properly means continuing to lift functions out of `main()`, which is a refactor with its own
+risk, not a test-writing exercise. Deliberately not done in a track about pipeline correctness.
+
+---
+
+## D-30 — The 13 acceptance criteria, walked
+
+**Date.** 2026-09-24. **Phase 12.**
+
+`spec.md §5` had never been checked against anything. Thirteen criteria, thirteen empty boxes, after
+twelve phases of work that were justified by them. The walk is recorded in the spec itself, where
+each tick now names its evidence; this is the summary.
+
+**Eleven met.** Nine of those rest on tests that run in `pytest`, so they stay met rather than having
+been true once. Two rest on live measurements that cannot be re-run cheaply — the pillar
+distributions and the held-out evaluation — and both are in the Measurements table with their date.
+
+**One pending: criterion 1**, the two-run zero-`AI.GENERATE` check. The wiring is in place and tested
+— the estimate and the spend both call `needs_gemini_profile`, which is the structural half of the
+claim — but the observation needs a human at the UI, and it is the one criterion that cannot be
+evidenced from this side.
+
+**One deliberately not met: criterion 3**, "the shape is guaranteed by configuration, not requested
+in prose". D-08 withdrew it on measured evidence. Constrained decoding is unavailable alongside
+`googleSearch` grounding; the only routes were a second ungrounded normalising call per profile or
+dropping grounding, and recon then found 2,766/2,766 nested paths already resolving. Paying per
+profile to guarantee a shape that 100% of production payloads already had was not worth it. The
+substitute is detection rather than prevention: one definition, a contract test on recorded
+payloads, and a conformance check at merge time. That is a weaker guarantee and it is written down
+as one.
+
+Two things worth noting about the exercise. First, criterion 8 is the one whose *meaning* changed
+during the track: "UI counts reflect true Maps coverage" turned out to need three states rather than
+two, because 243 permanent Places misses are neither found-and-unrated nor never-looked-up. The
+criterion as written would have been satisfiable by a wrong implementation. Second, several criteria
+were met by phases that were not aiming at them — criterion 5's non-degenerate distributions fell out
+of Phase 6's retrain, not out of a check written to satisfy criterion 5. Walking the list at the end
+is what surfaced that they were met at all; nothing in the phase-by-phase work would have said so.
+
+---
+
+## D-31 — The prediction find query counted rows, not restaurants (new defect, found by the backfill's own dry run)
+
+**Date.** 2026-09-24. **Phase 12.** Found by `scripts/backfill_predictions.py` reporting **1,964
+verified rows for 1,941 candidates** — a surplus, which the code had no wording for because I had
+only imagined the shortfall.
+
+`generate_predictions`' find query `LEFT JOIN`ed `uk_postcode_demographics` to answer one boolean:
+did this postcode resolve? That table holds **5,576 rows for 5,560 distinct normalised postcodes** —
+15 duplicated, one of them three times — and **103 rows of `fsa_master`** share one. Those rows came
+back two or three times.
+
+**It did not cost anything.** Both enrichment calls build `IN (...)` lists, where duplicates
+collapse, and `enrich_restaurants_by_fhrsid` receives `limit=len(list)`, which a duplicate only makes
+too generous. So this is a counting defect, not a spending one, and the honest way to record it is
+that way round.
+
+What it did do:
+
+- **`LIMIT 50` counted joined rows**, so an untargeted batch of 50 could be fewer than 50
+  restaurants. The batch silently shrank, by an amount that depended on which postcodes were in it.
+- **Every count derived from the rows inflated** — `never_profiled`, and the "Running Gemini
+  enrichment for N restaurants" line that someone would read to sanity-check a bill.
+
+Fixed by replacing the join with a correlated `MIN(d.postcode)` subquery. Same column name, same
+single use, one row per restaurant, and `LIMIT` now means what it says. Re-run live: **1,941 =
+1,941**, no warning.
+
+Worth noting where this came from. The candidate query in the backfill already used `EXISTS` for
+exactly this reason — I wrote a comment there about fan-out on duplicate postcodes — and then
+verified the chunks with a production query that had the bug the comment describes. The defect was
+not found by knowing about it; it was found by making two independently-derived numbers meet and
+having the script complain when they disagreed. That check was in the script because the plan called
+for the guarantee to be re-derived at run time rather than assumed, which is the same reasoning that
+produced D1's shared predicate.
+
+**Superseded in part by D-32.** "It did not cost anything" was true of the find query and false of
+the blast radius. The same duplicates reach `ML.PREDICT`'s MERGE, which does not tolerate them.
+
+---
+
+## D-32 — The same duplicate postcodes killed every prediction batch outright (new defect, found in production)
+
+**Date.** 2026-09-24. **Phase 12.** Found by reading `INFORMATION_SCHEMA.JOBS` while looking for the
+Phase 7 verification evidence, which is not where I expected to find a defect.
+
+Two prediction runs had failed in production that afternoon, both the same way:
+
+```
+14:45:58  MERGE  ML.PREDICT  UPDATE/MERGE must match at most one source row for each target row
+16:10:33  MERGE  ML.PREDICT  UPDATE/MERGE must match at most one source row for each target row
+```
+
+Each one had run the Gemini pre-flight first — the 14:44 run took 82 seconds in `AI.GENERATE` and
+wrote 18 new profiles, the 16:06 run took 3m34s — and then thrown the result away. **The money was
+spent and no prediction was written.** The prediction column had stood at 25 rows since 14:42, which
+was the one batch of the three that happened to contain no affected row.
+
+### The mechanism
+
+`feature_source_clause` joined `uk_postcode_demographics` directly. The join key is
+`REPLACE(UPPER(postcode), ' ', '')`; the table is not stored that way. 15 normalised postcodes appear
+two or three times, 103 rows of `fsa_master` match one, and the `ML.PREDICT` input therefore held
+**226 rows for 103 restaurants**. `ML.PREDICT` returns one row per input row, so `fhrsid` was
+duplicated in the MERGE's `USING`, and BigQuery refuses the statement rather than picking a winner.
+
+This is the same 15 duplicated postcodes as D-31, which I had recorded as harmless. The find query's
+copy *was* harmless. This copy is not, and the difference is that a MERGE has an opinion about
+duplicate source keys where an `IN (...)` list does not. Recording D-31 as "a counting defect, not a
+spending one" was the right call for the evidence I had and the wrong conclusion about the join; what
+I should have done on finding a fan-out in one query was look for the same join everywhere else,
+which is how this was eventually found.
+
+It also answers the question that opened Phase 12 — *"why does clicking not trigger a training
+job?"* — one layer further down than D-28 did. D-28 was right that the UI never reported the
+outcome. This is what the outcome was.
+
+### The fix
+
+The join is against a deduplicated subquery:
+
+```sql
+LEFT JOIN (
+  SELECT REPLACE(UPPER(postcode), ' ', '') AS postcode_key, lsoa, msoa, imd_rank
+  FROM `…uk_postcode_demographics`
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY REPLACE(UPPER(postcode), ' ', '')
+                             ORDER BY lsoa NULLS LAST, msoa NULLS LAST, imd_rank NULLS LAST) = 1
+) AS d
+```
+
+`ROW_NUMBER` and not `ANY_VALUE`: **14 of the 15 duplicate sets are byte-identical, one is not**
+(`SW3 5UH`), so something has to choose, and `ANY_VALUE` would let the training run and the
+prediction run choose differently — the train/serve skew this module exists to prevent — as well as
+mixing columns from different source rows.
+
+`NULLS LAST` because the disagreeing pair is `SW3 5 UH`, a stray space, which postcodes.io answered
+with an all-NULL row. BigQuery sorts nulls first ascending, so the plain ordering deterministically
+picks the blank over the real demographics. Found by running the fix and looking at what it chose,
+not by thinking about it.
+
+Because this is a row-cardinality change and not a feature-list change, **the model's input schema is
+unchanged and no retrain is forced**. `app/core/test_model_features.py` pins that claim by extracting
+the aliases from the generated `SELECT` and comparing them to `FEATURE_ALIASES`.
+
+The training pre-flight's copy of the same join becomes a correlated subquery, as the find query's
+did. It only inflates the "N labelled rows need a profile" line, but that is a number someone reads
+before deciding to spend.
+
+### Measured
+
+| | Before | After |
+|---|---|---|
+| `ML.PREDICT` input over the 103 affected rows | 226 rows / 103 restaurants | **103 / 103** |
+| Of those, carrying demographics | some got the all-NULL row | **103** |
+| `build_training_select` over the labelled set | 370 rows | **369** |
+| Production prediction batches, 2026-09-24 | 2 of 3 failed after paying | — |
+
+The training figure is the second half of this: the served model was trained on **one label
+double-weighted**, out of 411. Small, and not the reason for the fix, but it is a thing that was
+true and is no longer.
+
+---
+
+## D-33 — The table was accumulating the duplicates, one per spelling
+
+**Date.** 2026-09-24. **Phase 12.** The source of D-32, found by asking where 15 duplicate keys in a
+reference table come from when the script that fills it checks for membership first.
+
+It checks correctly and selects incorrectly. Membership is tested on the normalised key; the
+candidate list was `SELECT DISTINCT PostCode` — distinct **raw** spellings. `SW3 5UH` and `SW3 5 UH`
+are two spellings and one key, so both were absent from the target, both were fetched, and both were
+inserted. `EC2A 3EJ` managed three.
+
+`build_missing_postcodes_query` now groups by the normalised key. Which spelling to send to the API
+is then a real choice, and it takes the shortest: the surplus characters in these pairs are stray
+spaces, and the stray-space spelling is the one the API could not resolve. A plain `MIN` picks it,
+because a space sorts below a digit.
+
+**Both fixes ship, and the query-side one is the load-bearing one.** A join against a reference table
+this code does not own should not assume that table's keys are unique, whatever the writer does.
+Cleaning the 16 surplus rows out of the table is hygiene, not a fix, and is left for the user to
+approve — every reader is now safe against them.
+
+Live after the change: **29 postcodes still to fetch**, down from a list that counted raw spellings.
+
 ---
 
 ## Measurements
@@ -1421,6 +1654,20 @@ designed, and the claim it caught was mine.
 | `requirements.txt` | 10 unpinned hand-written names → **136 pinned, generated** | 2026-09-24 |
 | Lock vs runtime Python | lock said **3.13**, everything deployed runs **3.11** | 2026-09-24 |
 | Test-only Cloud Build `b21bfd7d` | 3.11.16, 132 packages, **425 passed / 10 deselected**, 2m27s | 2026-09-24 |
+| Offline suite at close-out | **496 passed, 10 deselected**, 300 subtests, ~7s | 2026-09-24 |
+| Coverage at close-out (D-29) | **65.0%**; 67.8% excl. migrations; 75.0% excl. migrations and `st_app.py` | 2026-09-24 |
+| `uk_postcode_demographics` rows / distinct normalised postcodes (D-31) | 5,576 / **5,560**; 15 duplicated, worst ×3 | 2026-09-24 |
+| `fsa_master` rows the fan-out duplicated (D-31) | **103** | 2026-09-24 |
+| Backfill candidates: unscored, fully enriched, fresh profile | **1,941** of 11,268; 8 chunks of 250 | 2026-09-24 |
+| Backfill verification, before → after the D-31 fix | 1,964 rows for 1,941 ids → **1,941 = 1,941** | 2026-09-24 |
+| Production prediction batches that failed on the MERGE (D-32) | **2 of 3**, 14:45:58 and 16:10:33, both after paying for `AI.GENERATE` | 2026-09-24 |
+| `ML.PREDICT` input over the 103 affected rows, before → after | **226 rows / 103 restaurants → 103 / 103** | 2026-09-24 |
+| Affected rows resolving to real demographics, after | **103 of 103** (some previously drew the all-NULL row) | 2026-09-24 |
+| Duplicate sets with genuinely different payloads (D-32) | **1 of 15** (`SW3 5UH`), which is why the pick is ordered, not `ANY_VALUE` | 2026-09-24 |
+| `build_training_select` rows over the labelled set, before → after | **370 → 369**; the served model carried one double-weighted label | 2026-09-24 |
+| Labelled rows inside the fan-out | **1** of 411 (1 of 369 in scope) | 2026-09-24 |
+| Postcodes still to fetch, after the D-33 regrouping | **29** | 2026-09-24 |
+| Offline suite after D-32/D-33 | **512 passed, 10 deselected**, 300 subtests, ~7s | 2026-09-24 |
 
 ## Cost ledger
 

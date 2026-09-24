@@ -80,6 +80,24 @@ def test_the_preflight_selects_the_columns_its_guards_read(mock_bq):
     assert 'AS has_profile' in check_query
 
 
+@patch('scripts.train_bqml_model.bigquery.Client')
+def test_the_preflight_counts_restaurants_and_not_joined_rows(mock_bq):
+    """Same fan-out as D-31 and D-32: joining `uk_postcode_demographics`
+    returns a row per duplicate normalised postcode. Here it only inflates the
+    enrichment lists -- duplicate ids collapse in the `IN (...)` both callees
+    build -- so nothing is bought twice, but "N labelled rows need a profile"
+    is a number someone reads before deciding to spend."""
+    client = _mock_client([])
+    mock_bq.return_value = client
+
+    train_model('p', 'd', 't', 'm', dry_run=False)
+
+    check_query = client.query.call_args_list[0].args[0]
+    assert 'uk_postcode_demographics' in check_query
+    assert 'JOIN' not in check_query.upper()
+    assert 'AS d_postcode' in check_query
+
+
 @patch('app.services.bq_utils.execute_gemini_enrichment')
 @patch('scripts.train_bqml_model.bigquery.Client')
 def test_training_never_refreshes_a_profile_it_already_has(mock_bq, mock_gemini):
@@ -186,3 +204,60 @@ class TestADryRunSpendsNothing:
 
         submitted = [c.args[0] for c in client.query.call_args_list]
         assert any('CREATE OR REPLACE MODEL' in q for q in submitted)
+
+
+class TestTheDryRunHandsBackItsAnswer:
+    """`--dry-run`'s result is the byte estimate, and until D-28 it was logged
+    and thrown away. The UI's validate button has nothing else to report."""
+
+    @patch('scripts.train_bqml_model.bigquery.Client')
+    def test_it_returns_the_bytes_the_query_would_process(self, mock_bq):
+        client = _mock_client([])
+        client.query.side_effect = None
+        job = MagicMock()
+        job.total_bytes_processed = 1234567
+        client.query.return_value = job
+        mock_bq.return_value = client
+
+        assert train_model('p', 'd', 't', 'm', dry_run=True) == 1234567
+
+
+class TestReadingBackAnAsyncJob:
+    """`run_async=True` returns a job id in a second for a job that takes ten
+    to fifteen minutes. Nothing read the other end of that until D-28."""
+
+    def _status(self, state='DONE', error_result=None, location='EU'):
+        from scripts.train_bqml_model import training_job_status
+
+        client = MagicMock()
+        client.get_dataset.return_value.location = location
+        job = MagicMock()
+        job.state = state
+        job.error_result = error_result
+        client.get_job.return_value = job
+
+        with patch('scripts.train_bqml_model.bigquery.Client', return_value=client):
+            return training_job_status('p', 'd', 'job-1'), client
+
+    def test_a_running_job_reports_running(self):
+        status, _ = self._status(state='RUNNING')
+
+        assert status == {'state': 'RUNNING', 'error': None}
+
+    def test_a_failed_job_is_done_and_carries_its_error(self):
+        """The distinction the UI hangs on: BigQuery marks a failed query DONE,
+        so "finished" and "succeeded" are different questions."""
+        status, _ = self._status(
+            error_result={'reason': 'invalidQuery',
+                          'message': 'Unrecognized name: pillar_typo'})
+
+        assert status['state'] == 'DONE'
+        assert 'pillar_typo' in status['error']
+
+    def test_the_job_is_looked_up_in_the_dataset_location(self):
+        """`jobs.get` needs the location for anything outside the US, and this
+        dataset is in the EU. Asking without it is a 404 on a job that exists."""
+        _, client = self._status(location='EU')
+
+        client.get_dataset.assert_called_once_with('p.d')
+        assert client.get_job.call_args.kwargs['location'] == 'EU'

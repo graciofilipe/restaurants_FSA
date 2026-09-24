@@ -100,7 +100,35 @@ def feature_source_clause(project_id: str, dataset_id: str, source_table: str,
     normalised (`REPLACE(UPPER(...), ' ', '')`), and a training run joining on a
     different rule than the prediction run would skew `lsoa`/`msoa`/`imd_rank`
     on exactly the rows whose postcodes are formatted inconsistently.
+
+    The join is against a deduplicated subquery, not the table (D-32). That key
+    is normalised but the table is not: it holds one row per *raw* spelling, so
+    15 normalised postcodes appear two or three times and 103 rows of
+    `fsa_master` match more than one. On the prediction side that is fatal
+    rather than untidy -- the duplicates reach the MERGE's source and BigQuery
+    refuses the whole statement ("must match at most one source row for each
+    target row"), after the caller has already paid for the Gemini pre-flight.
+    On the training side it double-weights those rows.
+
+    `ROW_NUMBER` and not `ANY_VALUE`: one of the 15 has two genuinely different
+    payloads, so something has to choose, and a choice made independently at
+    training time and at prediction time is the skew this module exists to
+    prevent. Ordering by the payload makes both pick the same row, and picks a
+    whole row rather than a column at a time.
+
+    `NULLS LAST` because that one is `SW3 5 UH` -- a stray space in the raw
+    postcode, fetched before the correct spelling and answered with an empty
+    row. Ascending order defaults to nulls first in BigQuery, so the plain
+    ordering would deterministically pick the blank over the real demographics.
+    A populated row wins.
     """
+    demographics = ", ".join(DEMOGRAPHIC_COLUMNS)
+    best_first = ", ".join(f"{column} NULLS LAST" for column in DEMOGRAPHIC_COLUMNS)
+    normalised = "REPLACE(UPPER(postcode), ' ', '')"
     return f"""FROM `{source_table}` AS {master}
-LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS {demo}
-  ON REPLACE(UPPER({master}.postcode), ' ', '') = REPLACE(UPPER({demo}.postcode), ' ', '')"""
+LEFT JOIN (
+  SELECT {normalised} AS postcode_key, {demographics}
+  FROM `{project_id}.{dataset_id}.uk_postcode_demographics`
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY {normalised} ORDER BY {best_first}) = 1
+) AS {demo}
+  ON REPLACE(UPPER({master}.postcode), ' ', '') = {demo}.postcode_key"""

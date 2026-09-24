@@ -47,12 +47,17 @@ def run_jit_preflight(client, project_id: str, dataset_id: str, table_id: str) -
 
     # Pre-flight JIT Enrichment: check all labeled examples for missing features.
     logger.info("Executing pre-flight JIT check for labeled training examples...")
+    # A correlated subquery, not a join: 15 normalised postcodes are duplicated
+    # in the demographics table, so joining it returns those labelled rows two
+    # or three times (D-31, D-32). Only "did the postcode resolve?" is read.
     check_query = f"""
         SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_profiled_at,
-               m.gemini_insights_structured IS NOT NULL AS has_profile, d.postcode AS d_postcode
+               m.gemini_insights_structured IS NOT NULL AS has_profile,
+               (SELECT MIN(d.postcode)
+                FROM `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
+                WHERE REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
+               ) AS d_postcode
         FROM `{source_table}` AS m
-        LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
-          ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
         WHERE (m.in_scope = TRUE OR m.in_scope IS NULL) AND m.user_rating IS NOT NULL
     """
     try:
@@ -103,6 +108,11 @@ def train_model(
 ):
     """
     Constructs and executes a BQML model training query.
+
+    Returns the job id of the training job, or -- on a dry run, which starts no
+    job -- the number of bytes the query would process. Each mode returns the
+    only answer it has: a dry run's result *is* the byte estimate, and a caller
+    that asked for one cannot be handed a job id that does not exist.
     """
     client = bigquery.Client(project=project_id)
 
@@ -138,6 +148,7 @@ def train_model(
             query_job = client.query(query, job_config=job_config)
             logger.info("Dry run successful. Query is valid.")
             logger.info(f"This query will process {query_job.total_bytes_processed} bytes.")
+            return query_job.total_bytes_processed
         except GoogleCloudError as e:
             logger.error(f"BigQuery validation failed: {e}")
             raise
@@ -158,6 +169,29 @@ def train_model(
         except Exception as e:
             logger.error(f"An unexpected error occurred: {e}")
             raise
+
+def training_job_status(project_id: str, dataset_id: str, job_id: str) -> dict:
+    """Look up a training job started earlier by `train_model(run_async=True)`.
+
+    `run_async` hands back a job id and returns immediately; ten to fifteen
+    minutes later that job has either produced a model or failed, and nothing
+    was reading the difference (D-28). This is the read.
+
+    The job's location is the dataset's -- BigQuery runs a query where the data
+    lives, and `jobs.get` needs it for anything outside the US, which this EU
+    dataset is. Both calls are free job/dataset metadata reads, not queries.
+
+    Returns `{"state": ..., "error": ...}`, where `state` is BigQuery's own
+    ("PENDING", "RUNNING", "DONE") and `error` is the failure message or None.
+    A finished job and a *successful* job are not the same thing: a failed
+    query is `DONE` with `error_result` set.
+    """
+    client = bigquery.Client(project=project_id)
+    location = client.get_dataset(f"{project_id}.{dataset_id}").location
+    job = client.get_job(job_id, location=location)
+    failure = job.error_result or {}
+    return {"state": job.state, "error": failure.get("message") or None}
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train BQML Restaurant Preference Model")
