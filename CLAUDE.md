@@ -17,6 +17,7 @@ streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 pytest                                  # 447 offline tests, ~8s — and what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest -m integration                   # the 10 live tests, deliberately (costs money)
+pytest --cov=app --cov=scripts          # 64% of production code; test files are omitted
 
 uvx ruff check .                        # ruff is configured in pyproject.toml but not installed in .venv
 ```

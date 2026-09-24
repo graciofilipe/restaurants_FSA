@@ -57,6 +57,8 @@ colorama==0.4.6 ; sys_platform == 'win32'
     #   click
     #   pytest
     #   tqdm
+coverage==7.16.1
+    # via pytest-cov
 cryptography==49.0.0
     # via
     #   authlib
@@ -312,7 +314,9 @@ pandas-gbq==0.35.0
 pillow==12.3.0
     # via streamlit
 pluggy==1.6.0
-    # via pytest
+    # via
+    #   pytest
+    #   pytest-cov
 propcache==0.5.2
     # via
     #   aiohttp
@@ -370,8 +374,11 @@ pygments==2.20.0
 pytest==9.1.1
     # via
     #   pytest-asyncio
+    #   pytest-cov
     #   restaurants-fsa
 pytest-asyncio==1.4.0
+    # via restaurants-fsa
+pytest-cov==7.1.0
     # via restaurants-fsa
 python-dateutil==2.9.0.post0
     # via
@@ -462,6 +469,8 @@ tokenizers==0.23.1
     # via litellm
 toml==0.10.2
     # via streamlit
+tomli==2.4.1 ; python_full_version <= '3.11'
+    # via coverage
 tqdm==4.69.0
     # via
     #   google-cloud-aiplatform
