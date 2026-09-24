@@ -1,0 +1,81 @@
+PHASE 11 VERIFICATION REPORT — Errors, Performance, Hygiene
+
+SCOPE
+  Previous checkpoint: 7d4305d (Phase 10)
+  Commits: deaef3b 0d9ddc1 762933d 4eab3d8 81f9305 4a81a99 5b8a7d1 b02e1ce
+           6791e82 3441281 adb011b 6d76ca1, merged to main as 517a433
+
+AUTOMATED TESTS
+  Command: pytest
+  Local  : 447 passed, 10 deselected, 300 subtests, 6.81s (Python 3.13)
+  CI     : 457 collected / 10 deselected / 447 passed, 6.54s (Python 3.11.16)
+           Cloud Build 3ca778b8, step run-tests
+
+  This is the first run of the widened gate. Before 3441281 Cloud Build ran
+  `pytest app/ scripts/` and nothing automatic ever executed tests/ -- which is
+  how the three failing doubles in tests/test_ml_prediction.py survived two
+  phases of schema change unnoticed.
+
+  Python 3.11 syntax parity checked separately across every non-.venv .py file
+  via ast.parse(feature_version=(3,11)): all parse. The venv is 3.13; Docker and
+  Cloud Build are 3.11.
+
+COVERAGE
+  64% of production code (pytest --cov=app --cov=scripts).
+  68% excluding the one-shot migration scripts; 77% also excluding st_app.py.
+  workflow.md sets >80%. THIS GATE IS NOT MET. Reported rather than rounded up:
+  the number was 84% until [tool.coverage.run] omit stopped counting the test
+  files, which are executed by definition and measure nothing.
+  Carried to Phase 12 with the user's agreement.
+
+MANUAL VERIFICATION
+  Performed against the live deploy rather than localhost, at the user's
+  direction ("deploy this to live so I can test live").
+
+  1. Deploy chain, verified by digest rather than build status:
+       merge commit    517a433
+       build           3ca778b8, SUCCESS, 6m43s, all 4 steps
+       image           sha256:727d32f99e15391c34824048db713ddc5ddba1ef244f2f764ba8ef98caa626fb
+       AR tags         517a433a..., latest
+       live revision   restaurants-fsa-00232-hxh, 100% traffic
+       resolved digest identical to the above
+       startup         Streamlit on 8080, TCP probe passed first attempt, no tracebacks
+       URL             https://restaurants-fsa-tqzsejpoja-nw.a.run.app (302 -> IAP)
+
+  2. Filter and sort labels diffed against fa21d9e: all 5 slicers and all 9
+     sort options textually identical. The alias collapse is invisible to the
+     user, which was the intent -- the constants hold the literals the
+     selectboxes already used.
+
+  3. Grid load speed, priority scoring: full pass 0.80s -> 0.08s, warm rerun
+     0.002s. Output pinned identical to the pre-refactor implementation across
+     901,440 values (16 anchor/preset configurations x 5 columns x 11,268 rows)
+     with identical ranked order in every configuration.
+
+USER CONFIRMATION
+  2026-09-24: "all else looking good, let's proceed."
+  Asked about the Model Training tab; see below.
+
+DEFECT FOUND DURING VERIFICATION — D-28
+  The user asked why clicking the training button would not start a training
+  job. It does. The false premise was mine: I had presented the tab as safe to
+  click because D15 made the dry run dry. D15 fixed the CLI flag
+  (`--dry-run`); st_app.py:851 calls train_model with run_async=True and the
+  dry_run=False default, so the button was never on that path.
+
+  Two neighbours found while reading it:
+    - training_lock is initialised False at :844-845, feeds disabled= at :847,
+      and is never assigned True anywhere. The guard against double-submitting
+      CREATE OR REPLACE MODEL has never engaged.
+    - run_async=True prints a job ID and the UI never mentions it again. A
+      click that worked and one that silently failed look the same.
+
+  Cost of clicking today: of the 370 labelled rows the pre-flight scans, 0 need
+  Places, 0 need Gemini, 0 need demographics. A fact about the current table,
+  not a property of the button.
+
+  All three carried to Phase 12 at the user's direction.
+
+CARRIED TO PHASE 12
+  - D-28, the three Model Training tab defects above
+  - The coverage gap: 64% against a >80% gate
