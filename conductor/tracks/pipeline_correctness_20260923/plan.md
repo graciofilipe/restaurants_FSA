@@ -467,7 +467,7 @@ rows (read-only, no MERGE): predictions 1.305–2.493, no schema error. CLAUDE.m
 inconsistency" and train/serve-parity warnings are deleted — both were true when written and are
 not now.
 
-## Phase 7: Switch Readers, Stale-Aware Refresh (R1)
+## Phase 7: Switch Readers, Stale-Aware Refresh (R1) [checkpoint: 70307ee]
 
 - [x] Task: Read typed columns instead of parsing JSON — 0abf4e2
     - [x] Sub-task: Reduce `parse_insight_row` to reading columns; drop the V1 text branch. 0abf4e2
@@ -480,7 +480,17 @@ not now.
     - [ ] Sub-task: The first stale sweep is budget-capped, with its £ cost stated before it runs.
           **Not run — and nothing is stale until 2027-03-22.** Priced below; needs a go-ahead.
     - [x] Sub-task: Tests for fresh / stale / never-profiled / forced. 0abf4e2
-- [~] Task: Conductor — User Manual Verification 'Rewire' (Protocol in workflow.md)
+- [x] Task: Conductor — User Manual Verification 'Rewire' (Protocol in workflow.md)
+    - [x] Sub-task: The two-run check, live, 2026-09-24. Paid run: estimate 25 → 25 profiles
+          gained, exactly 1 `AI.GENERATE` job. Free repeat: estimate 0 → 0 profiles, 0 jobs, and
+          `predicted_at` still moved. Audited against `INFORMATION_SCHEMA.JOBS`. Acceptance
+          criterion 1; ≈ £0.40, as budgeted.
+    - [x] Sub-task: The rewire itself — the grid renders the pillar columns straight from BigQuery
+          and `parse_insight_row` is gone, not reduced. `DISPLAY_COLUMNS` was checked name-by-name
+          against the live schema at `0abf4e2`.
+    - [x] Sub-task: What the check found was **D-32** — the prediction MERGE had been failing on
+          every batch containing one of 103 restaurants, after paying for the pre-flight. Fixed in
+          `7d00660` before this task could be ticked.
 
 - *Deviation:* `parse_insight_row` is **deleted, not reduced.** Reducing it to "read fourteen
   columns off the row" left a function whose single caller no longer needed it —
