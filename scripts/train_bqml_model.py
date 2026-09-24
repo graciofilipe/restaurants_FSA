@@ -35,22 +35,16 @@ WHERE
 """
 
 
-def train_model(
-    project_id: str, 
-    dataset_id: str, 
-    table_id: str, 
-    model_name: str,
-    dry_run: bool = False,
-    run_async: bool = False
-):
+def run_jit_preflight(client, project_id: str, dataset_id: str, table_id: str) -> None:
+    """Fill in whatever the labelled rows are missing, before training on them.
+
+    Extracted from `train_model` so the dry-run guard is a named call the
+    caller can decline rather than an indentation level. This function spends
+    money -- Places lookups and grounded `AI.GENERATE` calls -- and until D15
+    it ran unconditionally, including under `--dry-run`.
     """
-    Constructs and executes a BQML model training query.
-    """
-    client = bigquery.Client(project=project_id)
-    
-    full_model_name = f"{project_id}.{dataset_id}.{model_name}"
     source_table = f"{project_id}.{dataset_id}.{table_id}"
-    
+
     # Pre-flight JIT Enrichment: check all labeled examples for missing features.
     logger.info("Executing pre-flight JIT check for labeled training examples...")
     check_query = f"""
@@ -97,7 +91,34 @@ def train_model(
             
     except Exception as e:
         logger.warning(f"JIT pre-flight check failed: {e}. Proceeding with existing data.")
-        
+
+
+def train_model(
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    model_name: str,
+    dry_run: bool = False,
+    run_async: bool = False
+):
+    """
+    Constructs and executes a BQML model training query.
+    """
+    client = bigquery.Client(project=project_id)
+
+    full_model_name = f"{project_id}.{dataset_id}.{model_name}"
+    source_table = f"{project_id}.{dataset_id}.{table_id}"
+
+    # The pre-flight is skipped on a dry run, not merely made cheaper. It is
+    # the half of this function that spends money, and `--dry-run` is the flag
+    # someone reaches for when they are unsure what a run will do (D15).
+    if dry_run:
+        logger.info("Dry run: skipping the JIT enrichment pre-flight. No Places "
+                    "or Gemini calls will be made, and the training SQL will be "
+                    "validated against whatever the table already holds.")
+    else:
+        run_jit_preflight(client, project_id, dataset_id, table_id)
+
     # We omit BusinessType as it is not present in the BigQuery schema for fsa_master.
     query = f"""
     CREATE OR REPLACE MODEL `{full_model_name}`
