@@ -1369,6 +1369,42 @@ risk, not a test-writing exercise. Deliberately not done in a track about pipeli
 
 ---
 
+## D-30 — The 13 acceptance criteria, walked
+
+**Date.** 2026-09-24. **Phase 12.**
+
+`spec.md §5` had never been checked against anything. Thirteen criteria, thirteen empty boxes, after
+twelve phases of work that were justified by them. The walk is recorded in the spec itself, where
+each tick now names its evidence; this is the summary.
+
+**Eleven met.** Nine of those rest on tests that run in `pytest`, so they stay met rather than having
+been true once. Two rest on live measurements that cannot be re-run cheaply — the pillar
+distributions and the held-out evaluation — and both are in the Measurements table with their date.
+
+**One pending: criterion 1**, the two-run zero-`AI.GENERATE` check. The wiring is in place and tested
+— the estimate and the spend both call `needs_gemini_profile`, which is the structural half of the
+claim — but the observation needs a human at the UI, and it is the one criterion that cannot be
+evidenced from this side.
+
+**One deliberately not met: criterion 3**, "the shape is guaranteed by configuration, not requested
+in prose". D-08 withdrew it on measured evidence. Constrained decoding is unavailable alongside
+`googleSearch` grounding; the only routes were a second ungrounded normalising call per profile or
+dropping grounding, and recon then found 2,766/2,766 nested paths already resolving. Paying per
+profile to guarantee a shape that 100% of production payloads already had was not worth it. The
+substitute is detection rather than prevention: one definition, a contract test on recorded
+payloads, and a conformance check at merge time. That is a weaker guarantee and it is written down
+as one.
+
+Two things worth noting about the exercise. First, criterion 8 is the one whose *meaning* changed
+during the track: "UI counts reflect true Maps coverage" turned out to need three states rather than
+two, because 243 permanent Places misses are neither found-and-unrated nor never-looked-up. The
+criterion as written would have been satisfiable by a wrong implementation. Second, several criteria
+were met by phases that were not aiming at them — criterion 5's non-degenerate distributions fell out
+of Phase 6's retrain, not out of a check written to satisfy criterion 5. Walking the list at the end
+is what surfaced that they were met at all; nothing in the phase-by-phase work would have said so.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
