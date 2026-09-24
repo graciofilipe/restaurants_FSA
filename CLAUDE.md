@@ -9,6 +9,9 @@ All tooling lives in the single canonical `.venv` (managed by `uv`). Never creat
 ```bash
 source .venv/bin/activate && uv sync    # setup / re-sync deps from pyproject.toml
 
+# after changing a dependency, regenerate the image's install list from the lock:
+uv export --no-dev --no-hashes --no-emit-project -o requirements.txt
+
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
 pytest                                  # 420 offline tests, ~8s — the normal edit-test loop
@@ -184,6 +187,12 @@ stale when the underlying frame shrinks.
   code that works locally can fail the build. Use `chr(39)`-style escapes as the existing code does.
 - Unit tests live **beside** the code (`app/**/test_*.py`); integration, eval, and BQML tests live in
   `tests/`. `INTEGRATION_TEST=TRUE` disables live Cloud Trace export.
+- **`pyproject.toml` is the only place a dependency is declared.** `requirements.txt` is generated
+  from it and `uv.lock` — fully pinned, and the file both the Docker image and the Cloud Build test
+  step install, so test dependencies live in the main list rather than a dev group. Editing it by
+  hand, or adding to `pyproject.toml` without re-exporting, fails
+  `scripts/test_dependency_parity.py`. That file also pins the one Python version: `requires-python`,
+  `uv.lock`, the `Dockerfile` and `cloudbuild.yaml` must all say 3.11.
 - Work is tracked under `conductor/tracks/<name>/plan.md` following the TDD workflow in
   `conductor/workflow.md`; `conductor/code_styleguides/` holds the Google Python style summary.
   Commits follow `type(scope): description`.
