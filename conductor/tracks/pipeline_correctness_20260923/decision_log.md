@@ -1551,6 +1551,79 @@ Live after the change: **29 postcodes still to fetch**, down from a list that co
 
 ---
 
+## D-34 — Closing the track
+
+**Date.** 2026-09-24. **Phase 12.** Merged to `main` as `1a7b2de`.
+
+### The fifteen defects
+
+| | | |
+|---|---|---|
+| D1 | Every prediction run re-pays for Gemini | **Fixed.** One predicate, `needs_gemini_profile`, called by the estimate and the spend. Observed live: estimate 25 → 25 calls, estimate 0 → 0 calls. |
+| D2 | Five of seven Gemini features constant zero | **Fixed.** The nested paths were wrong; `pillar_schema.py` is now the single definition and generates the SQL. |
+| D3 | Feature lists duplicated by hand | **Fixed.** `model_features.py`; `TestTrainServeParity` fails if the two generated strings differ. |
+| D4 | Missing data scores as good data | **Fixed.** No `IFNULL(…, 0)`; missing reads as missing. |
+| D5 | A Places miss erases FSA coordinates | **Fixed.** |
+| D6 | Weekly cron reads the whole master table | **Fixed.** |
+| D7 | Unbounded ingest pagination | **Fixed.** |
+| D8 | Priority scoring recomputed per rerun | **Fixed.** 0.80s → 0.08s, 0.002s warm. |
+| D9 | Failures present as empty results | **Fixed** — but *unexercised*. The first ingest to run it is Mon 28 Sep. |
+| D10 | Shared mutable temp tables | **Fixed.** Per-run names, one-day expiry as a backstop. |
+| D11 | Suite cannot be run as a whole | **Fixed.** Marker scheme; `pytest` is offline and complete. |
+| D12 | Two dependency sources, two Python versions | **Fixed.** One declaration, one interpreter, parity-tested. |
+| D13 | A past migration mis-derived `in_scope` | **Fixed.** |
+| D14 | The profiler's output shape is unconstrained | **Not met, deliberately** — D-08. Constrained decoding is unavailable alongside grounding. Detection shipped instead, and it earned its keep on the last day: 1 of 25 new profiles came back missing 7 fields and was reported at merge time. |
+| D15 | `--dry-run` can spend money | **Fixed**, and given a button (D-28). |
+
+Twelve found by the recon, three found during the work. Nine more were found by the *fixes* —
+D-16 through D-33 — of which the one that mattered is below.
+
+### What the close-out itself found
+
+The track was written to repair a pipeline that produced bad numbers. It turned out the pipeline had
+also stopped producing numbers at all, and nothing said so:
+
+- **D-28** — the Model Training tab reported nothing, so a click that worked and a click that did
+  nothing looked identical. Found because the user asked why clicking did not train.
+- **D-31** — the find query counted joined rows. Found because the backfill compared two
+  independently-derived counts and complained.
+- **D-32** — every `ML.PREDICT` batch containing one of 103 restaurants failed on the MERGE, after
+  paying for the Gemini pre-flight. Found by reading `INFORMATION_SCHEMA.JOBS` while looking for
+  Phase 7's verification evidence.
+
+The sequence is the point. D-28 removed the silence, the user's next click produced an error in the
+job history, and looking for that error found the defect. Three separate mechanisms had to fail for
+this to survive twelve phases of work on exactly this pipeline: the UI never surfaced the outcome,
+nobody read the job history, and D-31 had already found the fan-out in one query and not looked for
+it in the others. **The lesson recorded here is the last one — on finding a defective join, grep for
+the join, not for the symptom.**
+
+### Carried, with what triggers each
+
+- **The prediction back-fill has not been run.** `scripts/backfill_predictions.py --execute`,
+  **1,910 rows**, verified free in 8 chunks, £0 beyond `ML.PREDICT`. 75 of 11,268 rows are scored,
+  so the staleness component of the priority heuristic still barely discriminates. *This is the one
+  in-track deliverable left undone*, and `metadata.json` stays open until it lands.
+- **The deferred Gemini sweep**, ~1,090–1,116 in-scope rows, **£6–£47**, un-run by decision. It buys
+  triage coverage, not model quality: 0 of the unprofiled rows are labelled. A token-level price was
+  never obtained — nothing retains `usageMetadata`, and narrowing the range would need a bespoke
+  query, which is not worth spending on something being deferred.
+- **BQML re-measurement at ~600 in-scope labels** (D-19). **369** today. Same harness, same
+  `--holdout_modulus 5`, or the numbers do not compare.
+- **The Phase 0 snapshot stays.** `fsa_master_backup_20260923` is the only copy of the pre-track
+  table including the 411 hand-entered labels, and the run that would justify dropping it — the
+  first ingest to exercise D9 — is **Mon 28 Sep**.
+- **16 surplus rows in `uk_postcode_demographics`.** Hygiene, not a fix: every reader now defends
+  itself (D-32, D-33).
+
+### Where it ended
+
+512 offline tests and 10 live, both green. 65% coverage against an 80% gate, accepted with reasons
+(D-29). Thirteen acceptance criteria walked and named (D-30); eleven met, one met on the last day,
+one deliberately not.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
