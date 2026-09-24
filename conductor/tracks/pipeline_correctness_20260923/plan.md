@@ -796,17 +796,64 @@ would spend it on.
           `_round_like_python` restores the original semantics, after which old and new agree on
           all 901,440 values (16 anchor/preset configurations × 5 columns × 11,268 rows) with
           identical ranked order in every one. Full pass 0.80s → 0.08s; warm rerun → 0.002s.
-- [ ] Task: Make the test suite runnable (D11)
-    - [ ] Sub-task: Mark live tests `integration`; register markers in `pyproject.toml`.
-    - [ ] Sub-task: Default a bare `pytest` to offline tests only.
-    - [ ] Sub-task: Document how to opt into the live suite.
-- [ ] Task: Unify dependencies (D12)
-    - [ ] Sub-task: Make `pyproject.toml`/`uv.lock` the single source; generate `requirements.txt`.
-    - [ ] Sub-task: Pinning local Python to 3.11 is **optional and deferred** — it means rebuilding
-          a `.venv` that currently works on 3.13, for parity benefit only.
-- [ ] Task: Simplify the filter API
-    - [ ] Sub-task: Collapse the ~3 accepted string aliases per filter to a single set of constants.
-    - [ ] Sub-task: Drop the legacy `rating_filter` / `pred_filter` kwargs.
+- [x] Task: Make the test suite runnable (D11) — 4a81a99, 5b8a7d1
+    - [x] Sub-task: Mark live tests `integration`; register markers in `pyproject.toml`. Ten tests
+          across five files. Marking is per-test where a module is mixed: `test_model_upgrades.py`
+          has one live Vertex call and four that read config and assert on generated SQL, and those
+          four are the guard against a legacy model ID reappearing — `pytestmark` on the module
+          would have taken the guard offline with it.
+    - [x] Sub-task: Default a bare `pytest` to offline tests only. `addopts = "-m 'not integration'"`.
+          420 tests, ~8s, no network and no listening port; `pytest -m ""` still runs everything.
+    - [x] Sub-task: Document how to opt into the live suite — `pytest -m integration`, in both
+          `CLAUDE.md` and a comment block beside the `addopts` line.
+    - [x] *Not in the plan, but the reason the plan needed this:* all three tests in
+          `tests/test_ml_prediction.py` were failing. Its `DummyRow` still carried `maps_rating` and
+          the raw profile JSON, three columns behind Phases 5 and 6, and the `AttributeError`
+          surfaced only as `assert False is True` because the target-batch query is wrapped in a
+          `try`. Rewritten around a `FindRow` that mirrors the query's projection, with four cases
+          the old double could not express — a stamped Places miss is not re-queried, a profile past
+          the max age is, a missing demographics join is backfilled, and `enrich_postcodes` is
+          patched at its definition so the offline suite cannot reach postcodes.io.
+    - [x] *Not in the plan, done after D12 unblocked it:* Cloud Build now gates on the bare `pytest`
+          — 3441281. `tests/` being unrun by anything automatic is what let the doubles above sit
+          broken through two phases. It could not widen before D12, because collecting `tests/`
+          imports `fastapi`, `uvicorn` and `google-adk[eval]` and the hand-written
+          `requirements.txt` listed none of them. **Verified on a test-only Cloud Build** (`b21bfd7d`,
+          2m27s, no deploy step) rather than by pushing and hoping: the open question was
+          `app/agent.py` calling `google.auth.default()` at import, so collection needs ADC — the
+          build service account supplies it.
+- [x] Task: Unify dependencies (D12) — b02e1ce
+    - [x] Sub-task: Make `pyproject.toml`/`uv.lock` the single source; generate `requirements.txt`.
+          `uv export --no-dev --no-hashes --no-emit-project`: 136 pinned lines with their `# via`
+          provenance, replacing ten unpinned hand-written names. `fastapi`, `uvicorn`, `pydantic`,
+          `numpy`, `pandas` and `requests` are imported by this repo and appeared in at most one of
+          the two files. Test dependencies stay in the main list rather than a dev group because
+          `requirements.txt` is what the Cloud Build *test* step installs too — the image and the CI
+          environment are one file. The cost of that: the image carries the `google-adk[eval]` tree
+          (~83MB, mostly litellm) that only `tests/eval/` uses. Splitting it back out would recreate
+          the drift.
+    - [x] *Not in the plan, and the real defect underneath it:* `uv.lock` was resolved for
+          `requires-python = ">=3.13"`, inherited from the local interpreter, while everything
+          deployed and CI-tested runs 3.11. `pyproject.toml` declared no `requires-python` at all,
+          so nothing said otherwise. A lock can pin a wheel that does not exist for the runtime and
+          the first evidence is a failed build. Re-locking at `>=3.11` split `numpy` and `scipy`
+          into per-version pins; a 3.11/linux dry-run resolve settles on 132 packages, no conflicts.
+    - [x] Sub-task: Pinning local Python to 3.11 — still **not done, and no longer needed for
+          parity**. The lock now resolves for both, and `scripts/test_dependency_parity.py` fails if
+          `requires-python`, `uv.lock`, the `Dockerfile` and `cloudbuild.yaml` stop agreeing on 3.11.
+          Red first: 4 of its 5 tests failed.
+- [x] Task: Simplify the filter API — 6791e82
+    - [x] Sub-task: Collapse the ~3 accepted string aliases per filter to a single set of constants.
+          The sidebar selectboxes are now built from the same tuples the branches compare against,
+          which is what the aliases were insurance against. The eight-branch sort chain becomes a
+          `SORT_BY_COLUMN` mapping; `SORT_NATURAL` is absent from it deliberately, so an unknown
+          sort key — a renamed option still sitting in session state — falls back to the loaded
+          order instead of raising.
+    - [x] Sub-task: Drop the legacy `rating_filter` / `pred_filter` kwargs. Nothing passed them.
+    - [x] Sub-task: 22 tests that assert each option *does something* rather than what it returns.
+          A rename that updates the constant and forgets the branch makes the option behave like
+          "All" — the exact failure the aliases existed to prevent, and one a value-based test would
+          not see. Mutation-checked against a stale literal.
 - [ ] Task: Conductor — User Manual Verification 'Performance & Hygiene' (Protocol in workflow.md)
 
 ## Phase 12: Close Out

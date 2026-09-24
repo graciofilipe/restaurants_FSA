@@ -1184,6 +1184,105 @@ than about the hit.
 
 ---
 
+## D-25 — The tests nobody ran, and the three that had been failing in them (D11)
+
+**Date.** 2026-09-24. **Phase 11.** Commits `4a81a99`, `5b8a7d1`, `3441281`.
+
+A bare `pytest` at the repo root started a uvicorn server on port 8000, ran the ADK agent against
+Vertex for real, and executed BQML SQL against the live dataset. The documented workaround was to
+remember to type `pytest app/ scripts/` instead — so the obvious command was the expensive one and
+the safe one had to be recalled. Ten tests are now marked `integration` and deselected by
+`addopts`; `pytest -m integration` opts in.
+
+Marking is per-test where a module is mixed. `tests/test_model_upgrades.py` holds one live Vertex
+call and four tests that read config and assert on generated SQL, and those four are the guard
+against a legacy model ID reappearing — `pytestmark` at module level would have taken the guard
+offline along with the cost.
+
+**What the marking uncovered.** All three tests in `tests/test_ml_prediction.py` were failing. Its
+`DummyRow` still carried `maps_rating` and the raw profile JSON; Phase 5 moved the Places guard onto
+`maps_lookup_at` and Phase 6 moved the Gemini guard onto `gemini_profiled_at` + `has_profile`. The
+resulting `AttributeError` was swallowed by the `try` around the target-batch query and surfaced
+only as `assert False is True`. Two phases of this track broke them and nothing said so, because
+`cloudbuild.yaml` ran `pytest app/ scripts/` and `tests/` was outside the gate.
+
+The rewrite is built on a `FindRow` that mirrors the query's projection and defaults to "nothing is
+missing", so a test can only observe enrichment firing by asking for it. Four cases the old double
+could not express: a stamped Places miss is not re-queried ([D-14]'s whole point), a profile past
+`GEMINI_PROFILE_MAX_AGE_DAYS` is, a postcode absent from the demographics join is backfilled, and
+`enrich_postcodes` is patched at its definition — unpatched, the offline suite reached postcodes.io.
+
+**The gate then widened to the whole repo**, which is the only durable fix; marking tests does not
+help if nothing runs them. That needed [D-26] first. Verified on a test-only Cloud Build
+(`b21bfd7d`, 2m27s, no deploy step) rather than by pushing to `main` and watching: the open question
+was `app/agent.py` calling `google.auth.default()` at import, so *collecting* `tests/` needs ADC.
+The build service account supplies it. 425 passed, 10 deselected, in the real 3.11 image.
+
+**Related.** [D-26] unblocked the gate. [D-14] is the guard the stale double had been contradicting.
+
+---
+
+## D-26 — The lockfile was resolved for an interpreter nothing runs (D12)
+
+**Date.** 2026-09-24. **Phase 11.** Commit `b02e1ce`.
+
+Two files declared dependencies and neither knew about the other. `requirements.txt` — what the
+Docker image and the Cloud Build test step install — listed ten unpinned names; `pyproject.toml`
+listed eleven different ones. `fastapi`, `uvicorn`, `pydantic`, `numpy`, `pandas` and `requests` are
+imported by code in this repo and appeared in at most one of the two. `google-cloud-aiplatform` was
+listed by hand and is imported nowhere (it arrives transitively through `google-adk` regardless).
+
+The worse half was invisible. `uv.lock` carried `requires-python = ">=3.13"`, inherited from the
+local interpreter because `pyproject.toml` declared no `requires-python` at all — while the
+Dockerfile, Cloud Build and every deployed revision run **3.11**. A lock resolved for 3.13 can pin a
+wheel that does not exist for 3.11, and the first evidence would be a failed build after a merge to
+`main`, which auto-deploys. Re-locking at `>=3.11` split `numpy` and `scipy` into per-version pins;
+a dry-run resolve against 3.11/linux settles on 132 packages with no conflicts, and the test-only
+build installed them for real.
+
+`requirements.txt` is now `uv export` output: 136 pinned lines with `# via` provenance. `pip install
+pytest` drops out of `cloudbuild.yaml`, since the file it already installs carries the test
+dependencies. **They stay in the main dependency list rather than a dev group** because that file is
+both the image and the CI environment. The cost of that choice is honest and worth stating: the
+deployed image carries the `google-adk[eval]` tree, ~83MB of which (mostly litellm) exists only for
+`tests/eval/`. Splitting it out would recreate exactly the two-file drift this removes.
+
+`scripts/test_dependency_parity.py` is the guard — 4 of its 5 tests failed before the fix. It checks
+that every declared dependency reaches the image, that the file still says `uv export` wrote it, and
+that `requires-python`, `uv.lock`, the `Dockerfile` and `cloudbuild.yaml` all name the same Python.
+It lives under `scripts/` because a dependency check the build does not run is one that reports
+after the build breaks. Pinning the local `.venv` to 3.11 stays undone and is now unnecessary for
+parity: the lock resolves for both, and the test fails if the four files stop agreeing.
+
+**Related.** [D-25] — this is what let the CI gate widen.
+
+---
+
+## D-27 — Three spellings per filter, and the drift they were insuring against
+
+**Date.** 2026-09-24. **Phase 11.** Commit `6791e82`.
+
+Every slicer in `filter_and_sort_restaurants` accepted about three strings for each answer —
+`"Has User Rating (Rated)"`, `"User Rated Only"`, `"Has Rating"` — and the selectbox feeding it
+repeated the literal a fourth time, in a different file's argument list. The aliases were insurance
+against the widget and the branch drifting apart, paid for with a function nobody could read, plus
+two dead `rating_filter` / `pred_filter` kwargs no caller passed.
+
+Sharing one constant removes the need for the insurance. The sidebar is built from the same tuples
+the branches compare against, and the eight-branch sort chain becomes a `SORT_BY_COLUMN` mapping of
+option to (candidate columns, direction) — with `SORT_NATURAL` deliberately absent, so an unknown
+sort key (a renamed option still sitting in Streamlit session state) falls back to the loaded order
+rather than raising on a page the user cannot then fix.
+
+The 22 new tests deliberately assert **that each option does something**, not what it returns. The
+failure mode being guarded is a rename that updates the constant and forgets one branch: the option
+then silently behaves like "All", which a value-based test on a fixture would happily pass.
+Mutation-checked by pointing one branch at a stale literal. One non-change left in place: the Gemini
+filter still no-ops when the frame carries neither `match_score` nor `gemini_insights_structured`.
+Reading an absent column as "no row has a score" would be more honest and is not what it did before.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
@@ -1282,6 +1381,11 @@ than about the hit.
 | Old vs new scoring, live table | **0 mismatches / 901,440 values** (16 configs × 5 cols × 11,268 rows) | 2026-09-24 |
 | `np.round` vs Python `round` on the composite | **703 of 11,268 rows** differed by 0.1 before `_round_like_python` | 2026-09-24 |
 | Offline suite | **405 passed**, 300 subtests (was 345 at the Phase 10 checkpoint) | 2026-09-24 |
+| Offline suite after D11/D12 and the filter tests | **447 passed, 10 deselected**, ~7s | 2026-09-24 |
+| Tests the CI gate had never run | **`tests/` entirely** — 3 of them failing, for two phases | 2026-09-24 |
+| `requirements.txt` | 10 unpinned hand-written names → **136 pinned, generated** | 2026-09-24 |
+| Lock vs runtime Python | lock said **3.13**, everything deployed runs **3.11** | 2026-09-24 |
+| Test-only Cloud Build `b21bfd7d` | 3.11.16, 132 packages, **425 passed / 10 deselected**, 2m27s | 2026-09-24 |
 
 ## Cost ledger
 
