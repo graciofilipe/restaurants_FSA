@@ -1,0 +1,29 @@
+Phase 7 verification report — 2026-09-24
+
+Acceptance criterion 1, observed live rather than reasoned about. Driven
+through the same code path the ML Predictions tab drives: same BigQuery
+loader and sidebar defaults, same SW16 anchor and Balanced Active Discovery
+weights, same count_needing_gemini_profile, same generate_predictions.
+Audited against region-eu.INFORMATION_SCHEMA.JOBS, not the application log.
+
+  Paid run, 25 unprofiled in-scope rows, 16:39 UTC
+    estimate 25 -> profiles 2792 to 2817 (+25), 1 AI.GENERATE job, 25 scored
+  Free repeat, the same 25 already-profiled rows, 16:34 UTC
+    estimate 0  -> profiles unchanged, 0 AI.GENERATE jobs, 25 scored
+
+The free case is the criterion. The paid case is what makes it meaningful: an
+estimate hard-wired to zero would also pass the free case.
+
+Not observable in production, ticked on test evidence: criterion 2, stale
+profiles refresh and fresh ones do not. The oldest gemini_profiled_at is the
+Phase 5 backfill and nothing becomes stale until 2027-03-22. Covered by the
+20 tests in app/core/test_profile_freshness.py.
+
+Found by this check, and the reason it could not be ticked when first
+attempted: D-32. Two production batches had failed that afternoon on
+"UPDATE/MERGE must match at most one source row for each target row", each
+after paying for AI.GENERATE. The demographics join fanned 103 restaurants
+into 226 rows. Fixed in 7d00660; the batch that died at 16:10 was re-scored
+successfully at 16:34 for the price of ML.PREDICT alone.
+
+Regression at checkpoint: 512 offline, 10 live.
