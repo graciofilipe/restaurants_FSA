@@ -480,7 +480,7 @@ not now.
     - [ ] Sub-task: The first stale sweep is budget-capped, with its £ cost stated before it runs.
           **Not run — and nothing is stale until 2027-03-22.** Priced below; needs a go-ahead.
     - [x] Sub-task: Tests for fresh / stale / never-profiled / forced. 0abf4e2
-- [ ] Task: Conductor — User Manual Verification 'Rewire' (Protocol in workflow.md)
+- [~] Task: Conductor — User Manual Verification 'Rewire' (Protocol in workflow.md)
 
 - *Deviation:* `parse_insight_row` is **deleted, not reduced.** Reducing it to "read fourteen
   columns off the row" left a function whose single caller no longer needed it —

@@ -220,3 +220,86 @@ def test_a_never_looked_up_restaurant_still_gets_enriched(mock_gemini, mock_maps
     generate_predictions('p', 'd', 't', 'm', limit=1)
 
     mock_maps.assert_called_once()
+
+
+# --- The enrichment split, shared with the backfill script ---
+
+
+class TestTheEnrichmentSplitIsOneFunction:
+    """`split_enrichment_targets` answers "what does this batch still need?".
+
+    It was inline in `generate_predictions` until the prediction backfill needed
+    to ask the same question in order to *refuse* to run when the answer is not
+    "nothing". A backfill that re-derives the predicate is a backfill that can
+    disagree with the thing it is guarding, which is D1 with the cost moved to a
+    different script.
+    """
+
+    def test_a_fully_enriched_batch_needs_nothing(self):
+        from app.services.ml_prediction import split_enrichment_targets
+
+        split = split_enrichment_targets([DummyRow('1', gemini_insights_structured='{}')])
+
+        assert split['maps'] == []
+        assert split['gemini'] == []
+        assert split['postcodes'] == []
+        assert split['fhrsids'] == ['1']
+
+    def test_a_row_never_looked_up_in_maps_needs_maps(self):
+        from app.services.ml_prediction import split_enrichment_targets
+
+        split = split_enrichment_targets([
+            DummyRow('1', gemini_insights_structured='{}', maps_lookup_at=None)])
+
+        assert split['maps'] == ['1']
+
+    def test_a_permanent_maps_miss_is_not_re_queried(self):
+        """`maps_lookup_at`, not `maps_rating` -- the retired `-1` sentinel."""
+        from app.services.ml_prediction import split_enrichment_targets
+
+        split = split_enrichment_targets([
+            DummyRow('1', gemini_insights_structured='{}', maps_rating=None)])
+
+        assert split['maps'] == []
+
+    def test_an_unprofiled_row_needs_gemini(self):
+        from app.services.ml_prediction import split_enrichment_targets
+
+        split = split_enrichment_targets([DummyRow('1')])
+
+        assert split['gemini'] == ['1']
+        assert split['never_profiled'] == 1
+
+    def test_a_stale_profile_needs_gemini_and_is_not_counted_as_never_profiled(self):
+        from app.services.ml_prediction import split_enrichment_targets
+
+        split = split_enrichment_targets([
+            DummyRow('1', gemini_insights_structured='{}',
+                     gemini_profiled_at=_days_ago(GEMINI_PROFILE_MAX_AGE_DAYS + 1))])
+
+        assert split['gemini'] == ['1']
+        assert split['never_profiled'] == 0
+
+    def test_an_unresolved_postcode_needs_demographics(self):
+        from app.services.ml_prediction import split_enrichment_targets
+
+        split = split_enrichment_targets([
+            DummyRow('1', gemini_insights_structured='{}', d_postcode=None)])
+
+        assert split['postcodes'] == ['1']
+
+    def test_a_null_postcode_cannot_be_looked_up_and_is_not_queued(self):
+        from app.services.ml_prediction import split_enrichment_targets
+
+        split = split_enrichment_targets([
+            DummyRow('1', gemini_insights_structured='{}', postcode=None, d_postcode=None)])
+
+        assert split['postcodes'] == []
+
+    def test_force_flags_queue_everything(self):
+        from app.services.ml_prediction import split_enrichment_targets
+
+        rows = [DummyRow('1', gemini_insights_structured='{}')]
+
+        assert split_enrichment_targets(rows, force_maps=True)['maps'] == ['1']
+        assert split_enrichment_targets(rows, force_gemini=True)['gemini'] == ['1']

@@ -14,7 +14,7 @@ uv export --no-dev --no-hashes --no-emit-project -o requirements.txt
 
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest                                  # 469 offline tests, ~8s — and what Cloud Build runs
+pytest                                  # 493 offline tests, ~8s — and what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest -m integration                   # the 10 live tests, deliberately (costs money)
 pytest --cov=app --cov=scripts          # 65% of production code; test files are omitted
@@ -43,6 +43,7 @@ python -m scripts.enrich_maps_data                # Google Places backfill (need
 python -m scripts.enrich_postcode_demographics    # postcodes.io → uk_postcode_demographics
 python -m scripts.evaluate_model --execute        # held-out MAE/RMSE/ρ vs the match_score baseline
 python -m scripts.invalidate_stale_predictions    # dry run; --execute clears pre-retrain scores
+python -m scripts.backfill_predictions            # dry run; --execute re-scores rows that cost nothing
 python -m scripts.retire_v1_insights --drop       # done; the drop refuses without a full archive
 python -m app.cron.fetch_weekly                   # the weekly FSA ingest, run as a Cloud Run Job
 ```
@@ -51,7 +52,10 @@ python -m app.cron.fetch_weekly                   # the weekly FSA ingest, run a
 models, so it can never touch the served one; reuse `--holdout_modulus 5` or the numbers are not
 comparable across runs. `invalidate_stale_predictions.py` takes its cutoff from the served model's
 own `created` time — a prediction made by a replaced model is wrong, and `predicted_at` records
-when a row was scored, not what scored it.
+when a row was scored, not what scored it. `backfill_predictions.py` is its mirror image and scores
+only rows whose enrichment is already paid for; it re-derives that at run time through
+`split_enrichment_targets`, the same function `generate_predictions` uses, and aborts rather than
+buying anything — including on a dry run, since finding the bill after `--execute` is too late.
 
 Deployment is automatic: **a Cloud Build trigger builds and deploys on every push to `main`**. Local
 changes are not live until pushed. Manual: `gcloud builds submit --config cloudbuild.yaml .`
