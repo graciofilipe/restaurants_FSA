@@ -80,6 +80,24 @@ def test_the_preflight_selects_the_columns_its_guards_read(mock_bq):
     assert 'AS has_profile' in check_query
 
 
+@patch('scripts.train_bqml_model.bigquery.Client')
+def test_the_preflight_counts_restaurants_and_not_joined_rows(mock_bq):
+    """Same fan-out as D-31 and D-32: joining `uk_postcode_demographics`
+    returns a row per duplicate normalised postcode. Here it only inflates the
+    enrichment lists -- duplicate ids collapse in the `IN (...)` both callees
+    build -- so nothing is bought twice, but "N labelled rows need a profile"
+    is a number someone reads before deciding to spend."""
+    client = _mock_client([])
+    mock_bq.return_value = client
+
+    train_model('p', 'd', 't', 'm', dry_run=False)
+
+    check_query = client.query.call_args_list[0].args[0]
+    assert 'uk_postcode_demographics' in check_query
+    assert 'JOIN' not in check_query.upper()
+    assert 'AS d_postcode' in check_query
+
+
 @patch('app.services.bq_utils.execute_gemini_enrichment')
 @patch('scripts.train_bqml_model.bigquery.Client')
 def test_training_never_refreshes_a_profile_it_already_has(mock_bq, mock_gemini):

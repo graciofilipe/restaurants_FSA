@@ -13,6 +13,36 @@ DEFAULT_BQ_PATH = os.environ.get(
     "BQ_PATH", "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_master"
 )
 
+def build_missing_postcodes_query(master_table_ref: str, target_table_ref: str,
+                                  limit: Optional[int] = None) -> str:
+    """The postcodes not yet in the reference table -- one per *normalised* key.
+
+    `SELECT DISTINCT PostCode` was distinct raw spellings, and every reader of
+    this table joins on `REPLACE(UPPER(postcode), ' ', '')`. `SW3 5UH` and
+    `SW3 5 UH` are two spellings and one key, so both passed the membership
+    test, both were fetched, and both were stored: 15 duplicated keys, one of
+    them threefold (D-33). The duplicates then fanned the demographics join out
+    and killed `ML.PREDICT`'s MERGE outright (D-32).
+
+    Grouping by the key is the fix. Which spelling to send to the API is then a
+    real choice, and the shortest wins: the extra characters in these pairs are
+    stray spaces, and `SW3 5 UH` is the spelling postcodes.io could not resolve.
+    A plain `MIN` would pick it, since a space sorts below a digit.
+    """
+    limit_clause = f"\n        LIMIT {int(limit)}" if limit else ""
+    return f"""
+        SELECT ARRAY_AGG(PostCode ORDER BY LENGTH(PostCode), PostCode LIMIT 1)[OFFSET(0)] AS postcode
+        FROM `{master_table_ref}`
+        WHERE PostCode IS NOT NULL AND TRIM(PostCode) != ''
+          AND REPLACE(UPPER(PostCode), ' ', '') NOT IN (
+              SELECT REPLACE(UPPER(postcode), ' ', '')
+              FROM `{target_table_ref}`
+              WHERE postcode IS NOT NULL
+          )
+        GROUP BY REPLACE(UPPER(PostCode), ' ', ''){limit_clause}
+    """
+
+
 def ensure_demographics_table(
     client: bigquery.Client, project_id: str, dataset_id: str, target_table: str
 ) -> bigquery.Table:
@@ -53,19 +83,8 @@ def enrich_postcodes(
     master_table_ref = f"{project_id}.{dataset_id}.{master_table}"
     target_table_ref = f"{project_id}.{dataset_id}.{target_table}"
 
-    # 2. Query distinct missing postcodes from fsa_master
-    limit_clause = f"LIMIT {int(limit)}" if limit else ""
-    query = f"""
-        SELECT DISTINCT PostCode AS postcode
-        FROM `{master_table_ref}`
-        WHERE PostCode IS NOT NULL AND TRIM(PostCode) != ''
-          AND REPLACE(UPPER(PostCode), ' ', '') NOT IN (
-              SELECT REPLACE(UPPER(postcode), ' ', '')
-              FROM `{target_table_ref}`
-              WHERE postcode IS NOT NULL
-          )
-        {limit_clause}
-    """
+    # 2. Query missing postcodes from fsa_master, one per normalised key
+    query = build_missing_postcodes_query(master_table_ref, target_table_ref, limit)
     logger.info("Checking for missing postcodes in master table...")
     try:
         results = client.query(query).result()

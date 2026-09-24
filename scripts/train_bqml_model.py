@@ -47,12 +47,17 @@ def run_jit_preflight(client, project_id: str, dataset_id: str, table_id: str) -
 
     # Pre-flight JIT Enrichment: check all labeled examples for missing features.
     logger.info("Executing pre-flight JIT check for labeled training examples...")
+    # A correlated subquery, not a join: 15 normalised postcodes are duplicated
+    # in the demographics table, so joining it returns those labelled rows two
+    # or three times (D-31, D-32). Only "did the postcode resolve?" is read.
     check_query = f"""
         SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_profiled_at,
-               m.gemini_insights_structured IS NOT NULL AS has_profile, d.postcode AS d_postcode
+               m.gemini_insights_structured IS NOT NULL AS has_profile,
+               (SELECT MIN(d.postcode)
+                FROM `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
+                WHERE REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
+               ) AS d_postcode
         FROM `{source_table}` AS m
-        LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
-          ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
         WHERE (m.in_scope = TRUE OR m.in_scope IS NULL) AND m.user_rating IS NOT NULL
     """
     try:
