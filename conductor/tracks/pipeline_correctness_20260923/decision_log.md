@@ -1600,10 +1600,13 @@ the join, not for the symptom.**
 
 ### Carried, with what triggers each
 
-- **The prediction back-fill has not been run.** `scripts/backfill_predictions.py --execute`,
-  **1,910 rows**, verified free in 8 chunks, £0 beyond `ML.PREDICT`. 75 of 11,268 rows are scored,
-  so the staleness component of the priority heuristic still barely discriminates. *This is the one
-  in-track deliverable left undone*, and `metadata.json` stays open until it lands.
+- ~~**The prediction back-fill has not been run.**~~ **Run, 2026-09-24 16:58.** 1,810 rows in 8
+  chunks, every one re-verified free at run time, £0 beyond `ML.PREDICT`. The column stands at
+  **1,985** of 11,268. This was the last in-track deliverable, and `metadata.json` closed with it.
+- **`uvx ruff check .` was never run in this track.** Not a technical limit — PyPI is reachable and
+  the config is in `pyproject.toml`; the sandbox declines to fetch and execute an arbitrary package.
+  An earlier draft of the Phase 12 note blamed the network, which was wrong. Nothing here has been
+  linted by ruff, and no claim in this log rests on it having been.
 - **The deferred Gemini sweep**, ~1,090–1,116 in-scope rows, **£6–£47**, un-run by decision. It buys
   triage coverage, not model quality: 0 of the unprofiled rows are labelled. A token-level price was
   never obtained — nothing retains `usageMetadata`, and narrowing the range would need a bespoke
@@ -1621,6 +1624,10 @@ the join, not for the symptom.**
 512 offline tests and 10 live, both green. 65% coverage against an 80% gate, accepted with reasons
 (D-29). Thirteen acceptance criteria walked and named (D-30); eleven met, one met on the last day,
 one deliberately not.
+
+The prediction column is full again — 1,985 rows, 1,015 of them in scope, scored across a 0.68–8.33
+spread rather than the constant the cleared column had made of the queue. Live at
+`restaurants-fsa-00235-lnr`, on the branch tip. `status: complete`.
 
 ---
 
@@ -1746,6 +1753,19 @@ one deliberately not.
 | Conformance on the 25 new profiles | **1 of 25** missing 7 fields, reported by `sql_conformance_check` | 2026-09-24 |
 | Predictions restored so far | 0 → **75** (25 the failed batch, 25 the free repeat, 25 the paid run) | 2026-09-24 |
 | Backfill candidates remaining, verified free | **1,910** in 8 chunks, no fan-out warning | 2026-09-24 |
+| Backfill executed | **1,810** rows in 8 chunks, 44s, every chunk re-verified free at run time | 2026-09-24 |
+| Prediction column, final | 0 → **1,985** of 11,268 (**1,015** in scope); 73 distinct values over **0.68–8.33** | 2026-09-24 |
+| `ML.PREDICT` MERGEs since D-32 | **1,935** rows across 5 batches, **0** fan-out failures | 2026-09-24 |
+| Live revision at close | `restaurants-fsa-00235-lnr`, image tagged `fbe1ef2` — the branch tip | 2026-09-24 |
+
+The backfill is also the largest test the D-32 fix has had. The duplicate keys killed a MERGE at 103
+rows; 1,810 went through in one run without one. The 100-row batch the user ran in the UI at 16:53,
+between the fix landing and the backfill, is the same evidence from the other direction — the path
+that failed twice that afternoon, succeeding unattended.
+
+Staleness is a working discriminator again but not yet a graded one: all 1,985 scored rows carry
+today's `predicted_at`, so the component separates scored from unscored and nothing finer. The tiers
+re-emerge on their own as the timestamps age, which is the behaviour D-20 predicted.
 
 ## Cost ledger
 
