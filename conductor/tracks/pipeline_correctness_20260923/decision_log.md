@@ -1316,6 +1316,57 @@ The verification value here is not the defect but where it came from. A checkpoi
 verification is supposed to be the step where a claim meets the product; this one worked as
 designed, and the claim it caught was mine.
 
+**Resolved, `f9195aa`.** One commit, because fixing (2) and (3) is one mechanism. The tab moved into
+`render_model_training_tab` — it was inline in `main()`, which nothing can call, so none of this was
+testable before the extraction. A "Validate Training SQL (Dry Run)" button now takes the `dry_run=True`
+path and is never locked, since "what would this do?" is the question someone asks precisely when a
+job is already running; `train_model` returns the byte estimate rather than logging and discarding it.
+The lock is derived from a tracked job id polled by the new `training_job_status`, which resolves the
+job's location from the dataset's because `jobs.get` needs it outside the US. It reads `error_result`
+separately from `state`: BigQuery marks a failed query `DONE`, which is exactly how problem (3) hid.
+
+Mutation-checked in both directions rather than asserted: hard-coding `disabled=False` kills
+`test_a_running_job_disables_the_train_button`; hard-coding `True` kills two others. A guard that
+cannot fail a test is how `training_lock` got to production in the first place.
+
+---
+
+## D-29 — The coverage gate, measured and accepted rather than met
+
+**Date.** 2026-09-24. **Phase 12.** **User decision:** record the gap, do not chase 80%.
+
+`conductor/workflow.md` wants 80% coverage. The track ends at **65.0%** (2,089 statements, 732
+missed), and that number is being recorded as accepted rather than quietly left unmet.
+
+| Scope | Statements | Missed | Covered |
+|---|---|---|---|
+| Everything under `app/` and `scripts/` | 2,089 | 732 | **65.0%** |
+| Excluding one-shot `scripts/migrate_*.py` | 1,938 | 624 | **67.8%** |
+| Also excluding `app/ui/st_app.py` | 1,511 | 377 | **75.0%** |
+
+The gap is two things, and neither is pipeline logic:
+
+- **Migrations that have already run.** Six of the seven `migrate_*.py` files sit at 0% — 103
+  statements of `ALTER TABLE ADD COLUMN` that executed once against the live table and are kept as
+  the record of what was done. Testing them now would test a mock's memory of a schema change that
+  is already visible in `MASTER_BQ_SCHEMA`. `migrate_pillar_columns.py` is the exception at 89%,
+  tested because Phase 4 was still writing it.
+- **Streamlit render code.** `st_app.py` is 42%, and the uncovered span is one region: `433-929`,
+  the body of `main()`. It is not callable — it renders against a live `st` context. The parts of
+  that file worth testing have been pulled out of it one at a time across this track
+  (`filter_and_sort_restaurants`, `load_data_into_state`, `priority_for_current_frame`,
+  `render_model_training_tab` at D-28) and each extraction is covered. That is the mechanism by
+  which this number improves, and it improves a function at a time.
+
+What the figure does *not* include: the 10 `integration` tests are deselected by `addopts` (D11), so
+the live paths they exercise count as uncovered here. Measuring with `-m ""` would flatter the number
+without testing anything more.
+
+The honest summary is that 75% is the real coverage of code that can be unit-tested, and the 5-point
+shortfall against the gate is spread thin rather than concentrated on anything load-bearing. Closing
+it properly means continuing to lift functions out of `main()`, which is a refactor with its own
+risk, not a test-writing exercise. Deliberately not done in a track about pipeline correctness.
+
 ---
 
 ## Measurements

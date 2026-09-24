@@ -125,6 +125,15 @@ class TestTheRealButtonStillTrains(ModelTrainingTabCase):
         self.assertIs(False, train.call_args.kwargs["dry_run"])
         self.assertIs(True, train.call_args.kwargs["run_async"])
 
+    def test_a_job_that_will_not_start_leaves_nothing_tracked(self):
+        """Otherwise the next rerun polls an id that was never issued, and the
+        button locks itself shut against a job that does not exist."""
+        st, _, state = self._render(pressed={"btn_train_model_unified"},
+                                    train_error=RuntimeError("403 accessDenied"))
+
+        self.assertTrue(any("403" in m for m in self._messages(st, "error")))
+        self.assertIsNone(state.get("training_job_id"))
+
     def test_a_started_job_is_remembered(self):
         _, _, state = self._render(pressed={"btn_train_model_unified"},
                                    train_result="job-123")
