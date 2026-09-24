@@ -14,8 +14,7 @@ uv export --no-dev --no-hashes --no-emit-project -o requirements.txt
 
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest                                  # 420 offline tests, ~8s — the normal edit-test loop
-pytest app/ scripts/                    # 405 of them — this is what Cloud Build runs
+pytest                                  # 447 offline tests, ~8s — and what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest -m integration                   # the 10 live tests, deliberately (costs money)
 
@@ -29,11 +28,10 @@ marked `integration` and deselected by `addopts` in `pyproject.toml` (D11): the 
 ignored. Marking is per-test where a module is mixed — `test_model_upgrades.py` has one live test
 and four that read config, and those four are the model-ID guard.
 
-Cloud Build still runs `pytest app/ scripts/`, not the bare command: collecting `tests/` imports
-`fastapi`/`uvicorn`/`google-adk[eval]`, and `requirements.txt` is hand-maintained and lists neither.
-Widening the gate waits on `requirements.txt` being generated from `pyproject.toml` (D12). Until
-then a test under `tests/` can rot without the build noticing — which is how the doubles in
-`tests/test_ml_prediction.py` came to be three columns out of date.
+Cloud Build runs the same bare `pytest`, over the whole repo. It could not before D12: collecting
+`tests/` imports `fastapi`, `uvicorn` and `google-adk[eval]`, which the hand-written
+`requirements.txt` did not list. Note that `app/agent.py` calls `google.auth.default()` at import,
+so collection needs ADC — Cloud Build's service account supplies it, verified on a test-only build.
 
 Operational scripts (all accept `--project_id/--dataset_id`, default to the live project):
 
