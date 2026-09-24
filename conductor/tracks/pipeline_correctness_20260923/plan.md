@@ -741,13 +741,18 @@ would spend it on.
 
 *Deliberately last — cross-cutting churn that would otherwise have blocked the cost fixes.*
 
-- [ ] Task: Make `--dry-run` actually dry (D15, found in Phase 2 — see D-09)
-    - [ ] Sub-task: Move the JIT pre-flight block at `train_bqml_model.py:26-60` inside the
+- [x] Task: Make `--dry-run` actually dry (D15, found in Phase 2 — see D-09) — deaef3b
+    - [x] Sub-task: Move the JIT pre-flight block at `train_bqml_model.py:26-60` inside the
           non-dry-run branch. It currently runs first and can issue grounded `AI.GENERATE` calls for
-          the 7 labelled rows with no profile.
-    - [ ] Sub-task: Test that a dry run triggers no enrichment call.
-    - [ ] Sub-task: `CLAUDE.md` documents the flag as "validate BQML training SQL without spending";
-          that becomes true rather than needing a correction.
+          the 7 labelled rows with no profile. Extracted to `run_jit_preflight` rather than
+          indented — a named call the caller declines reads better and is testable.
+    - [x] Sub-task: Test that a dry run triggers no enrichment call. Four new tests, including the
+          converse (a real run on the same row calls all three enrichers) — without it the first
+          passes against a pre-flight that never fires.
+    - [x] Sub-task: `CLAUDE.md` documents the flag as "validate BQML training SQL without spending";
+          that becomes true rather than needing a correction. **Verified live:** the dry run logs
+          the skip, validates the SQL against the 42-column table (5,719,647 bytes), and
+          `INFORMATION_SCHEMA.JOBS` shows zero query jobs in the window.
 - [ ] Task: Make failures visible (D9)
     - [ ] Sub-task: BigQuery helpers raise, or return an error-carrying result, instead of
           `[]`/`False`.

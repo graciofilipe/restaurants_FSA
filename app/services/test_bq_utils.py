@@ -829,3 +829,87 @@ class TestTheV1TextColumnIsGone(unittest.TestCase):
         from app.services.bq_utils import load_filtered_data_from_bq
         self.assertNotIn('gemini_insights_status',
                          inspect.signature(load_filtered_data_from_bq).parameters)
+
+
+class TestAFailedReadIsNotAnEmptyResult(unittest.TestCase):
+    """D9: three readers returned `[]` both when the table held no matching
+    rows and when the query never ran.
+
+    The visible symptom was the UI. `load_data_into_state` already wraps its
+    load in `try/except` and shows the exception, but nothing ever reached it
+    -- the helper caught the failure, logged it server-side and handed back an
+    empty list, so an expired credential rendered as "No data found matching
+    criteria." The user's reasonable response to that message is to widen the
+    filters, which cannot work.
+
+    An empty result and a failed read are different facts and the caller has
+    to be able to tell them apart. These raise; the empty-but-successful case
+    keeps returning `[]`, which is the half that stops this becoming noise.
+    """
+
+    def _client_that_fails(self, message="403 Request had insufficient authentication scopes"):
+        client = MagicMock()
+        client.query.side_effect = Exception(message)
+        return client
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_a_failed_filtered_load_raises(self, mock_client):
+        from app.services.bq_utils import BigQueryExecutionError, load_filtered_data_from_bq
+        mock_client.return_value = self._client_that_fails()
+
+        with self.assertRaises(BigQueryExecutionError):
+            load_filtered_data_from_bq('p', 'd', 't')
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_a_load_that_matched_nothing_still_returns_empty(self, mock_client):
+        """The converse, and the reason this is a behaviour change rather than
+        a blanket `raise`. Nothing matching the filters is a normal answer."""
+        from app.services.bq_utils import load_filtered_data_from_bq
+        client = MagicMock()
+        client.query.return_value.result.return_value = []
+        mock_client.return_value = client
+
+        self.assertEqual(load_filtered_data_from_bq('p', 'd', 't'), [])
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_a_failed_local_authority_fetch_raises(self, mock_client):
+        from app.services.bq_utils import BigQueryExecutionError, get_distinct_local_authorities
+        mock_client.return_value = self._client_that_fails()
+
+        with self.assertRaises(BigQueryExecutionError):
+            get_distinct_local_authorities('p', 'd', 't')
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_a_failed_outcode_fetch_raises(self, mock_client):
+        from app.services.bq_utils import BigQueryExecutionError, get_distinct_outcodes
+        mock_client.return_value = self._client_that_fails()
+
+        with self.assertRaises(BigQueryExecutionError):
+            get_distinct_outcodes('p', 'd', 't')
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_the_message_carries_the_cause_and_the_table(self, mock_client):
+        """The UI prints this string. "Error loading data:" on its own sends
+        someone to the logs; naming the table and quoting BigQuery's own
+        complaint is the difference between a wrong filter and a dead token."""
+        from app.services.bq_utils import BigQueryExecutionError, load_filtered_data_from_bq
+        mock_client.return_value = self._client_that_fails("403 insufficient authentication scopes")
+
+        with self.assertRaises(BigQueryExecutionError) as ctx:
+            load_filtered_data_from_bq('proj', 'ds', 'tbl')
+
+        self.assertIn('proj.ds.tbl', str(ctx.exception))
+        self.assertIn('403', str(ctx.exception))
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_the_original_exception_is_chained(self, mock_client):
+        """`raise ... from e` keeps the traceback. Without it the BigQuery
+        stack -- the part that says which credential and which scope -- is
+        replaced by ours."""
+        from app.services.bq_utils import BigQueryExecutionError, load_filtered_data_from_bq
+        mock_client.return_value = self._client_that_fails()
+
+        with self.assertRaises(BigQueryExecutionError) as ctx:
+            load_filtered_data_from_bq('p', 'd', 't')
+
+        self.assertIsNotNone(ctx.exception.__cause__)
