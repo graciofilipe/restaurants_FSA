@@ -917,4 +917,18 @@ would spend it on.
 - [x] Task: Fix the find query's demographics fan-out (D-31, found by the backfill's dry run) `fbb02ea`
     - [x] Sub-task: 15 duplicated postcodes in `uk_postcode_demographics`, 103 `fsa_master` rows
           affected. A counting defect, not a spending one: `LIMIT 50` counted joined rows.
+    - [x] Sub-task: Wrong about the blast radius — see D-32 below.
+- [x] Task: Fix the same fan-out where it is fatal (D-32/D-33, found in production) `7d00660`
+    - [x] Sub-task: Two prediction batches failed on 2026-09-24 with "UPDATE/MERGE must match at
+          most one source row for each target row", each *after* paying for `AI.GENERATE`. This is
+          the layer under D-28: clicking did run, did spend, and threw the result away.
+    - [x] Sub-task: `feature_source_clause` joins a deduplicated subquery. `ROW_NUMBER … NULLS LAST`,
+          not `ANY_VALUE` — 1 of the 15 duplicate sets genuinely disagrees.
+    - [x] Sub-task: Training pre-flight's copy → correlated subquery, as the find query's was.
+    - [x] Sub-task: `build_missing_postcodes_query` groups by the normalised key, so the table stops
+          accumulating one row per raw spelling.
+    - [x] Sub-task: Measured 226→103 rows for the 103 affected restaurants; 370→369 training rows.
+          Feature list unchanged, so no retrain forced. 512 offline tests.
+    - [ ] Sub-task: Clean the 16 surplus rows out of `uk_postcode_demographics` — hygiene, not a
+          fix, since every reader is now safe. Needs the user's go-ahead.
 - [ ] Task: Decision-log closing entry, `metadata.json` → `complete`, checkpoint, merge

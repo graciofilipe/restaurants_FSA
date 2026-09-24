@@ -14,7 +14,7 @@ uv export --no-dev --no-hashes --no-emit-project -o requirements.txt
 
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest                                  # 496 offline tests, ~8s — and what Cloud Build runs
+pytest                                  # 512 offline tests, ~8s — and what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
 pytest -m integration                   # the 10 live tests, deliberately (costs money)
 pytest --cov=app --cov=scripts          # 65% of production code; test files are omitted
@@ -102,7 +102,11 @@ a one-day expiry as a backstop).
    arrive untriaged and profiling is what answers the question; what it excludes is the
    already-answered no. This replaced a `manual_review` predicate whose dominant value, `rejected`,
    was set on 9,348 rows that are in scope.
-4. **Demographics** — `scripts/enrich_postcode_demographics.py` fills LSOA/MSOA/IMD from postcodes.io.
+4. **Demographics** — `scripts/enrich_postcode_demographics.py` fills LSOA/MSOA/IMD from
+   postcodes.io into `uk_postcode_demographics`. Every reader joins it on
+   `REPLACE(UPPER(postcode), ' ', '')`, so it fetches one row per *normalised* key, not per raw
+   spelling — `SW3 5UH` and `SW3 5 UH` are two spellings and one key, and fetching both is how 15
+   duplicate keys got in (D-33). They are still there; the readers defend themselves.
 5. **Predict** — `app/services/ml_prediction.py` runs steps 2–4 just-in-time for whatever is missing,
    then `ML.PREDICT` into `predicted_user_rating` + `predicted_at`. Whether step 3 is "missing" is
    decided by `needs_gemini_profile` (`app/core/profile_freshness.py`) — no profile, or one older
@@ -143,6 +147,16 @@ genuinely top-level.
 than a convention — `app/core/test_model_features.py::TestTrainServeParity` fails if the two
 generated strings ever differ. Missing scores stay NULL; there is no `IFNULL(…, 0)`, because a
 constant-zero feature is indistinguishable from an uninformative one.
+
+`feature_source_clause` joins a **deduplicated subquery** over `uk_postcode_demographics`, never the
+table. Its key is not unique there, and the duplicates are fatal on the prediction side rather than
+untidy: they reach `ML.PREDICT`'s MERGE, which refuses a source matching a target twice — *after* the
+caller has paid for the Gemini pre-flight. Two production batches died that way before it was found
+(D-32). The row is picked by `ROW_NUMBER ... ORDER BY … NULLS LAST` and not `ANY_VALUE`, because one
+duplicate set genuinely disagrees and an independent choice at train and serve time is the skew this
+module exists to prevent. Any new query joining that table needs the same treatment; a correlated
+subquery is the right form where only "did it resolve?" is read (`build_find_query`, the training
+pre-flight).
 
 **Changing the feature list changes the model's input schema**, so `ML.PREDICT` against a model
 trained on the old one fails. Retrain in the same change.

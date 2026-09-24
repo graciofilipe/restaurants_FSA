@@ -1440,6 +1440,115 @@ having the script complain when they disagreed. That check was in the script bec
 for the guarantee to be re-derived at run time rather than assumed, which is the same reasoning that
 produced D1's shared predicate.
 
+**Superseded in part by D-32.** "It did not cost anything" was true of the find query and false of
+the blast radius. The same duplicates reach `ML.PREDICT`'s MERGE, which does not tolerate them.
+
+---
+
+## D-32 — The same duplicate postcodes killed every prediction batch outright (new defect, found in production)
+
+**Date.** 2026-09-24. **Phase 12.** Found by reading `INFORMATION_SCHEMA.JOBS` while looking for the
+Phase 7 verification evidence, which is not where I expected to find a defect.
+
+Two prediction runs had failed in production that afternoon, both the same way:
+
+```
+14:45:58  MERGE  ML.PREDICT  UPDATE/MERGE must match at most one source row for each target row
+16:10:33  MERGE  ML.PREDICT  UPDATE/MERGE must match at most one source row for each target row
+```
+
+Each one had run the Gemini pre-flight first — the 14:44 run took 82 seconds in `AI.GENERATE` and
+wrote 18 new profiles, the 16:06 run took 3m34s — and then thrown the result away. **The money was
+spent and no prediction was written.** The prediction column had stood at 25 rows since 14:42, which
+was the one batch of the three that happened to contain no affected row.
+
+### The mechanism
+
+`feature_source_clause` joined `uk_postcode_demographics` directly. The join key is
+`REPLACE(UPPER(postcode), ' ', '')`; the table is not stored that way. 15 normalised postcodes appear
+two or three times, 103 rows of `fsa_master` match one, and the `ML.PREDICT` input therefore held
+**226 rows for 103 restaurants**. `ML.PREDICT` returns one row per input row, so `fhrsid` was
+duplicated in the MERGE's `USING`, and BigQuery refuses the statement rather than picking a winner.
+
+This is the same 15 duplicated postcodes as D-31, which I had recorded as harmless. The find query's
+copy *was* harmless. This copy is not, and the difference is that a MERGE has an opinion about
+duplicate source keys where an `IN (...)` list does not. Recording D-31 as "a counting defect, not a
+spending one" was the right call for the evidence I had and the wrong conclusion about the join; what
+I should have done on finding a fan-out in one query was look for the same join everywhere else,
+which is how this was eventually found.
+
+It also answers the question that opened Phase 12 — *"why does clicking not trigger a training
+job?"* — one layer further down than D-28 did. D-28 was right that the UI never reported the
+outcome. This is what the outcome was.
+
+### The fix
+
+The join is against a deduplicated subquery:
+
+```sql
+LEFT JOIN (
+  SELECT REPLACE(UPPER(postcode), ' ', '') AS postcode_key, lsoa, msoa, imd_rank
+  FROM `…uk_postcode_demographics`
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY REPLACE(UPPER(postcode), ' ', '')
+                             ORDER BY lsoa NULLS LAST, msoa NULLS LAST, imd_rank NULLS LAST) = 1
+) AS d
+```
+
+`ROW_NUMBER` and not `ANY_VALUE`: **14 of the 15 duplicate sets are byte-identical, one is not**
+(`SW3 5UH`), so something has to choose, and `ANY_VALUE` would let the training run and the
+prediction run choose differently — the train/serve skew this module exists to prevent — as well as
+mixing columns from different source rows.
+
+`NULLS LAST` because the disagreeing pair is `SW3 5 UH`, a stray space, which postcodes.io answered
+with an all-NULL row. BigQuery sorts nulls first ascending, so the plain ordering deterministically
+picks the blank over the real demographics. Found by running the fix and looking at what it chose,
+not by thinking about it.
+
+Because this is a row-cardinality change and not a feature-list change, **the model's input schema is
+unchanged and no retrain is forced**. `app/core/test_model_features.py` pins that claim by extracting
+the aliases from the generated `SELECT` and comparing them to `FEATURE_ALIASES`.
+
+The training pre-flight's copy of the same join becomes a correlated subquery, as the find query's
+did. It only inflates the "N labelled rows need a profile" line, but that is a number someone reads
+before deciding to spend.
+
+### Measured
+
+| | Before | After |
+|---|---|---|
+| `ML.PREDICT` input over the 103 affected rows | 226 rows / 103 restaurants | **103 / 103** |
+| Of those, carrying demographics | some got the all-NULL row | **103** |
+| `build_training_select` over the labelled set | 370 rows | **369** |
+| Production prediction batches, 2026-09-24 | 2 of 3 failed after paying | — |
+
+The training figure is the second half of this: the served model was trained on **one label
+double-weighted**, out of 411. Small, and not the reason for the fix, but it is a thing that was
+true and is no longer.
+
+---
+
+## D-33 — The table was accumulating the duplicates, one per spelling
+
+**Date.** 2026-09-24. **Phase 12.** The source of D-32, found by asking where 15 duplicate keys in a
+reference table come from when the script that fills it checks for membership first.
+
+It checks correctly and selects incorrectly. Membership is tested on the normalised key; the
+candidate list was `SELECT DISTINCT PostCode` — distinct **raw** spellings. `SW3 5UH` and `SW3 5 UH`
+are two spellings and one key, so both were absent from the target, both were fetched, and both were
+inserted. `EC2A 3EJ` managed three.
+
+`build_missing_postcodes_query` now groups by the normalised key. Which spelling to send to the API
+is then a real choice, and it takes the shortest: the surplus characters in these pairs are stray
+spaces, and the stray-space spelling is the one the API could not resolve. A plain `MIN` picks it,
+because a space sorts below a digit.
+
+**Both fixes ship, and the query-side one is the load-bearing one.** A join against a reference table
+this code does not own should not assume that table's keys are unique, whatever the writer does.
+Cleaning the 16 surplus rows out of the table is hygiene, not a fix, and is left for the user to
+approve — every reader is now safe against them.
+
+Live after the change: **29 postcodes still to fetch**, down from a list that counted raw spellings.
+
 ---
 
 ## Measurements
@@ -1551,6 +1660,14 @@ produced D1's shared predicate.
 | `fsa_master` rows the fan-out duplicated (D-31) | **103** | 2026-09-24 |
 | Backfill candidates: unscored, fully enriched, fresh profile | **1,941** of 11,268; 8 chunks of 250 | 2026-09-24 |
 | Backfill verification, before → after the D-31 fix | 1,964 rows for 1,941 ids → **1,941 = 1,941** | 2026-09-24 |
+| Production prediction batches that failed on the MERGE (D-32) | **2 of 3**, 14:45:58 and 16:10:33, both after paying for `AI.GENERATE` | 2026-09-24 |
+| `ML.PREDICT` input over the 103 affected rows, before → after | **226 rows / 103 restaurants → 103 / 103** | 2026-09-24 |
+| Affected rows resolving to real demographics, after | **103 of 103** (some previously drew the all-NULL row) | 2026-09-24 |
+| Duplicate sets with genuinely different payloads (D-32) | **1 of 15** (`SW3 5UH`), which is why the pick is ordered, not `ANY_VALUE` | 2026-09-24 |
+| `build_training_select` rows over the labelled set, before → after | **370 → 369**; the served model carried one double-weighted label | 2026-09-24 |
+| Labelled rows inside the fan-out | **1** of 411 (1 of 369 in scope) | 2026-09-24 |
+| Postcodes still to fetch, after the D-33 regrouping | **29** | 2026-09-24 |
+| Offline suite after D-32/D-33 | **512 passed, 10 deselected**, 300 subtests, ~7s | 2026-09-24 |
 
 ## Cost ledger
 
