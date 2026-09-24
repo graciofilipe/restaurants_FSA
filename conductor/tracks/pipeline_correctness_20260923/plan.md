@@ -877,7 +877,7 @@ would spend it on.
     - [x] Sub-task: User confirmed 2026-09-24. Two defects found *during* the verification, in the
           Model Training tab, carried to Phase 12 — see D-28. The coverage gap is carried with them.
 
-## Phase 12: Close Out
+## Phase 12: Close Out [checkpoint: 9a3811d]
 
 - [x] Task: Full regression — `pytest app/`, then the live suite deliberately
     - [x] Sub-task: **496 passed, 10 deselected**, 300 subtests, ~7s offline.
@@ -943,4 +943,14 @@ would spend it on.
           Feature list unchanged, so no retrain forced. 512 offline tests.
     - [ ] Sub-task: Clean the 16 surplus rows out of `uk_postcode_demographics` — hygiene, not a
           fix, since every reader is now safe. Needs the user's go-ahead.
-- [ ] Task: Decision-log closing entry, `metadata.json` → `complete`, checkpoint, merge
+- [x] Task: Decision-log closing entry, `metadata.json` → `complete`, checkpoint, merge
+    - [x] Sub-task: Closing entry **D-34** — the fifteen defects, what the close-out itself found,
+          and every carried item with the trigger that reopens it. `9a3811d`
+    - [x] Sub-task: Merged to `main` as `1a7b2de`; 512 offline and 10 live green on the merge.
+    - [ ] Sub-task: `metadata.json` → `complete`. Held open deliberately: the prediction back-fill
+          is the one in-track deliverable still un-run.
+- [x] Task: Deploy and verify on Cloud Run — *pushed*; digest verification is the user's, `gcloud`
+      is not available in this session
+- [ ] Task: Run the back-fill — `scripts/backfill_predictions --execute`, 1,910 rows, £0
+    - [x] Sub-task: Dry run shown: 8 chunks, all verified free, no fan-out warning.
+    - [ ] Sub-task: `--execute`. Blocked in this session; the command is the user's to run.
