@@ -53,13 +53,16 @@ streamlit run app/ui/st_app.py
 The app will be accessible at `http://localhost:8501`.
 
 ### Running Tests & Evaluation
-To execute the full test suite and the ADK evaluation flywheel:
 ```bash
-# Run all unit, integration, and eval tests
-pytest app/ tests/
+# The offline suite -- the whole repo, minus the tests marked `integration`.
+# This is what Cloud Build runs.
+pytest
 
-# Run ADK agent evaluation dataset
-agents-cli eval run --evalset tests/eval/evalsets/restaurant_eval.evalset.json
+# The live tests, deliberately. Real Vertex calls; they cost money.
+pytest -m integration
+
+# The ADK evaluation flywheel.
+adk eval app tests/eval/evalsets/restaurant_eval.evalset.json
 ```
 
 ## Development Conventions
