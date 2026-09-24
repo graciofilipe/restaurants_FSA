@@ -5,17 +5,37 @@ description = ""
 authors = [
     {name = "Your Name", email = "your@email.com"},
 ]
+requires-python = ">=3.11"
+# The single source. `requirements.txt` is generated from this list and the
+# lock (D12) -- see `scripts/test_dependency_parity.py`. Everything imported
+# anywhere under `app/`, `scripts/` or `tests/` is named here, including the
+# ones that also arrive transitively: a transitive dependency is a version
+# another package happens to want, not one we asked for.
+#
+# The test dependencies are in this list rather than a dev group because
+# `requirements.txt` is also what Cloud Build's test step installs -- the image
+# and the CI environment are the same file.
 dependencies = [
     "google-adk[eval]>=1.15.0",
+    "google-api-core>=2.11.0",
+    "google-auth>=2.20.0",
+    "google-cloud-bigquery>=3.0.0",
     "google-cloud-logging>=3.12.0",
     "google-genai>=0.1.0",
-    "google-cloud-bigquery>=3.0.0",
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
+    "numpy>=1.26.0",
+    "pandas>=2.0.0",
+    "pandas-gbq>=0.30.0",
+    "pydantic>=2.0.0",
+    "requests>=2.31.0",
+    "streamlit>=1.30.0",
     "fastapi>=0.130.0",
     "uvicorn>=0.30.0",
-    "streamlit>=1.30.0",
-    "pandas-gbq>=0.30.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    # `workflow.md` sets an >80% coverage gate that no checkpoint had been able
+    # to evaluate, because nothing installed a coverage plugin.
+    "pytest-cov>=5.0.0",
+    # Not imported: BigQuery needs it to hand DATE/TIME columns to pandas.
     "db-dtypes>=1.0.0",
 ]
 
@@ -76,6 +96,23 @@ skip = "./locust_env/*,uv.lock,.venv,./frontend,**/package-lock.json"
 [tool.pytest.ini_options]
 pythonpath = "."
 asyncio_default_fixture_loop_scope = "function"
+# A bare `pytest` is offline. Everything that needs live GCP, a network call or
+# a listening port is marked `integration` and deselected by default, so the
+# obvious command is the safe one -- it used to spin up a uvicorn server on
+# port 8000 and bill real Gemini calls (D11).
+#   pytest                      offline, the whole repo
+#   pytest -m integration       the live suite, deliberately
+#   pytest -m ""                everything, markers ignored
+addopts = "-m 'not integration'"
+markers = [
+    "integration: needs live GCP credentials, network, or a local server (deselected by default)",
+]
+
+[tool.coverage.run]
+# `pytest --cov=app --cov=scripts`. The gate in `conductor/workflow.md` is about
+# production code: counting the test files themselves reports 84% and measures
+# nothing, since a test file is executed by definition.
+omit = ["*/test_*.py", "*/__init__.py"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app","frontend"]

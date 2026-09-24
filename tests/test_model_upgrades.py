@@ -81,6 +81,10 @@ def test_eval_config_judge_model():
     assert judge_model == "gemini-3.8-flash"
 
 
+# The only live test in this file. The other four read config and assert on
+# generated SQL, which is the half worth running on every commit -- marking the
+# whole module would have taken the model-ID guard offline with it.
+@pytest.mark.integration
 def test_live_gemini_3_8_flash_adk_invocation():
     """Test live ADK execution using gemini-3.8-flash and GoogleMapsGroundingTool."""
     session_service = InMemorySessionService()

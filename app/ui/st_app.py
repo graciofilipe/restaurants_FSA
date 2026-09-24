@@ -1,3 +1,5 @@
+import datetime
+
 import streamlit as st
 import pandas as pd
 from app.services.bq_utils import (
@@ -35,12 +37,75 @@ DISPLAY_COLUMNS = [
     "gemini_insights_structured",
 ]
 
+# The slicer vocabularies. Each sidebar selectbox is built from the same tuple
+# `filter_and_sort_restaurants` compares against, so a renamed option cannot
+# quietly stop matching. Before this, every filter accepted about three
+# spellings of each answer and the widget passed a fourth literal -- the aliases
+# were insurance against exactly the drift that sharing one name removes.
+FILTER_ALL = "All"
+
+SCOPE_ALL = "All Loaded"
+SCOPE_IN = "In-Scope (Restaurants)"
+SCOPE_OUT = "Out-of-Scope"
+SCOPE_UNTRIAGED = "Unprocessed / Triage"
+SCOPE_OPTIONS = (SCOPE_ALL, SCOPE_IN, SCOPE_OUT, SCOPE_UNTRIAGED)
+
+RATED_YES = "Has User Rating (Rated)"
+RATED_NO = "No User Rating (Unrated)"
+RATED_OPTIONS = (FILTER_ALL, RATED_YES, RATED_NO)
+
+PRED_YES = "Has Predicted Rating"
+PRED_NO = "No Predicted Rating"
+PRED_OPTIONS = (FILTER_ALL, PRED_YES, PRED_NO)
+
+MATCH_YES = "Has Gemini Match Score"
+MATCH_NO = "No Gemini Match Score"
+MATCH_OPTIONS = (FILTER_ALL, MATCH_YES, MATCH_NO)
+
 # The three answers `maps_found` can give. "No rating" was one answer covering
 # two of them until Phase 8.
-MAPS_ALL = "All"
+MAPS_ALL = FILTER_ALL
 MAPS_FOUND = "Found on Google Maps"
 MAPS_NOT_FOUND = "Not Found on Google Maps"
 MAPS_NEVER_LOOKED_UP = "Not Looked Up Yet"
+MAPS_OPTIONS = (MAPS_ALL, MAPS_FOUND, MAPS_NOT_FOUND, MAPS_NEVER_LOOKED_UP)
+
+SORT_PRIORITY = "Priority Score (High to Low)"
+SORT_DISTANCE = "Distance (Nearest First)"
+SORT_PREDICTED = "Predicted Rating (High to Low)"
+SORT_USER_RATING = "User Rating (High to Low)"
+SORT_MAPS_RATING = "Maps Rating (High to Low)"
+SORT_MATCH_SCORE = "Gemini Match Score (High to Low)"
+SORT_FIRST_SEEN = "First Seen (Newest)"
+SORT_NAME = "Business Name (A-Z)"
+SORT_NATURAL = "Natural / BQ Order"
+SORT_OPTIONS = (SORT_PRIORITY, SORT_DISTANCE, SORT_PREDICTED, SORT_USER_RATING,
+                SORT_MAPS_RATING, SORT_MATCH_SCORE, SORT_FIRST_SEEN, SORT_NAME,
+                SORT_NATURAL)
+
+# Sort option -> (candidate columns, ascending). The first candidate the frame
+# actually has wins; `SORT_NATURAL` is absent on purpose, since leaving the
+# BigQuery order alone is what it means.
+SORT_BY_COLUMN = {
+    SORT_PRIORITY: (("priority_score",), False),
+    SORT_DISTANCE: (("distance_km",), True),
+    SORT_PREDICTED: (("predicted_user_rating",), False),
+    SORT_USER_RATING: (("user_rating",), False),
+    SORT_MAPS_RATING: (("maps_rating",), False),
+    SORT_MATCH_SCORE: (("match_score",), False),
+    SORT_FIRST_SEEN: (("first_seen",), False),
+    SORT_NAME: (("businessname", "BusinessName"), True),
+}
+
+# Searched as one field. Both spellings, because the FSA API is PascalCase and
+# BigQuery is lowercase and a loaded frame can carry either.
+SEARCH_COLUMNS = ("businessname", "BusinessName", "postcode", "PostCode",
+                  "localauthorityname", "LocalAuthorityName", "fhrsid", "FHRSID")
+
+
+def _first_column(df: pd.DataFrame, names) -> str:
+    """The first of `names` the frame actually has, or None."""
+    return next((name for name in names if name in df.columns), None)
 
 def display_data(df, key=None):
     event = st.dataframe(
@@ -77,57 +142,54 @@ def get_selected_rows(event, df):
 
 def filter_and_sort_restaurants(
     df: pd.DataFrame,
-    scope_filter: str = "All Loaded",
-    user_rating_filter: str = "All",
-    pred_rating_filter: str = "All",
-    gemini_match_filter: str = "All",
+    scope_filter: str = SCOPE_ALL,
+    user_rating_filter: str = FILTER_ALL,
+    pred_rating_filter: str = FILTER_ALL,
+    gemini_match_filter: str = FILTER_ALL,
     maps_filter: str = MAPS_ALL,
     min_pred_score: float = 1.0,
     search_query: str = "",
-    sort_by: str = "Predicted Rating (High to Low)",
-    rating_filter: str = None,
-    pred_filter: str = None,
+    sort_by: str = SORT_PREDICTED,
 ) -> pd.DataFrame:
     """
     Applies in-memory filtering and sorting to the restaurant DataFrame.
+
+    Every filter takes one of the module's option constants. An unrecognised
+    string is a no-op for that filter, which is how `FILTER_ALL` works.
     """
     if df.empty:
         return df.copy()
 
     filtered = df.copy()
 
-    # Handle legacy parameter aliases
-    if rating_filter is not None and user_rating_filter == "All":
-        user_rating_filter = rating_filter
-    if pred_filter is not None and pred_rating_filter == "All":
-        pred_rating_filter = pred_filter
-
     # 1. Scope Filter
     if "in_scope" in filtered.columns:
-        if scope_filter in ["In-Scope (Restaurants)", "in_scope"]:
-            filtered = filtered[filtered["in_scope"] == True]
-        elif scope_filter in ["Out-of-Scope", "out_of_scope"]:
-            filtered = filtered[filtered["in_scope"] == False]
-        elif scope_filter in ["Unprocessed / Triage", "unprocessed"]:
+        if scope_filter == SCOPE_IN:
+            filtered = filtered[filtered["in_scope"] == True]  # noqa: E712 -- NULL must not match
+        elif scope_filter == SCOPE_OUT:
+            filtered = filtered[filtered["in_scope"] == False]  # noqa: E712
+        elif scope_filter == SCOPE_UNTRIAGED:
             filtered = filtered[filtered["in_scope"].isna()]
 
     # 2. User Rating Filter
     if "user_rating" in filtered.columns:
-        if user_rating_filter in ["Has User Rating (Rated)", "User Rated Only", "Has Rating"]:
+        if user_rating_filter == RATED_YES:
             filtered = filtered[filtered["user_rating"].notna()]
-        elif user_rating_filter in ["No User Rating (Unrated)", "Unrated Only", "No Rating"]:
+        elif user_rating_filter == RATED_NO:
             filtered = filtered[filtered["user_rating"].isna()]
 
     # 3. ML Prediction Filter
     if "predicted_user_rating" in filtered.columns:
-        if pred_rating_filter in ["Has Predicted Rating", "Predicted Only", "Has Prediction"]:
+        if pred_rating_filter == PRED_YES:
             filtered = filtered[
                 filtered["predicted_user_rating"].notna() &
                 (filtered["predicted_user_rating"] >= min_pred_score)
             ]
-        elif pred_rating_filter in ["No Predicted Rating", "Unpredicted Only", "No Prediction"]:
+        elif pred_rating_filter == PRED_NO:
             filtered = filtered[filtered["predicted_user_rating"].isna()]
-        elif pred_rating_filter == "All" and min_pred_score > 1.0:
+        elif pred_rating_filter == FILTER_ALL and min_pred_score > 1.0:
+            # An unpredicted row is not evidence of a low score, so the minimum
+            # excludes only rows that have one and fall short.
             filtered = filtered[
                 filtered["predicted_user_rating"].isna() |
                 (filtered["predicted_user_rating"] >= min_pred_score)
@@ -135,21 +197,15 @@ def filter_and_sort_restaurants(
 
     # 4. Gemini Match Score Filter
     # `insight_score` was the parser's alias for the same number; the column is
-    # real now, so the alias is gone rather than carried as a fallback.
-    match_col = "match_score" if "match_score" in filtered.columns else None
-    if match_col:
-        has_gemini = filtered[match_col].notna()
-        if "gemini_insights_structured" in filtered.columns:
-            has_gemini = has_gemini | filtered["gemini_insights_structured"].notna()
-        if gemini_match_filter in ["Has Gemini Match Score", "Has Match Score", "Has Gemini Score"]:
-            filtered = filtered[has_gemini]
-        elif gemini_match_filter in ["No Gemini Match Score", "No Match Score", "No Gemini Score"]:
-            filtered = filtered[~has_gemini]
-    elif "gemini_insights_structured" in filtered.columns:
-        if gemini_match_filter in ["Has Gemini Match Score", "Has Match Score", "Has Gemini Score"]:
-            filtered = filtered[filtered["gemini_insights_structured"].notna()]
-        elif gemini_match_filter in ["No Gemini Match Score", "No Match Score", "No Gemini Score"]:
-            filtered = filtered[filtered["gemini_insights_structured"].isna()]
+    # real now, so the alias is gone rather than carried as a fallback. A row
+    # with raw JSON but no extracted score still counts as profiled.
+    match_columns = [c for c in ("match_score", "gemini_insights_structured")
+                     if c in filtered.columns]
+    if match_columns and gemini_match_filter in (MATCH_YES, MATCH_NO):
+        has_gemini = pd.Series(False, index=filtered.index)
+        for column in match_columns:
+            has_gemini = has_gemini | filtered[column].notna()
+        filtered = filtered[has_gemini if gemini_match_filter == MATCH_YES else ~has_gemini]
 
     # 5. Google Maps Lookup Filter
     # `maps_found` answers this, not `maps_rating`. A NULL rating means either
@@ -164,37 +220,71 @@ def filter_and_sort_restaurants(
         elif maps_filter == MAPS_NEVER_LOOKED_UP:
             filtered = filtered[filtered["maps_found"].isna()]
 
-    # 6. Search Query (businessname, postcode, localauthorityname, fhrsid)
+    # 6. Search Query — one box across name, postcode, authority and FHRSID
     if search_query:
         query = search_query.strip().lower()
-        search_cols = [c for c in ["businessname", "BusinessName", "postcode", "PostCode", "localauthorityname", "LocalAuthorityName", "fhrsid", "FHRSID"] if c in filtered.columns]
+        search_cols = [c for c in SEARCH_COLUMNS if c in filtered.columns]
         if search_cols:
             match_mask = pd.Series(False, index=filtered.index)
             for col in search_cols:
                 match_mask = match_mask | filtered[col].astype(str).str.lower().str.contains(query, na=False)
             filtered = filtered[match_mask]
 
-    # 7. Sorting
-    if sort_by == "Priority Score (High to Low)" and "priority_score" in filtered.columns:
-        filtered = filtered.sort_values(by="priority_score", ascending=False, na_position="last")
-    elif sort_by == "Distance (Nearest First)" and "distance_km" in filtered.columns:
-        filtered = filtered.sort_values(by="distance_km", ascending=True, na_position="last")
-    elif sort_by == "Predicted Rating (High to Low)" and "predicted_user_rating" in filtered.columns:
-        filtered = filtered.sort_values(by="predicted_user_rating", ascending=False, na_position="last")
-    elif sort_by == "User Rating (High to Low)" and "user_rating" in filtered.columns:
-        filtered = filtered.sort_values(by="user_rating", ascending=False, na_position="last")
-    elif sort_by == "Maps Rating (High to Low)" and "maps_rating" in filtered.columns:
-        filtered = filtered.sort_values(by="maps_rating", ascending=False, na_position="last")
-    elif sort_by == "Gemini Match Score (High to Low)" and "match_score" in filtered.columns:
-        filtered = filtered.sort_values(by="match_score", ascending=False, na_position="last")
-    elif sort_by == "First Seen (Newest)" and "first_seen" in filtered.columns:
-        filtered = filtered.sort_values(by="first_seen", ascending=False, na_position="last")
-    elif sort_by == "Business Name (A-Z)":
-        name_col = "businessname" if "businessname" in filtered.columns else "BusinessName"
-        if name_col in filtered.columns:
-            filtered = filtered.sort_values(by=name_col, ascending=True, na_position="last")
+    # 7. Sorting. Missing values sort last whichever direction is asked for:
+    # an unscored restaurant is not the best one and not the worst one either.
+    candidates, ascending = SORT_BY_COLUMN.get(sort_by, ((), None))
+    sort_col = _first_column(filtered, candidates)
+    if sort_col:
+        filtered = filtered.sort_values(by=sort_col, ascending=ascending, na_position="last")
 
     return filtered
+
+
+def set_enriched_frame(df):
+    """The only way `df_enriched` is allowed to change.
+
+    `data_version` is what `priority_for_current_frame` keys its memo on, so a
+    frame swapped in behind its back would serve scores computed from the
+    previous load. Routing every assignment through here means the bump cannot
+    be forgotten at a new call site -- the same reasoning as
+    `reset_selection_state`, which exists because Streamlit's positional row
+    indices go stale the moment the frame underneath them changes.
+    """
+    st.session_state.df_enriched = df
+    st.session_state.data_version = st.session_state.get('data_version', 0) + 1
+    st.session_state.pop('priority_cache', None)
+
+
+def priority_for_current_frame(df, anchor_lat, anchor_lon, weights):
+    """`calculate_restaurant_priority`, memoized for the life of one frame.
+
+    The ML Predictions tab re-scores the whole table on every rerun, and
+    Streamlit reruns the script on every widget interaction anywhere on the
+    page -- dragging the batch-size slider, ticking a checkbox in another tab.
+    Nothing about those changes the scores, so the answer is the same one the
+    previous rerun computed (D8).
+
+    Not `@st.cache_data`: that hashes the DataFrame's contents to build its
+    key, which for 11,268 rows is the same order of work as the scoring it
+    would save. The version counter is O(1) and `set_enriched_frame` is the
+    only thing that moves it.
+    """
+    key = (
+        st.session_state.get('data_version'),
+        float(anchor_lat), float(anchor_lon),
+        tuple(sorted(weights.items())),
+        datetime.date.today(),  # staleness tiers are measured against today
+    )
+    cached = st.session_state.get('priority_cache')
+    if cached is not None and cached[0] == key:
+        return cached[1].copy()
+
+    scored = calculate_restaurant_priority(
+        df, anchor_lat=anchor_lat, anchor_lon=anchor_lon, weights=weights)
+    st.session_state['priority_cache'] = (key, scored)
+    # A copy, so a caller that mutates what it got back cannot poison the memo
+    # for the next rerun. This is what the uncached call always returned.
+    return scored.copy()
 
 
 @st.cache_data
@@ -244,11 +334,11 @@ def load_data_into_state(
 
                 df_enriched = calculate_restaurant_priority(df_enriched)
 
-                st.session_state.df_enriched = df_enriched
+                set_enriched_frame(df_enriched)
                 st.session_state.data_loaded = True
                 reset_selection_state()
             else:
-                st.session_state.df_enriched = pd.DataFrame()
+                set_enriched_frame(pd.DataFrame())
                 st.session_state.data_loaded = True
                 reset_selection_state()
                 st.warning("No data found matching criteria.")
@@ -260,7 +350,7 @@ def main():
     st.title("🍔 FSA Restaurant Explorer & Scoring Engine")
     
     if 'df_enriched' not in st.session_state:
-        st.session_state.df_enriched = pd.DataFrame()
+        set_enriched_frame(pd.DataFrame())
     if 'data_loaded' not in st.session_state:
         st.session_state.data_loaded = False
 
@@ -326,20 +416,20 @@ def main():
 
         user_rating_slicer = st.selectbox(
             "User Rating",
-            options=["All", "Has User Rating (Rated)", "No User Rating (Unrated)"],
+            options=list(RATED_OPTIONS),
             index=0,
             key="slicer_user_rating"
         )
 
         pred_rating_slicer = st.selectbox(
             "ML Predicted Rating",
-            options=["All", "Has Predicted Rating", "No Predicted Rating"],
+            options=list(PRED_OPTIONS),
             index=0,
             key="slicer_pred_rating"
         )
 
         min_pred_score = 1.0
-        if pred_rating_slicer != "No Predicted Rating":
+        if pred_rating_slicer != PRED_NO:
             min_pred_score = st.slider(
                 "Min Predicted Score",
                 min_value=1.0,
@@ -351,14 +441,14 @@ def main():
 
         gemini_match_slicer = st.selectbox(
             "Gemini Match Score",
-            options=["All", "Has Gemini Match Score", "No Gemini Match Score"],
+            options=list(MATCH_OPTIONS),
             index=0,
             key="slicer_gemini_match"
         )
 
         maps_slicer = st.selectbox(
             "Google Maps Lookup",
-            options=[MAPS_ALL, MAPS_FOUND, MAPS_NOT_FOUND, MAPS_NEVER_LOOKED_UP],
+            options=list(MAPS_OPTIONS),
             index=0,
             key="slicer_maps_found",
             help="'Not Found' means Places was asked and had no match — those are not re-queried. 'Not Looked Up Yet' is the enrichment backlog."
@@ -366,7 +456,7 @@ def main():
 
         scope_slicer = st.selectbox(
             "Scope View",
-            options=["All Loaded", "In-Scope (Restaurants)", "Out-of-Scope", "Unprocessed / Triage"],
+            options=list(SCOPE_OPTIONS),
             index=0,
             key="slicer_scope_view"
         )
@@ -375,17 +465,7 @@ def main():
 
         sort_by = st.selectbox(
             "Sort Order",
-            options=[
-                "Priority Score (High to Low)",
-                "Distance (Nearest First)",
-                "Predicted Rating (High to Low)",
-                "User Rating (High to Low)",
-                "Maps Rating (High to Low)",
-                "Gemini Match Score (High to Low)",
-                "First Seen (Newest)",
-                "Business Name (A-Z)",
-                "Natural / BQ Order"
-            ],
+            options=list(SORT_OPTIONS),
             index=0,
             key="slicer_sort_by"
         )
@@ -691,7 +771,7 @@ def main():
                 active_weights = preset_weights.get(strategy_preset, preset_weights["Balanced Active Discovery"])
 
                 # Recompute priorities based on current anchor & weights
-                df_candidates = calculate_restaurant_priority(df_master, anchor_lat=c_lat, anchor_lon=c_lon, weights=active_weights)
+                df_candidates = priority_for_current_frame(df_master, c_lat, c_lon, active_weights)
 
                 # Filter candidate pool based on target_mode and scope (exclude confirmed out_of_scope)
                 if "in_scope" in df_candidates.columns:

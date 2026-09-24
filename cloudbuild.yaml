@@ -7,8 +7,11 @@ steps:
       - '-c'
       - |
         pip install --no-cache-dir -r requirements.txt
-        pip install --no-cache-dir pytest
-        python -m pytest app/ scripts/
+        # The whole repo. `addopts` in pyproject.toml deselects everything
+        # marked `integration`, so this needs no credentials, no network and no
+        # listening port -- and `tests/` stops being the place code goes to rot
+        # unnoticed (D11).
+        python -m pytest
 
   # Step 2: Build Docker image
   - name: 'gcr.io/cloud-builders/docker'

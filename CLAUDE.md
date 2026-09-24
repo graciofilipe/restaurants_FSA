@@ -9,19 +9,30 @@ All tooling lives in the single canonical `.venv` (managed by `uv`). Never creat
 ```bash
 source .venv/bin/activate && uv sync    # setup / re-sync deps from pyproject.toml
 
+# after changing a dependency, regenerate the image's install list from the lock:
+uv export --no-dev --no-hashes --no-emit-project -o requirements.txt
+
 streamlit run app/ui/st_app.py          # main app, http://localhost:8501
 
-pytest app/ scripts/                    # 345 offline unit tests — this is what Cloud Build runs
+pytest                                  # 447 offline tests, ~8s — and what Cloud Build runs
 pytest app/core/test_scoring_priority.py::test_extract_outcode   # single test
-pytest tests/                           # NOT offline-safe (see below)
+pytest -m integration                   # the 10 live tests, deliberately (costs money)
+pytest --cov=app --cov=scripts          # 64% of production code; test files are omitted
 
 uvx ruff check .                        # ruff is configured in pyproject.toml but not installed in .venv
 ```
 
-`tests/` has no skip markers and requires live GCP + network: it makes real Vertex/Gemini calls
-(`tests/test_model_upgrades.py::test_live_...`, `tests/eval/`), spins up a uvicorn server on port 8000
-(`tests/integration/test_server_e2e.py`), and BQML tests mock BigQuery but the eval tests do not.
-Run `pytest app/ scripts/` for the normal edit-test loop.
+A bare `pytest` is offline. Everything needing live GCP, a network call or a listening port is
+marked `integration` and deselected by `addopts` in `pyproject.toml` (D11): the live Gemini call in
+`tests/test_model_upgrades.py`, all of `tests/eval/`, the uvicorn server on port 8000 in
+`tests/integration/`, and the two BQML stress modules. `pytest -m ""` runs everything, markers
+ignored. Marking is per-test where a module is mixed — `test_model_upgrades.py` has one live test
+and four that read config, and those four are the model-ID guard.
+
+Cloud Build runs the same bare `pytest`, over the whole repo. It could not before D12: collecting
+`tests/` imports `fastapi`, `uvicorn` and `google-adk[eval]`, which the hand-written
+`requirements.txt` did not list. Note that `app/agent.py` calls `google.auth.default()` at import,
+so collection needs ADC — Cloud Build's service account supplies it, verified on a test-only build.
 
 Operational scripts (all accept `--project_id/--dataset_id`, default to the live project):
 
@@ -175,6 +186,12 @@ stale when the underlying frame shrinks.
   code that works locally can fail the build. Use `chr(39)`-style escapes as the existing code does.
 - Unit tests live **beside** the code (`app/**/test_*.py`); integration, eval, and BQML tests live in
   `tests/`. `INTEGRATION_TEST=TRUE` disables live Cloud Trace export.
+- **`pyproject.toml` is the only place a dependency is declared.** `requirements.txt` is generated
+  from it and `uv.lock` — fully pinned, and the file both the Docker image and the Cloud Build test
+  step install, so test dependencies live in the main list rather than a dev group. Editing it by
+  hand, or adding to `pyproject.toml` without re-exporting, fails
+  `scripts/test_dependency_parity.py`. That file also pins the one Python version: `requires-python`,
+  `uv.lock`, the `Dockerfile` and `cloudbuild.yaml` must all say 3.11.
 - Work is tracked under `conductor/tracks/<name>/plan.md` following the TDD workflow in
   `conductor/workflow.md`; `conductor/code_styleguides/` holds the Google Python style summary.
   Commits follow `type(scope): description`.

@@ -11,6 +11,7 @@ from app.core.data_processing import (
     parse_bq_path
 )
 from app.services.bq_utils import (
+    BigQueryExecutionError,
     load_fhrsids_from_bq,
     append_to_bigquery,
     MASTER_BQ_SCHEMA,
@@ -81,12 +82,11 @@ def run_sync_for_config(config: dict):
 
     # 3. Load the IDs we already hold -- nothing else is needed to spot new records
     logger.info("Loading existing FHRSIDs from BigQuery...")
-    try:
-        existing_fhrsids = load_fhrsids_from_bq(project_id, dataset_id, table_id)
-        logger.info(f"Loaded {len(existing_fhrsids)} existing records.")
-    except Exception as e:
-        logger.error(f"Failed to load existing FHRSIDs: {e}")
-        return
+    # Deliberately not caught. Aborting is right -- appending without knowing
+    # what already exists would duplicate the table -- but swallowing it left
+    # `main()` reporting a successful week in which nothing was ingested (D9).
+    existing_fhrsids = load_fhrsids_from_bq(project_id, dataset_id, table_id)
+    logger.info(f"Loaded {len(existing_fhrsids)} existing records.")
 
     # 4. Process and Identify New
     logger.info("Processing data to identify new records...")
@@ -113,28 +113,53 @@ def run_sync_for_config(config: dict):
         bq_schema=MASTER_BQ_SCHEMA
     )
     
-    if success:
-        logger.info("Append successful.")
-    else:
-        logger.error("Append failed.")
+    if not success:
+        # `append_to_bigquery` reports failure by returning False. Logging it
+        # and returning meant the new restaurants were dropped on the floor and
+        # the run still counted as a success.
+        raise BigQueryExecutionError(
+            f"Failed to append {len(new_restaurants)} new records to {table_id}")
+    logger.info("Append successful.")
 
 def main():
+    """Run every configured search area, and tell the truth about the result.
+
+    Exit status is the only thing Cloud Run reads. This used to catch
+    everything and return, so the job exited 0 whatever happened -- a weekly
+    ingest could fail on an expired credential for a month, and the only
+    evidence would be log lines nobody opens and a `first_seen` gap nobody
+    would attribute to this (D9).
+
+    One bad search area still does not cost the others their run; the failures
+    are collected and reported together at the end.
+    """
     logger.info("Starting Weekly Fetch Job")
     try:
         configs = get_config_params()
-        if not configs:
-            logger.warning("No configuration found in config table.")
-            return
-
-        for config in configs:
-            try:
-                run_sync_for_config(config)
-            except Exception as e:
-                logger.error(f"Error processing config {config}: {e}")
-                continue
-            
     except Exception as e:
-        logger.exception(f"Fatal error in fetch_weekly job: {e}")
+        logger.exception(f"Could not read the search configuration: {e}")
+        raise SystemExit(f"Weekly fetch aborted: could not read the search configuration: {e}")
+
+    if not configs:
+        # Not a failure. Emptying the config table is how the cron gets paused,
+        # and a paused job that fails every week would just get muted.
+        logger.warning("No configuration found in config table.")
+        return
+
+    failures = []
+    for config in configs:
+        try:
+            run_sync_for_config(config)
+        except Exception as e:
+            logger.exception(f"Error processing config {config}: {e}")
+            failures.append(e)
+
+    if failures:
+        raise SystemExit(
+            f"Weekly fetch: {len(failures)} of {len(configs)} search areas failed. "
+            f"First error: {failures[0]}")
+
+    logger.info(f"Weekly Fetch Job complete: {len(configs)} search areas processed.")
 
 if __name__ == "__main__":
     main()

@@ -218,7 +218,11 @@ def load_filtered_data_from_bq(
         return records
     except Exception as e:
         logger.error(f"Error loading filtered data from {table_ref}: {e}")
-        return []
+        # Not `return []`. An empty list is what "nothing matched your filters"
+        # looks like, so returning it here made a dead credential render as
+        # "No data found matching criteria" -- advice to widen the filters,
+        # for a problem no filter can reach (D9).
+        raise BigQueryExecutionError(f"Could not load data from {table_ref}: {e}") from e
 
 def sanitize_column_name(column_name: str) -> str:
     """Sanitizes a column name for BigQuery compatibility."""
@@ -362,7 +366,8 @@ def get_distinct_local_authorities(project_id: str, dataset_id: str, table_id: s
         return [row.localauthorityname for row in results if row.localauthorityname]
     except Exception as e:
         logger.error(f"Error fetching local authorities: {e}")
-        return []
+        raise BigQueryExecutionError(
+            f"Could not load local authorities from {table_ref}: {e}") from e
 
 def get_distinct_outcodes(project_id: str, dataset_id: str, table_id: str) -> List[str]:
     """Fetches distinct Postcode Areas (outcodes) from the master table."""
@@ -374,7 +379,7 @@ def get_distinct_outcodes(project_id: str, dataset_id: str, table_id: str) -> Li
         return sorted([str(r.outcode).strip() for r in results if r.outcode and str(r.outcode).strip()])
     except Exception as e:
         logger.error(f"Error fetching outcodes: {e}")
-        return []
+        raise BigQueryExecutionError(f"Could not load outcodes from {table_ref}: {e}") from e
 
 MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('fhrsid', 'STRING', mode='NULLABLE'),

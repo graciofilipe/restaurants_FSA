@@ -2,6 +2,9 @@ import pytest
 import google.auth
 from scripts.train_bqml_model import train_model
 
+# Calls `google.auth.default()` and dry-runs against the live project.
+pytestmark = pytest.mark.integration
+
 def test_sql_injection_model_name():
     _, default_project = google.auth.default()
     project = default_project or "filipegracio-genai"

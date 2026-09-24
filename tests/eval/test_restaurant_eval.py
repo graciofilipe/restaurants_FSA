@@ -24,6 +24,9 @@ from app.agent import root_agent
 
 import re
 
+# Real grounded Gemini calls -- this one costs money per run.
+pytestmark = pytest.mark.integration
+
 def parse_and_validate_json(text: str) -> dict:
     """Helper to validate JSON structure for restaurant profiling."""
     clean = text.strip()
