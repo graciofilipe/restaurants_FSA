@@ -1283,6 +1283,41 @@ Reading an absent column as "no row has a score" would be more honest and is not
 
 ---
 
+## D-28 — D15 fixed the flag, not the button (new defect, found during the Phase 11 verification)
+
+**Date.** 2026-09-24. **Phase 11 verification; carried to Phase 12.**
+
+Found by the user asking why clicking the training button would not start a training job. It does.
+The premise came from me: presenting the Phase 11 changes for manual verification, I described the
+Model Training tab as safe to click because D15 had made the dry run dry. D15 fixed
+`python -m scripts.train_bqml_model --dry-run`. `st_app.py:851` calls `train_model` with
+`run_async=True` and takes the `dry_run=False` default, so the button was never on that path.
+
+Three separate problems, all in the same twenty lines:
+
+1. **There is no dry run in the UI.** The safe way to find out what a training run would do exists
+   only for someone with a terminal. The pre-flight the flag skips is the half that spends: Places
+   lookups and grounded `AI.GENERATE` for every labelled row missing a profile, run synchronously
+   before the training job is submitted.
+2. **`training_lock` is dead code.** Initialised to `False` at `:844-845`, passed to `disabled=` at
+   `:847`, never assigned `True` anywhere in the repo — verified by grep. The guard against
+   double-submitting `CREATE OR REPLACE MODEL` has never once engaged.
+3. **The button does not report back.** `run_async=True` prints a job ID and the UI never mentions
+   it again. Training runs 10–15 minutes inside BigQuery with no polling and no status, so a click
+   that worked and a click that silently failed are indistinguishable from the page. That
+   indistinguishability is the whole reason the question was asked.
+
+**What clicking costs today: nothing beyond the training job.** Of the 370 labelled rows the
+pre-flight scans, 0 need Places, 0 need Gemini and 0 need demographics. That is a fact about the
+current table, not a property of the button — the cost returns the moment labelled rows arrive
+unprofiled, which is exactly when someone would think to retrain.
+
+The verification value here is not the defect but where it came from. A checkpoint's manual
+verification is supposed to be the step where a claim meets the product; this one worked as
+designed, and the claim it caught was mine.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*

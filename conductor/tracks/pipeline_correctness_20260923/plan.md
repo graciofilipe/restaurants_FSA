@@ -854,7 +854,18 @@ would spend it on.
           A rename that updates the constant and forgets the branch makes the option behave like
           "All" — the exact failure the aliases existed to prevent, and one a value-based test would
           not see. Mutation-checked against a stale literal.
-- [ ] Task: Conductor — User Manual Verification 'Performance & Hygiene' (Protocol in workflow.md)
+- [x] Task: Conductor — User Manual Verification 'Performance & Hygiene' (Protocol in workflow.md)
+    - [x] Sub-task: Verified against the live deploy rather than localhost, at the user's direction.
+          Merge `517a433` → Cloud Build `3ca778b8` (SUCCESS, 6m43s, all four steps) → revision
+          `restaurants-fsa-00232-hxh` serving 100% of traffic on `sha256:727d32f9…`, the digest
+          Artifact Registry tags `517a433a…`. Confirmed by digest, not by build status. First push
+          to exercise both the widened CI gate and the generated `requirements.txt`: the gate
+          collected 457, deselected 10, and passed 447 on Python 3.11.16.
+    - [x] Sub-task: Filter and sort labels diffed against `fa21d9e` — all five slicers and all nine
+          sort options are textually identical, so the alias collapse is invisible to the user.
+          That was the point: the constants hold the literals the selectboxes already used.
+    - [x] Sub-task: User confirmed 2026-09-24. Two defects found *during* the verification, in the
+          Model Training tab, carried to Phase 12 — see D-28. The coverage gap is carried with them.
 
 ## Phase 12: Close Out
 
@@ -863,3 +874,21 @@ would spend it on.
 - [ ] Task: Reconcile `README.md` / `GEMINI.md` (both still document the uninstalled `agents-cli`)
 - [ ] Task: Deploy and verify on Cloud Run
 - [ ] Task: Drop the Phase 0 snapshot once the new pipeline has run clean for a full cycle
+- [ ] Task: Fix the Model Training tab (D-28, found during the Phase 11 manual verification)
+    - [ ] Sub-task: `training_lock` is dead. It is initialised to `False` at `st_app.py:844-845`,
+          feeds `disabled=` at `:847`, and is never set `True` anywhere in the repo. Nothing stops
+          a double click submitting two concurrent `CREATE OR REPLACE MODEL` jobs against one model
+          name. Either set it, or drop it and say the button is unguarded.
+    - [ ] Sub-task: Give the UI the dry run. D15 fixed `--dry-run` on the CLI; `st_app.py:851` calls
+          `train_model` with `run_async=True` and takes the `dry_run=False` default, so the safe
+          path exists only for someone at a terminal. The pre-flight it skips is the half that
+          spends — Places and grounded `AI.GENERATE` for every labelled row missing a profile.
+    - [ ] Sub-task: Report the outcome. `run_async=True` returns a job ID and the UI never mentions
+          it again — no polling, no status. A click that worked and a click that did nothing look
+          the same, which is how the question in the first place got asked.
+- [ ] Task: Close the coverage gap, or record it as accepted
+    - [ ] Sub-task: `pytest --cov=app --cov=scripts` reports **64%** of production code against
+          `workflow.md`'s >80% gate (68% excluding the one-shot migration scripts, 77% also
+          excluding `st_app.py`). Carried from Phase 11 with the user's agreement rather than
+          rounded up: the honest number needed `[tool.coverage.run] omit`, since counting the test
+          files themselves reports 84% and measures nothing.
