@@ -303,3 +303,43 @@ class TestTheEnrichmentSplitIsOneFunction:
 
         assert split_enrichment_targets(rows, force_maps=True)['maps'] == ['1']
         assert split_enrichment_targets(rows, force_gemini=True)['gemini'] == ['1']
+
+
+class TestTheFindQueryReturnsOneRowPerRestaurant:
+    """`uk_postcode_demographics` holds 5,576 rows for 5,560 distinct normalised
+    postcodes: 15 are duplicated, one three times, and 103 rows of `fsa_master`
+    share one of them.
+
+    A `LEFT JOIN` against it returned those rows two or three times. Nothing
+    was paid twice -- both enrichment calls build `IN (...)` lists, where
+    duplicates collapse -- but `LIMIT 50` counted joined rows, so an untargeted
+    batch of 50 could be fewer than 50 restaurants, and every count derived
+    from the rows was inflated. Found by the prediction backfill reporting 1,964
+    verified rows for 1,941 candidates.
+    """
+
+    def test_it_does_not_join_the_demographics_table(self):
+        from app.services.ml_prediction import build_find_query
+
+        query = build_find_query('p', 'd', 't', target_fhrsids=['1'])
+
+        assert 'JOIN' not in query.upper(), (
+            "a join against a table with duplicate keys fans one row into several")
+
+    def test_it_still_reports_whether_the_postcode_resolves(self):
+        from app.services.ml_prediction import build_find_query
+
+        query = build_find_query('p', 'd', 't', target_fhrsids=['1'])
+
+        assert 'AS d_postcode' in query
+        assert 'uk_postcode_demographics' in query
+
+    def test_the_limit_now_counts_restaurants(self):
+        """The untargeted branch's LIMIT applies to master rows, one per
+        restaurant, rather than to the product of the join."""
+        from app.services.ml_prediction import build_find_query
+
+        query = build_find_query('p', 'd', 't', limit=50)
+
+        assert 'LIMIT 50' in query
+        assert query.upper().count('FROM `P.D.T`') == 1

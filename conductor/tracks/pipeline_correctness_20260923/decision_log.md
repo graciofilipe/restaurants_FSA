@@ -1405,6 +1405,43 @@ is what surfaced that they were met at all; nothing in the phase-by-phase work w
 
 ---
 
+## D-31 — The prediction find query counted rows, not restaurants (new defect, found by the backfill's own dry run)
+
+**Date.** 2026-09-24. **Phase 12.** Found by `scripts/backfill_predictions.py` reporting **1,964
+verified rows for 1,941 candidates** — a surplus, which the code had no wording for because I had
+only imagined the shortfall.
+
+`generate_predictions`' find query `LEFT JOIN`ed `uk_postcode_demographics` to answer one boolean:
+did this postcode resolve? That table holds **5,576 rows for 5,560 distinct normalised postcodes** —
+15 duplicated, one of them three times — and **103 rows of `fsa_master`** share one. Those rows came
+back two or three times.
+
+**It did not cost anything.** Both enrichment calls build `IN (...)` lists, where duplicates
+collapse, and `enrich_restaurants_by_fhrsid` receives `limit=len(list)`, which a duplicate only makes
+too generous. So this is a counting defect, not a spending one, and the honest way to record it is
+that way round.
+
+What it did do:
+
+- **`LIMIT 50` counted joined rows**, so an untargeted batch of 50 could be fewer than 50
+  restaurants. The batch silently shrank, by an amount that depended on which postcodes were in it.
+- **Every count derived from the rows inflated** — `never_profiled`, and the "Running Gemini
+  enrichment for N restaurants" line that someone would read to sanity-check a bill.
+
+Fixed by replacing the join with a correlated `MIN(d.postcode)` subquery. Same column name, same
+single use, one row per restaurant, and `LIMIT` now means what it says. Re-run live: **1,941 =
+1,941**, no warning.
+
+Worth noting where this came from. The candidate query in the backfill already used `EXISTS` for
+exactly this reason — I wrote a comment there about fan-out on duplicate postcodes — and then
+verified the chunks with a production query that had the bug the comment describes. The defect was
+not found by knowing about it; it was found by making two independently-derived numbers meet and
+having the script complain when they disagreed. That check was in the script because the plan called
+for the guarantee to be re-derived at run time rather than assumed, which is the same reasoning that
+produced D1's shared predicate.
+
+---
+
 ## Measurements
 
 *Populated by Phase 0 recon, 2026-09-23.*
@@ -1508,6 +1545,12 @@ is what surfaced that they were met at all; nothing in the phase-by-phase work w
 | `requirements.txt` | 10 unpinned hand-written names → **136 pinned, generated** | 2026-09-24 |
 | Lock vs runtime Python | lock said **3.13**, everything deployed runs **3.11** | 2026-09-24 |
 | Test-only Cloud Build `b21bfd7d` | 3.11.16, 132 packages, **425 passed / 10 deselected**, 2m27s | 2026-09-24 |
+| Offline suite at close-out | **496 passed, 10 deselected**, 300 subtests, ~7s | 2026-09-24 |
+| Coverage at close-out (D-29) | **65.0%**; 67.8% excl. migrations; 75.0% excl. migrations and `st_app.py` | 2026-09-24 |
+| `uk_postcode_demographics` rows / distinct normalised postcodes (D-31) | 5,576 / **5,560**; 15 duplicated, worst ×3 | 2026-09-24 |
+| `fsa_master` rows the fan-out duplicated (D-31) | **103** | 2026-09-24 |
+| Backfill candidates: unscored, fully enriched, fresh profile | **1,941** of 11,268; 8 chunks of 250 | 2026-09-24 |
+| Backfill verification, before → after the D-31 fix | 1,964 rows for 1,941 ids → **1,941 = 1,941** | 2026-09-24 |
 
 ## Cost ledger
 

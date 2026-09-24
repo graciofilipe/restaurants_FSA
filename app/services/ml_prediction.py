@@ -39,14 +39,23 @@ def build_find_query(project_id: str, dataset_id: str, table_id: str,
     Extracted so `scripts/backfill_predictions.py` verifies a chunk with the
     same query that will score it a moment later, instead of a copy that can
     drift from it.
+
+    `d_postcode` is a correlated subquery and not a `LEFT JOIN`: 15 postcodes
+    are duplicated in `uk_postcode_demographics` and 103 rows of `fsa_master`
+    share one, so joining returned those rows two or three times. Only "did the
+    postcode resolve?" is ever read from it, and a scalar subquery answers that
+    in exactly one row per restaurant -- which is also what makes `LIMIT` below
+    mean what it says.
     """
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
     projection = f'''
             SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_profiled_at,
-                   m.gemini_insights_structured IS NOT NULL AS has_profile, d.postcode AS d_postcode
-            FROM `{table_ref}` AS m
-            LEFT JOIN `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
-              ON REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')'''
+                   m.gemini_insights_structured IS NOT NULL AS has_profile,
+                   (SELECT MIN(d.postcode)
+                    FROM `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
+                    WHERE REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
+                   ) AS d_postcode
+            FROM `{table_ref}` AS m'''
 
     if target_fhrsids:
         escaped_target_ids = [fid.replace("'", "''") for fid in target_fhrsids]

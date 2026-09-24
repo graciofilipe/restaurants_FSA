@@ -94,8 +94,11 @@ def verify_chunk_is_free(client, project_id: str, dataset_id: str, table_id: str
             "check disagree, which means one of them is wrong -- fix that before scoring.")
 
     if len(rows) != len(fhrsids):
-        logger.warning(f"  {len(fhrsids) - len(rows)} of {len(fhrsids)} ids did not come "
-                       "back from the find query; they will not be scored.")
+        # Either direction is a problem worth naming. Short means ids vanished
+        # between the two queries; long means the find query is returning a row
+        # more than once, which is how the demographics fan-out was found.
+        logger.warning(f"  find query returned {len(rows)} rows for {len(fhrsids)} ids "
+                       f"({'short' if len(rows) < len(fhrsids) else 'duplicated'}).")
     return len(rows)
 
 
