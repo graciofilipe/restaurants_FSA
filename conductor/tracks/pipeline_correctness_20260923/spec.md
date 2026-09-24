@@ -205,11 +205,25 @@ fields. The free-text pillar columns are display-only and must stay out of the f
 *Walked one by one on 2026-09-24 and recorded in D-30. Each tick names its evidence; the two that
 are not ticked say why rather than being left silently blank.*
 
-- [ ] A second consecutive "Generate Predictions" run over the same selection issues **zero**
+- [x] A second consecutive "Generate Predictions" run over the same selection issues **zero**
       `AI.GENERATE` calls, and the UI's "Estimated New Gemini Calls" matches what actually runs.
-      — *Pending the live two-run check (Part A). The estimate and the spend already call the same
-      predicate, `needs_gemini_profile`, from `count_needing_gemini_profile` and
-      `generate_predictions`; what is outstanding is the observation, not the wiring.*
+      — **Observed live, 2026-09-24, both directions**, driving the same code path the tab drives
+      (same loader, same priority weights, same `count_needing_gemini_profile`, same
+      `generate_predictions`). Audited against `INFORMATION_SCHEMA.JOBS`, not against the log line.
+
+      | | Estimate | Profiles gained | `AI.GENERATE` jobs | Prediction |
+      |---|---|---|---|---|
+      | Paid run, 25 unprofiled rows, 16:39 | **25** | **25** | **1** | 25 scored |
+      | Free repeat, 25 already-profiled rows, 16:34 | **0** | **0** | **0** | 25 scored |
+
+      The free case is the one the criterion asks for and it is exact: nothing was re-bought, and
+      `predicted_at` still moved. The paid case is what makes that meaningful — an estimate that is
+      always zero would also pass the first row. Cost ≈ £0.40, as budgeted.
+
+      One of the 25 new profiles came back missing 7 of its fields, which `sql_conformance_check`
+      reported at merge time rather than letting through. That is the detection D-08 chose instead
+      of constrained decoding, working. It is a profile-quality observation, not a pipeline failure:
+      the row scored.
 - [x] Profiles older than the staleness threshold are refreshed; fresher ones are not.
       — `app/core/test_profile_freshness.py`, 20 tests. **Not observable in production:** 0 rows are
       stale at the 180-day threshold and the first becomes eligible 2027-03-22.

@@ -1668,6 +1668,11 @@ Live after the change: **29 postcodes still to fetch**, down from a list that co
 | Labelled rows inside the fan-out | **1** of 411 (1 of 369 in scope) | 2026-09-24 |
 | Postcodes still to fetch, after the D-33 regrouping | **29** | 2026-09-24 |
 | Offline suite after D-32/D-33 | **512 passed, 10 deselected**, 300 subtests, ~7s | 2026-09-24 |
+| Phase 7 live check, paid run | estimate **25** → **25** profiles gained, **1** `AI.GENERATE` job, 25 scored | 2026-09-24 |
+| Phase 7 live check, free repeat | estimate **0** → **0** profiles gained, **0** `AI.GENERATE` jobs, 25 scored | 2026-09-24 |
+| Conformance on the 25 new profiles | **1 of 25** missing 7 fields, reported by `sql_conformance_check` | 2026-09-24 |
+| Predictions restored so far | 0 → **75** (25 the failed batch, 25 the free repeat, 25 the paid run) | 2026-09-24 |
+| Backfill candidates remaining, verified free | **1,910** in 8 chunks, no fan-out warning | 2026-09-24 |
 
 ## Cost ledger
 
