@@ -1,10 +1,11 @@
 import argparse
 import logging
+from typing import Any, Optional
 from google.cloud import bigquery
 from google.cloud.exceptions import GoogleCloudError
 
 from app.core.model_features import feature_select_list, feature_source_clause
-from app.core.profile_freshness import needs_gemini_profile
+from app.core.profile_freshness import needs_gemini_profile, needs_maps_lookup
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -35,17 +36,34 @@ WHERE
 """
 
 
-def run_jit_preflight(client, project_id: str, dataset_id: str, table_id: str) -> None:
-    """Fill in whatever the labelled rows are missing, before training on them.
+def run_jit_preflight(
+    client,
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    *,
+    force_maps: bool = False,
+    maps_max_age_days: Optional[int] = None,
+    maps_cutoff_date: Optional[Any] = None,
+    force_gemini: bool = False,
+    gemini_max_age_days: Optional[int] = None,
+    gemini_cutoff_date: Optional[Any] = None,
+) -> None:
+    """Fill in or refresh labelled rows before training on them.
 
     Extracted from `train_model` so the dry-run guard is a named call the
     caller can decline rather than an indentation level. This function spends
     money -- Places lookups and grounded `AI.GENERATE` calls -- and until D15
     it ran unconditionally, including under `--dry-run`.
+
+    Defaults to `max_age_days=None` (missing only) for headless/CLI invocations,
+    while accepting on-the-fly staleness (`maps_max_age_days`, `gemini_max_age_days`),
+    cutoff dates (`maps_cutoff_date`, `gemini_cutoff_date`), or full force flags
+    (`force_maps`, `force_gemini`) from the UI or CLI.
     """
     source_table = f"{project_id}.{dataset_id}.{table_id}"
 
-    # Pre-flight JIT Enrichment: check all labeled examples for missing features.
+    # Pre-flight JIT Enrichment: check all labeled examples for missing or stale features.
     logger.info("Executing pre-flight JIT check for labeled training examples...")
     # A correlated subquery, not a join: 15 normalised postcodes are duplicated
     # in the demographics table, so joining it returns those labelled rows two
@@ -64,26 +82,40 @@ def run_jit_preflight(client, project_id: str, dataset_id: str, table_id: str) -
         results = client.query(check_query).result()
         rows = list(results)
         
-        # See the note in `app/services/ml_prediction.py`: the do-not-retry
-        # signal is the lookup timestamp, not the absence of a rating.
-        maps_missing = [str(row.fhrsid) for row in rows if row.maps_lookup_at is None]
-        # `max_age_days=None`: fill gaps, never refresh. Training is cheap and
-        # re-profiling is not, and this is the one thing here that is
-        # scheduled -- a staleness rule on this path would spend money without
-        # anyone pressing a button. The UI's Predict path uses the default.
+        maps_missing = [
+            str(row.fhrsid) for row in rows
+            if needs_maps_lookup(
+                row.maps_lookup_at,
+                force=force_maps,
+                max_age_days=maps_max_age_days,
+                cutoff_date=maps_cutoff_date,
+            )
+        ]
         gemini_missing = [
             str(row.fhrsid) for row in rows
-            if needs_gemini_profile(row.has_profile, row.gemini_profiled_at, max_age_days=None)
+            if needs_gemini_profile(
+                row.has_profile,
+                row.gemini_profiled_at,
+                force=force_gemini,
+                max_age_days=gemini_max_age_days,
+                cutoff_date=gemini_cutoff_date,
+            )
         ]
         postcode_missing = [str(row.fhrsid) for row in rows if getattr(row, 'd_postcode', None) is None and getattr(row, 'postcode', None) is not None]
         
         if maps_missing:
-            logger.info(f"JIT: Found {len(maps_missing)} labeled restaurants missing Maps data. Triggering enrichment...")
+            maps_force_regen = bool(
+                force_maps or maps_max_age_days is not None or maps_cutoff_date is not None
+            )
+            logger.info(f"JIT: Found {len(maps_missing)} labeled restaurants needing Maps data. Triggering enrichment...")
             from scripts.enrich_maps_data import enrich_restaurants_by_fhrsid
-            enrich_restaurants_by_fhrsid(maps_missing, limit=len(maps_missing))
+            if maps_force_regen:
+                enrich_restaurants_by_fhrsid(maps_missing, limit=len(maps_missing), force_regen=True)
+            else:
+                enrich_restaurants_by_fhrsid(maps_missing, limit=len(maps_missing))
             
         if gemini_missing:
-            logger.info(f"JIT: Found {len(gemini_missing)} labeled restaurants missing Gemini insights. Triggering enrichment...")
+            logger.info(f"JIT: Found {len(gemini_missing)} labeled restaurants needing Gemini insights. Triggering enrichment...")
             from app.services.bq_utils import execute_gemini_enrichment
             execute_gemini_enrichment(project_id, dataset_id, table_id, fhrsids=gemini_missing)
             
@@ -104,7 +136,14 @@ def train_model(
     table_id: str,
     model_name: str,
     dry_run: bool = False,
-    run_async: bool = False
+    run_async: bool = False,
+    *,
+    force_maps: bool = False,
+    maps_max_age_days: Optional[int] = None,
+    maps_cutoff_date: Optional[Any] = None,
+    force_gemini: bool = False,
+    gemini_max_age_days: Optional[int] = None,
+    gemini_cutoff_date: Optional[Any] = None,
 ):
     """
     Constructs and executes a BQML model training query.
@@ -127,7 +166,18 @@ def train_model(
                     "or Gemini calls will be made, and the training SQL will be "
                     "validated against whatever the table already holds.")
     else:
-        run_jit_preflight(client, project_id, dataset_id, table_id)
+        run_jit_preflight(
+            client,
+            project_id,
+            dataset_id,
+            table_id,
+            force_maps=force_maps,
+            maps_max_age_days=maps_max_age_days,
+            maps_cutoff_date=maps_cutoff_date,
+            force_gemini=force_gemini,
+            gemini_max_age_days=gemini_max_age_days,
+            gemini_cutoff_date=gemini_cutoff_date,
+        )
 
     # We omit BusinessType as it is not present in the BigQuery schema for fsa_master.
     query = f"""
@@ -201,6 +251,25 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", default="restaurant_preference_model", help="Target Model Name")
     parser.add_argument("--dry-run", action="store_true", help="Validate query without executing training")
     parser.add_argument("--run_async", action="store_true", help="Run model training asynchronously")
+    parser.add_argument("--force-maps", action="store_true", help="Force re-query Google Maps for all labeled rows")
+    parser.add_argument("--maps-max-age-days", type=int, default=None, help="Refresh Maps lookups older than N days")
+    parser.add_argument("--maps-cutoff-date", type=str, default=None, help="Refresh Maps lookups before YYYY-MM-DD")
+    parser.add_argument("--force-gemini", action="store_true", help="Force regenerate Gemini profiles for all labeled rows")
+    parser.add_argument("--gemini-max-age-days", type=int, default=None, help="Refresh Gemini profiles older than N days")
+    parser.add_argument("--gemini-cutoff-date", type=str, default=None, help="Refresh Gemini profiles before YYYY-MM-DD")
     args = parser.parse_args()
     
-    train_model(args.project_id, args.dataset_id, args.table_id, args.model_name, dry_run=args.dry_run, run_async=args.run_async)
+    train_model(
+        args.project_id,
+        args.dataset_id,
+        args.table_id,
+        args.model_name,
+        dry_run=args.dry_run,
+        run_async=args.run_async,
+        force_maps=args.force_maps,
+        maps_max_age_days=args.maps_max_age_days,
+        maps_cutoff_date=args.maps_cutoff_date,
+        force_gemini=args.force_gemini,
+        gemini_max_age_days=args.gemini_max_age_days,
+        gemini_cutoff_date=args.gemini_cutoff_date,
+    )

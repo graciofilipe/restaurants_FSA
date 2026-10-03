@@ -13,8 +13,13 @@ import pandas as pd
 
 from app.core.profile_freshness import (
     GEMINI_PROFILE_MAX_AGE_DAYS,
+    MAPS_LOOKUP_MAX_AGE_DAYS,
     count_needing_gemini_profile,
+    count_needing_maps_lookup,
     needs_gemini_profile,
+    needs_maps_lookup,
+    summarise_gemini_freshness,
+    summarise_maps_freshness,
 )
 
 NOW = datetime.datetime(2026, 9, 23, 12, 0, tzinfo=datetime.timezone.utc)
@@ -43,6 +48,26 @@ class TestNeedsGeminiProfile(unittest.TestCase):
 
     def test_force_overrides_a_fresh_profile(self):
         self.assertTrue(needs_gemini_profile(True, days_ago(1), force=True, now=NOW))
+
+    def test_a_profile_before_cutoff_date_is_stale(self):
+        self.assertTrue(
+            needs_gemini_profile(
+                True,
+                days_ago(10),
+                max_age_days=None,
+                cutoff_date=days_ago(5),
+                now=NOW,
+            )
+        )
+        self.assertFalse(
+            needs_gemini_profile(
+                True,
+                days_ago(2),
+                max_age_days=None,
+                cutoff_date=days_ago(5),
+                now=NOW,
+            )
+        )
 
     def test_a_stamp_without_a_profile_still_needs_one(self):
         """The D-16 shape: AI.GENERATE returned NULL but the merge stamped the
@@ -87,13 +112,43 @@ class TestNeedsGeminiProfile(unittest.TestCase):
         self.assertFalse(needs_gemini_profile(True, datetime.datetime.now(datetime.timezone.utc)))
 
 
+class TestNeedsMapsLookup(unittest.TestCase):
+
+    def test_a_never_looked_up_row_needs_maps(self):
+        self.assertTrue(needs_maps_lookup(None, now=NOW))
+
+    def test_a_looked_up_row_is_left_alone_when_staleness_is_disabled(self):
+        self.assertFalse(needs_maps_lookup(days_ago(500), max_age_days=None, now=NOW))
+
+    def test_a_lookup_past_max_age_is_stale(self):
+        self.assertTrue(
+            needs_maps_lookup(days_ago(MAPS_LOOKUP_MAX_AGE_DAYS + 1),
+                              max_age_days=MAPS_LOOKUP_MAX_AGE_DAYS, now=NOW)
+        )
+        self.assertFalse(
+            needs_maps_lookup(days_ago(MAPS_LOOKUP_MAX_AGE_DAYS - 1),
+                              max_age_days=MAPS_LOOKUP_MAX_AGE_DAYS, now=NOW)
+        )
+
+    def test_a_lookup_before_cutoff_date_is_stale(self):
+        self.assertTrue(
+            needs_maps_lookup(days_ago(15), cutoff_date=days_ago(10), now=NOW)
+        )
+        self.assertFalse(
+            needs_maps_lookup(days_ago(5), cutoff_date=days_ago(10), now=NOW)
+        )
+
+    def test_force_always_refreshes_maps(self):
+        self.assertTrue(needs_maps_lookup(days_ago(1), force=True, now=NOW))
+
+
 class TestCountingWhatTheEstimateShows(unittest.TestCase):
 
     ROWS = [
-        {'gemini_insights_structured': '{"match_score": 90}', 'gemini_profiled_at': days_ago(1)},
-        {'gemini_insights_structured': '{"match_score": 90}', 'gemini_profiled_at': days_ago(400)},
-        {'gemini_insights_structured': None, 'gemini_profiled_at': None},
-        {'gemini_insights_structured': '   ', 'gemini_profiled_at': None},
+        {'gemini_insights_structured': '{"match_score": 90}', 'gemini_profiled_at': days_ago(1), 'maps_lookup_at': days_ago(1)},
+        {'gemini_insights_structured': '{"match_score": 90}', 'gemini_profiled_at': days_ago(400), 'maps_lookup_at': days_ago(100)},
+        {'gemini_insights_structured': None, 'gemini_profiled_at': None, 'maps_lookup_at': None},
+        {'gemini_insights_structured': '   ', 'gemini_profiled_at': None, 'maps_lookup_at': None},
         {},
     ]
 
@@ -121,6 +176,32 @@ class TestCountingWhatTheEstimateShows(unittest.TestCase):
     def test_an_empty_frame_estimates_nothing(self):
         self.assertEqual(count_needing_gemini_profile(pd.DataFrame(), now=NOW), 0)
 
+    def test_summarise_gemini_freshness_breaks_down_missing_stale_and_cached(self):
+        summary = summarise_gemini_freshness(self.ROWS, now=NOW)
+        self.assertEqual(summary, {
+            'total': 5,
+            'missing': 3,
+            'stale': 1,
+            'cached': 1,
+            'to_refresh': 4,
+        })
+
+    def test_summarise_maps_freshness_breaks_down_missing_stale_and_cached(self):
+        summary = summarise_maps_freshness(
+            self.ROWS, max_age_days=MAPS_LOOKUP_MAX_AGE_DAYS, now=NOW
+        )
+        self.assertEqual(summary, {
+            'total': 5,
+            'missing': 3,
+            'stale': 1,
+            'cached': 1,
+            'to_refresh': 4,
+        })
+        self.assertEqual(
+            count_needing_maps_lookup(self.ROWS, max_age_days=MAPS_LOOKUP_MAX_AGE_DAYS, now=NOW),
+            summary['to_refresh'],
+        )
+
 
 class TestBothSurfacesUseIt(unittest.TestCase):
     """D1 was not a wrong number, it was a second implementation of the number.
@@ -134,16 +215,19 @@ class TestBothSurfacesUseIt(unittest.TestCase):
     def test_the_ui_estimate_calls_the_shared_counter(self):
         source = self._source('app/ui/st_app.py')
         self.assertIn('count_needing_gemini_profile', source)
+        self.assertIn('count_needing_maps_lookup', source)
         self.assertNotIn('gem_missing += 1', source)
 
     def test_the_executor_calls_the_shared_predicate(self):
         source = self._source('app/services/ml_prediction.py')
         self.assertIn('needs_gemini_profile', source)
+        self.assertIn('needs_maps_lookup', source)
         self.assertNotIn('row.gemini_insights_structured is None', source)
 
     def test_the_training_preflight_calls_it_too(self):
         source = self._source('scripts/train_bqml_model.py')
         self.assertIn('needs_gemini_profile', source)
+        self.assertIn('needs_maps_lookup', source)
         self.assertNotIn('row.gemini_insights_structured is None', source)
 
 

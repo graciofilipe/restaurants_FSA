@@ -1,9 +1,13 @@
 import logging
 from google.cloud import bigquery
-from typing import Tuple, List
+from typing import Any, List, Optional, Tuple
 from scripts.enrich_maps_data import enrich_restaurants_by_fhrsid
 from app.core.model_features import feature_select_list, feature_source_clause
-from app.core.profile_freshness import needs_gemini_profile
+from app.core.profile_freshness import (
+    GEMINI_PROFILE_MAX_AGE_DAYS,
+    needs_gemini_profile,
+    needs_maps_lookup,
+)
 from app.services.bq_utils import execute_gemini_enrichment
 
 logger = logging.getLogger(__name__)
@@ -69,38 +73,52 @@ def build_find_query(project_id: str, dataset_id: str, table_id: str,
         '''
 
 
-def split_enrichment_targets(rows, force_maps: bool = False,
-                             force_gemini: bool = False) -> dict:
-    """What a batch still needs before it can be scored, by enrichment step.
+def split_enrichment_targets(
+    rows,
+    force_maps: bool = False,
+    force_gemini: bool = False,
+    *,
+    maps_max_age_days: Optional[int] = None,
+    maps_cutoff_date: Optional[Any] = None,
+    gemini_max_age_days: Optional[int] = GEMINI_PROFILE_MAX_AGE_DAYS,
+    gemini_cutoff_date: Optional[Any] = None,
+) -> dict:
+    """What a batch still needs before it can be scored or trained on, by step.
 
     Extracted from `generate_predictions` so that `scripts/backfill_predictions.py`
-    can ask the same question in order to *refuse* to run when the answer is not
-    "nothing". A guard that re-derives the predicate is a guard that can disagree
-    with the thing it guards, which is D1 with the cost moved elsewhere.
+    and `scripts/train_bqml_model.py` ask the exact same question.
 
-    Takes the rows of the find query -- `fhrsid`, `maps_lookup_at`,
+    Takes the rows of the find/preflight query -- `fhrsid`, `maps_lookup_at`,
     `gemini_profiled_at`, `has_profile`, `postcode`, `d_postcode` -- and returns
-    the three lists plus `never_profiled`, which splits the Gemini count into
-    first profiles and refreshes because those are different cost decisions.
+    the three lists plus `never_profiled` and `never_looked_up_maps`.
     """
     fhrsids = [str(row.fhrsid) for row in rows]
 
-    if force_maps:
-        maps_missing = fhrsids.copy()
-    else:
-        # `maps_lookup_at`, not `maps_rating`: Phase 5 retired the `-1`
-        # sentinel, so a NULL rating no longer distinguishes "never looked
-        # up" from "looked up, Places had nothing". Testing the rating
-        # would re-query 243 permanent misses on every run, at cost.
-        maps_missing = [str(row.fhrsid) for row in rows if row.maps_lookup_at is None]
+    # `needs_maps_lookup` reads `maps_lookup_at`, not `maps_rating`: Phase 5
+    # retired the `-1` sentinel, so a NULL rating no longer distinguishes
+    # "never looked up" from "looked up, Places had nothing". Once a staleness
+    # threshold (`maps_max_age_days` or `maps_cutoff_date`) is set, old lookups
+    # (including previous misses) are retried.
+    maps_missing = [
+        str(row.fhrsid) for row in rows
+        if needs_maps_lookup(
+            getattr(row, 'maps_lookup_at', None),
+            force=force_maps,
+            max_age_days=maps_max_age_days,
+            cutoff_date=maps_cutoff_date,
+        )
+    ]
 
-    # One predicate, shared with the UI's cost estimate: an estimate
-    # computed differently from the spend it predicts is D1. The query
-    # returns `has_profile` rather than the profile itself -- nothing here
-    # reads the JSON, and it is the largest column in the table.
+    # One predicate, shared with the UI's cost estimate and the training pre-flight.
     gemini_missing = [
         str(row.fhrsid) for row in rows
-        if needs_gemini_profile(row.has_profile, row.gemini_profiled_at, force=force_gemini)
+        if needs_gemini_profile(
+            row.has_profile,
+            getattr(row, 'gemini_profiled_at', None),
+            force=force_gemini,
+            max_age_days=gemini_max_age_days,
+            cutoff_date=gemini_cutoff_date,
+        )
     ]
 
     # A row with no postcode at all cannot be looked up, so it is not queued;
@@ -116,10 +134,25 @@ def split_enrichment_targets(rows, force_maps: bool = False,
         'gemini': gemini_missing,
         'postcodes': postcodes_missing,
         'never_profiled': sum(1 for row in rows if not row.has_profile),
+        'never_looked_up_maps': sum(1 for row in rows if getattr(row, 'maps_lookup_at', None) is None),
     }
 
 
-def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_name: str, limit: int = 50, target_fhrsids: List[str] = None, force_maps: bool = False, force_gemini: bool = False) -> Tuple[bool, str]:
+def generate_predictions(
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    model_name: str,
+    limit: int = 50,
+    target_fhrsids: List[str] = None,
+    force_maps: bool = False,
+    force_gemini: bool = False,
+    *,
+    maps_max_age_days: Optional[int] = None,
+    maps_cutoff_date: Optional[Any] = None,
+    gemini_max_age_days: Optional[int] = GEMINI_PROFILE_MAX_AGE_DAYS,
+    gemini_cutoff_date: Optional[Any] = None,
+) -> Tuple[bool, str]:
     client = bigquery.Client(project=project_id)
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
     model_ref = f"{project_id}.{dataset_id}.{model_name}"
@@ -130,11 +163,20 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
     try:
         results = client.query(find_query).result()
         rows = list(results)
-        split = split_enrichment_targets(rows, force_maps=force_maps, force_gemini=force_gemini)
+        split = split_enrichment_targets(
+            rows,
+            force_maps=force_maps,
+            force_gemini=force_gemini,
+            maps_max_age_days=maps_max_age_days,
+            maps_cutoff_date=maps_cutoff_date,
+            gemini_max_age_days=gemini_max_age_days,
+            gemini_cutoff_date=gemini_cutoff_date,
+        )
         fhrsids = split['fhrsids']
         maps_missing_fhrsids = split['maps']
         gemini_missing_fhrsids = split['gemini']
         never_profiled = split['never_profiled']
+        never_maps = split['never_looked_up_maps']
         postcodes_missing = split['postcodes']
     except Exception as e:
         logger.error(f"Error finding target batch: {e}")
@@ -145,9 +187,20 @@ def generate_predictions(project_id: str, dataset_id: str, table_id: str, model_
 
     # Step 2a: Auto-enrichment Maps
     if maps_missing_fhrsids:
-        logger.info(f"Running maps enrichment for {len(maps_missing_fhrsids)} restaurants.")
+        refreshed_maps = len(maps_missing_fhrsids) - min(never_maps, len(maps_missing_fhrsids))
+        logger.info(
+            f"Running maps enrichment for {len(maps_missing_fhrsids)} restaurants "
+            f"({never_maps} never looked up, {refreshed_maps} stale or forced)."
+        )
+        maps_force_regen = bool(
+            force_maps or maps_max_age_days is not None or maps_cutoff_date is not None
+        )
         try:
-            enrich_restaurants_by_fhrsid(maps_missing_fhrsids, limit=len(maps_missing_fhrsids), force_regen=force_maps)
+            enrich_restaurants_by_fhrsid(
+                maps_missing_fhrsids,
+                limit=len(maps_missing_fhrsids),
+                force_regen=maps_force_regen,
+            )
         except Exception as e:
             logger.warning(f"Maps Auto-enrichment encountered an error: {e}")
 

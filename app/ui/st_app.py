@@ -15,7 +15,14 @@ from app.core.data_processing import (
     get_outcode_coordinates,
 )
 from app.core.pillar_schema import ALL_COLUMNS as PILLAR_COLUMNS
-from app.core.profile_freshness import count_needing_gemini_profile
+from app.core.profile_freshness import (
+    GEMINI_PROFILE_MAX_AGE_DAYS,
+    MAPS_LOOKUP_MAX_AGE_DAYS,
+    count_needing_gemini_profile,
+    count_needing_maps_lookup,
+    summarise_gemini_freshness,
+    summarise_maps_freshness,
+)
 
 st.set_page_config(page_title="FSA Restaurant Explorer", layout="wide")
 
@@ -24,6 +31,18 @@ DEFAULT_BQ_PATH = "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_mas
 # The served model. `invalidate_stale_predictions.py` and `ml_prediction.py`
 # name the same one; it is the only model this app trains or predicts with.
 TRAINING_MODEL_NAME = "restaurant_preference_model"
+
+# On-the-fly freshness modes shared between ML Predictions and Model Training.
+FRESHNESS_MISSING_ONLY = "Missing Only (Never Refresh)"
+FRESHNESS_MAX_AGE = "Refresh Stale (> Max Age Days)"
+FRESHNESS_CUTOFF_DATE = "Refresh Before Cutoff Date"
+FRESHNESS_FORCE_ALL = "Force Refresh All"
+FRESHNESS_MODES = (
+    FRESHNESS_MISSING_ONLY,
+    FRESHNESS_MAX_AGE,
+    FRESHNESS_CUTOFF_DATE,
+    FRESHNESS_FORCE_ALL,
+)
 
 # The pillar half of this list is generated: it is the same 14 columns the
 # profiler writes, in the order the prompt emits them. Before Phase 7 it was a
@@ -35,7 +54,7 @@ DISPLAY_COLUMNS = [
     "postcode", "localauthorityname", "first_seen",
     "price_level", "maps_rating", "maps_reviews",
     "latitude", "longitude", "maps_url", "business_status", "website_url", "maps_types",
-    "maps_found",
+    "maps_found", "maps_lookup_at",
     *PILLAR_COLUMNS,
     "gemini_profiled_at",
     "gemini_insights_structured",
@@ -350,6 +369,154 @@ def load_data_into_state(
         except Exception as e:
             st.error(f"Error loading data: {e}")
 
+def render_freshness_controls(
+    key_prefix: str,
+    default_gemini_mode: str = FRESHNESS_MAX_AGE,
+    default_maps_mode: str = FRESHNESS_MAX_AGE,
+) -> dict:
+    """Render on-the-fly freshness selectors for Google Maps and Gemini Profiles.
+
+    Returns a kwargs dictionary accepted directly by both `generate_predictions`
+    and `train_model`.
+    """
+    cols = st.columns(2)
+
+    with cols[0]:
+        maps_idx = FRESHNESS_MODES.index(default_maps_mode) if default_maps_mode in FRESHNESS_MODES else 1
+        maps_mode = st.selectbox(
+            "🗺️ Google Maps Lookup Freshness",
+            options=list(FRESHNESS_MODES),
+            index=maps_idx,
+            key=f"{key_prefix}_maps_mode",
+            help="Control whether existing Maps ratings/metadata (and previous 'Not Found' misses) are reused or refreshed.",
+        )
+        if maps_mode not in FRESHNESS_MODES:
+            maps_mode = default_maps_mode
+
+        force_maps = maps_mode == FRESHNESS_FORCE_ALL
+        maps_max_age_days = None
+        maps_cutoff_date = None
+
+        if maps_mode == FRESHNESS_MAX_AGE:
+            raw_maps_days = st.number_input(
+                "Maps Max Age (Days)",
+                min_value=1,
+                max_value=3650,
+                value=MAPS_LOOKUP_MAX_AGE_DAYS,
+                step=7,
+                key=f"{key_prefix}_maps_max_age_days",
+                help="Refresh Maps lookups (including previous misses) older than this many days.",
+            )
+            maps_max_age_days = (
+                int(raw_maps_days)
+                if isinstance(raw_maps_days, (int, float)) and not isinstance(raw_maps_days, bool)
+                else MAPS_LOOKUP_MAX_AGE_DAYS
+            )
+        elif maps_mode == FRESHNESS_CUTOFF_DATE:
+            default_maps_cutoff = datetime.date.today() - datetime.timedelta(days=MAPS_LOOKUP_MAX_AGE_DAYS)
+            raw_maps_cutoff = st.date_input(
+                "Refresh Maps Lookups Before",
+                value=default_maps_cutoff,
+                max_value=datetime.date.today(),
+                key=f"{key_prefix}_maps_cutoff_date",
+                help="Refresh any Maps lookup stamped strictly before this date (UTC).",
+            )
+            maps_cutoff_date = (
+                raw_maps_cutoff
+                if isinstance(raw_maps_cutoff, (datetime.date, datetime.datetime, str))
+                else default_maps_cutoff
+            )
+
+    with cols[1]:
+        gem_idx = FRESHNESS_MODES.index(default_gemini_mode) if default_gemini_mode in FRESHNESS_MODES else 1
+        gemini_mode = st.selectbox(
+            "✨ Gemini Profile Freshness",
+            options=list(FRESHNESS_MODES),
+            index=gem_idx,
+            key=f"{key_prefix}_gemini_mode",
+            help="Control whether existing Gemini 6-pillar profiles are reused or regenerated.",
+        )
+        if gemini_mode not in FRESHNESS_MODES:
+            gemini_mode = default_gemini_mode
+
+        force_gemini = gemini_mode == FRESHNESS_FORCE_ALL
+        gemini_max_age_days = None
+        gemini_cutoff_date = None
+
+        if gemini_mode == FRESHNESS_MAX_AGE:
+            raw_gem_days = st.number_input(
+                "Gemini Max Age (Days)",
+                min_value=1,
+                max_value=3650,
+                value=GEMINI_PROFILE_MAX_AGE_DAYS,
+                step=15,
+                key=f"{key_prefix}_gemini_max_age_days",
+                help="Regenerate Gemini profiles older than this many days.",
+            )
+            gemini_max_age_days = (
+                int(raw_gem_days)
+                if isinstance(raw_gem_days, (int, float)) and not isinstance(raw_gem_days, bool)
+                else GEMINI_PROFILE_MAX_AGE_DAYS
+            )
+        elif gemini_mode == FRESHNESS_CUTOFF_DATE:
+            default_gem_cutoff = datetime.date.today() - datetime.timedelta(days=GEMINI_PROFILE_MAX_AGE_DAYS)
+            raw_gem_cutoff = st.date_input(
+                "Refresh Gemini Profiles Before",
+                value=default_gem_cutoff,
+                max_value=datetime.date.today(),
+                key=f"{key_prefix}_gemini_cutoff_date",
+                help="Regenerate any Gemini profile stamped strictly before this date (e.g. after a model or prompt upgrade).",
+            )
+            gemini_cutoff_date = (
+                raw_gem_cutoff
+                if isinstance(raw_gem_cutoff, (datetime.date, datetime.datetime, str))
+                else default_gem_cutoff
+            )
+
+    return {
+        "force_maps": force_maps,
+        "maps_max_age_days": maps_max_age_days,
+        "maps_cutoff_date": maps_cutoff_date,
+        "force_gemini": force_gemini,
+        "gemini_max_age_days": gemini_max_age_days,
+        "gemini_cutoff_date": gemini_cutoff_date,
+    }
+
+
+def format_freshness_breakdown(
+    df_target: pd.DataFrame,
+    freshness_opts: dict,
+    label: str = "Target Batch",
+    extra_suffix: str = "",
+) -> str:
+    """Format a live Missing / Stale / Cached cost & freshness breakdown banner."""
+    gem_kwargs = {
+        "force": freshness_opts["force_gemini"],
+        "max_age_days": freshness_opts["gemini_max_age_days"],
+        "cutoff_date": freshness_opts["gemini_cutoff_date"],
+    }
+    maps_kwargs = {
+        "force": freshness_opts["force_maps"],
+        "max_age_days": freshness_opts["maps_max_age_days"],
+        "cutoff_date": freshness_opts["maps_cutoff_date"],
+    }
+    gem_missing = count_needing_gemini_profile(df_target, **gem_kwargs)
+    maps_missing = count_needing_maps_lookup(df_target, **maps_kwargs)
+    gem_stats = summarise_gemini_freshness(df_target, **gem_kwargs)
+    maps_stats = summarise_maps_freshness(df_target, **maps_kwargs)
+
+    banner = (
+        f"📊 **{label}:** {gem_stats['total']} restaurants | "
+        f"✨ **Gemini Calls:** {gem_missing} "
+        f"({gem_stats['missing']} missing, {gem_stats['stale']} stale/forced, {gem_stats['cached']} cached) | "
+        f"🗺️ **Maps Calls:** {maps_missing} "
+        f"({maps_stats['missing']} missing, {maps_stats['stale']} stale/forced, {maps_stats['cached']} cached)"
+    )
+    if extra_suffix:
+        banner += f" | {extra_suffix}"
+    return banner
+
+
 def render_model_training_tab(project_id: str, dataset_id: str, table_id: str):
     """Validate the training SQL, or train on it, and say which happened.
 
@@ -365,6 +532,19 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str):
 
     st.subheader("Train BQML Boosted Tree Regressor")
     st.caption("Trains continuous preference regression model using all in-scope rated restaurants (`user_rating` 1-10).")
+
+    freshness_opts = render_freshness_controls(
+        key_prefix="train",
+        default_gemini_mode=FRESHNESS_MAX_AGE,
+        default_maps_mode=FRESHNESS_MAX_AGE,
+    )
+
+    df_loaded = st.session_state.get("df_enriched")
+    if isinstance(df_loaded, pd.DataFrame) and not df_loaded.empty and "user_rating" in df_loaded.columns:
+        df_labeled = df_loaded[df_loaded["user_rating"].notna()]
+        if "in_scope" in df_labeled.columns:
+            df_labeled = df_labeled[df_labeled["in_scope"] != False]  # noqa: E712
+        st.info(format_freshness_breakdown(df_labeled, freshness_opts, label="Labeled Training Set"))
 
     # Poll a tracked job until it finishes, then remember the outcome and stop
     # polling. `run_async` returns in a second; the job takes ten to fifteen
@@ -421,6 +601,7 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str):
                     model_name=TRAINING_MODEL_NAME,
                     dry_run=False,
                     run_async=True,
+                    **freshness_opts,
                 )
             st.session_state["training_job_id"] = job_id
             st.session_state.pop("training_last_outcome", None)
@@ -789,14 +970,15 @@ def main():
             st.subheader("ML Predictions & Auto-Enrichment")
             st.caption("Generate preference ratings using BigQuery ML with automatic Maps & Gemini enrichment.")
 
-            col_opt1, col_opt2 = st.columns(2)
-            with col_opt1:
-                force_maps = st.checkbox("Force Regenerate Maps Data", key="force_maps_unified")
-            with col_opt2:
-                force_gemini = st.checkbox("Force Regenerate Gemini Profiles", key="force_gemini_unified")
+            pred_freshness_opts = render_freshness_controls(
+                key_prefix="pred",
+                default_gemini_mode=FRESHNESS_MAX_AGE,
+                default_maps_mode=FRESHNESS_MAX_AGE,
+            )
 
             if num_selected > 0:
                 st.write(f"**Targeting {num_selected} Selected Restaurant(s):**")
+                st.info(format_freshness_breakdown(selected_rows, pred_freshness_opts, label="Selected Batch"))
                 col_map = {c.lower(): c for c in selected_rows.columns}
                 id_col = col_map.get('fhrsid')
                 
@@ -808,8 +990,7 @@ def main():
                             "restaurant_preference_model",
                             limit=len(fhrsids) if fhrsids else 50,
                             target_fhrsids=fhrsids,
-                            force_maps=force_maps,
-                            force_gemini=force_gemini
+                            **pred_freshness_opts,
                         )
                         if success:
                             st.success(msg)
@@ -879,16 +1060,15 @@ def main():
                 num_candidates = len(top_candidates)
 
                 if num_candidates > 0:
-                    # The same predicate `generate_predictions` will apply, so
-                    # the estimate cannot drift from the spend (D1). It counted
-                    # the legacy V1 text column too -- NULL on every row, and
-                    # since retired -- and knew nothing about staleness or the
-                    # force checkbox.
-                    gem_missing = count_needing_gemini_profile(top_candidates, force=force_gemini)
-
                     avg_dist = top_candidates["distance_km"].mean()
-                    
-                    st.info(f"📊 **Batch Queue:** {num_candidates} restaurants ranked | 💰 **Estimated New Gemini Calls:** {gem_missing} ({num_candidates - gem_missing} cached) | 📍 **Avg Distance:** {avg_dist:.1f} km from {anchor_pc.upper()}")
+                    st.info(
+                        format_freshness_breakdown(
+                            top_candidates,
+                            pred_freshness_opts,
+                            label="Batch Queue",
+                            extra_suffix=f"📍 **Avg Distance:** {avg_dist:.1f} km from {anchor_pc.upper()}",
+                        )
+                    )
                     
                     # Preview table of top candidate restaurants
                     preview_cols = [c for c in ["fhrsid", "businessname", "priority_score", "distance_km", "staleness_score", "maps_rating", "predicted_user_rating", "predicted_at", "postcode"] if c in top_candidates.columns]
@@ -905,8 +1085,7 @@ def main():
                                 "restaurant_preference_model",
                                 limit=num_candidates,
                                 target_fhrsids=target_ids,
-                                force_maps=force_maps,
-                                force_gemini=force_gemini
+                                **pred_freshness_opts,
                             )
                             if success:
                                 st.success(msg)

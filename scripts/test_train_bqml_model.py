@@ -101,15 +101,43 @@ def test_the_preflight_counts_restaurants_and_not_joined_rows(mock_bq):
 @patch('app.services.bq_utils.execute_gemini_enrichment')
 @patch('scripts.train_bqml_model.bigquery.Client')
 def test_training_never_refreshes_a_profile_it_already_has(mock_bq, mock_gemini):
-    """Training is cheap; re-profiling is not. The Predict button applies a
-    staleness threshold because a person pressed it — this path is scheduled,
-    so it fills gaps only, however old the profile is."""
+    """By default (when no staleness threshold is passed), CLI training fills
+    gaps only, however old the profile is."""
     mock_bq.return_value = _mock_client(
         [DummyRow('1', gemini_profiled_at='2019-01-01 00:00:00+00:00')])
 
     train_model('p', 'd', 't', 'm', dry_run=False)
 
     mock_gemini.assert_not_called()
+
+
+@patch('app.services.bq_utils.execute_gemini_enrichment')
+@patch('scripts.train_bqml_model.bigquery.Client')
+def test_training_refreshes_stale_or_forced_gemini_profiles_when_configured(mock_bq, mock_gemini):
+    """When the user configures `gemini_max_age_days`, `gemini_cutoff_date`, or
+    `force_gemini` for training, old profiles are regenerated before training."""
+    old_row = DummyRow('1', gemini_profiled_at='2020-01-01 00:00:00+00:00')
+    fresh_row = DummyRow('2', gemini_profiled_at='2099-01-01 00:00:00+00:00')
+    mock_bq.return_value = _mock_client([old_row, fresh_row])
+
+    train_model('p', 'd', 't', 'm', dry_run=False, gemini_max_age_days=180)
+
+    mock_gemini.assert_called_once()
+    assert mock_gemini.call_args.kwargs['fhrsids'] == ['1']
+
+
+@patch('scripts.enrich_maps_data.enrich_restaurants_by_fhrsid')
+@patch('scripts.train_bqml_model.bigquery.Client')
+def test_training_refreshes_stale_maps_lookups_with_force_regen_when_configured(mock_bq, mock_maps):
+    """When `maps_max_age_days` or `maps_cutoff_date` is passed to `train_model`,
+    stale Maps lookups (including previous misses) are re-queried with `force_regen=True`."""
+    old_miss = DummyRow('1', maps_rating=None, maps_lookup_at='2020-01-01 00:00:00+00:00')
+    fresh_hit = DummyRow('2', maps_rating=4.6, maps_lookup_at='2099-01-01 00:00:00+00:00')
+    mock_bq.return_value = _mock_client([old_miss, fresh_hit])
+
+    train_model('p', 'd', 't', 'm', dry_run=False, maps_cutoff_date='2025-01-01')
+
+    mock_maps.assert_called_once_with(['1'], limit=1, force_regen=True)
 
 
 @patch('app.services.bq_utils.execute_gemini_enrichment')

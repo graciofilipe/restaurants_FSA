@@ -304,6 +304,49 @@ class TestTheEnrichmentSplitIsOneFunction:
         assert split_enrichment_targets(rows, force_maps=True)['maps'] == ['1']
         assert split_enrichment_targets(rows, force_gemini=True)['gemini'] == ['1']
 
+    def test_stale_maps_lookup_is_queued_when_max_age_or_cutoff_is_configured(self):
+        """Including rows where `maps_rating` is None (previous miss): once the
+        lookup is older than the threshold, Places is re-queried."""
+        from app.services.ml_prediction import split_enrichment_targets
+
+        old_miss = DummyRow('1', maps_rating=None, maps_lookup_at=_days_ago(90),
+                            gemini_insights_structured='{}')
+        fresh_hit = DummyRow('2', maps_rating=4.5, maps_lookup_at=_days_ago(10),
+                             gemini_insights_structured='{}')
+
+        split_age = split_enrichment_targets([old_miss, fresh_hit], maps_max_age_days=60)
+        assert split_age['maps'] == ['1']
+        assert split_age['never_looked_up_maps'] == 0
+
+        split_cutoff = split_enrichment_targets([old_miss, fresh_hit], maps_cutoff_date=_days_ago(30))
+        assert split_cutoff['maps'] == ['1']
+
+    def test_custom_gemini_max_age_and_cutoff_are_honoured(self):
+        from app.services.ml_prediction import split_enrichment_targets
+
+        row = DummyRow('1', gemini_insights_structured='{}', gemini_profiled_at=_days_ago(20))
+
+        assert split_enrichment_targets([row], gemini_max_age_days=None)['gemini'] == []
+        assert split_enrichment_targets([row], gemini_max_age_days=10)['gemini'] == ['1']
+        assert split_enrichment_targets([row], gemini_max_age_days=None, gemini_cutoff_date=_days_ago(10))['gemini'] == ['1']
+        assert split_enrichment_targets([row], gemini_max_age_days=None, gemini_cutoff_date=_days_ago(30))['gemini'] == []
+
+
+@patch('app.services.ml_prediction.bigquery.Client')
+@patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
+@patch('app.services.ml_prediction.execute_gemini_enrichment')
+def test_stale_maps_refresh_passes_force_regen_so_non_null_lookup_at_is_updated(mock_gemini, mock_maps, mock_bq):
+    """When `maps_max_age_days` or `maps_cutoff_date` selects a row that already
+    has a `maps_lookup_at` timestamp, `enrich_restaurants_by_fhrsid` must receive
+    `force_regen=True` so its `AND maps_lookup_at IS NULL` clause does not skip it."""
+    row = DummyRow('1', maps_rating=None, maps_lookup_at=_days_ago(90),
+                   gemini_insights_structured='{"match_score": 80}')
+    mock_bq.return_value = _mock_client([row])
+
+    generate_predictions('p', 'd', 't', 'm', target_fhrsids=['1'], maps_max_age_days=60)
+
+    mock_maps.assert_called_once_with(['1'], limit=1, force_regen=True)
+
 
 class TestTheFindQueryReturnsOneRowPerRestaurant:
     """`uk_postcode_demographics` holds 5,576 rows for 5,560 distinct normalised

@@ -22,9 +22,11 @@ from typing import Any, Iterable, Mapping, Optional
 # week. Shortening this multiplies the Gemini bill by the same factor, so it is
 # a budget decision as much as a quality one.
 GEMINI_PROFILE_MAX_AGE_DAYS = 180
+MAPS_LOOKUP_MAX_AGE_DAYS = 60
 
 PROFILE_COLUMN = 'gemini_insights_structured'
 PROFILED_AT_COLUMN = 'gemini_profiled_at'
+MAPS_LOOKUP_AT_COLUMN = 'maps_lookup_at'
 
 _UTC = datetime.timezone.utc
 
@@ -44,8 +46,11 @@ def _as_utc(value: Any) -> Optional[datetime.datetime]:
     if _is_missing(value):
         return None
     if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
         try:
-            parsed = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+            parsed = datetime.datetime.fromisoformat(stripped.replace('Z', '+00:00'))
         except ValueError:
             return None
     elif isinstance(value, datetime.datetime):  # pandas Timestamp is a subclass
@@ -66,6 +71,11 @@ def has_profile(value: Any) -> bool:
     return not _is_missing(value) and bool(str(value).strip())
 
 
+def has_maps_lookup(value: Any) -> bool:
+    """Whether a `maps_lookup_at` value is a valid lookup timestamp."""
+    return _as_utc(value) is not None
+
+
 def needs_gemini_profile(
     row_has_profile: bool,
     profiled_at: Any,
@@ -73,25 +83,58 @@ def needs_gemini_profile(
     force: bool = False,
     now: Optional[datetime.datetime] = None,
     max_age_days: Optional[int] = GEMINI_PROFILE_MAX_AGE_DAYS,
+    cutoff_date: Optional[Any] = None,
 ) -> bool:
     """Whether this restaurant should be sent to `AI.GENERATE`.
 
-    `max_age_days=None` disables staleness, leaving "has no profile" as the
-    only trigger. That is how the training pre-flight asks: retraining is cheap
-    and re-profiling is not, so a scheduled training run fills gaps and never
-    refreshes.
+    `max_age_days=None` (with `cutoff_date=None`) disables staleness, leaving
+    "has no profile" as the only trigger. Passing `cutoff_date` refreshes any
+    profile stamped strictly before that timestamp/date, and `max_age_days`
+    refreshes any profile older than `max_age_days` relative to `now`.
     """
     if force:
         return True
     if not row_has_profile:
         return True
-    if max_age_days is None:
-        return False
     profiled = _as_utc(profiled_at)
     if profiled is None:
         return False
+    cutoff = _as_utc(cutoff_date)
+    if cutoff is not None and profiled < cutoff:
+        return True
+    if max_age_days is None:
+        return False
     reference = _as_utc(now) or datetime.datetime.now(_UTC)
     return (reference - profiled) > datetime.timedelta(days=max_age_days)
+
+
+def needs_maps_lookup(
+    maps_lookup_at: Any,
+    *,
+    force: bool = False,
+    now: Optional[datetime.datetime] = None,
+    max_age_days: Optional[int] = None,
+    cutoff_date: Optional[Any] = None,
+) -> bool:
+    """Whether this restaurant should be queried against Google Places.
+
+    A missing `maps_lookup_at` means Places has never been asked, so it always
+    returns True. Once stamped, a row (including one where `maps_found = False`)
+    is re-queried when `force=True`, when `maps_lookup_at < cutoff_date`, or
+    when its age exceeds `max_age_days`.
+    """
+    if force:
+        return True
+    looked_up = _as_utc(maps_lookup_at)
+    if looked_up is None:
+        return True
+    cutoff = _as_utc(cutoff_date)
+    if cutoff is not None and looked_up < cutoff:
+        return True
+    if max_age_days is None:
+        return False
+    reference = _as_utc(now) or datetime.datetime.now(_UTC)
+    return (reference - looked_up) > datetime.timedelta(days=max_age_days)
 
 
 def row_needs_gemini_profile(row: Mapping[str, Any], **kwargs: Any) -> bool:
@@ -99,6 +142,11 @@ def row_needs_gemini_profile(row: Mapping[str, Any], **kwargs: Any) -> bool:
     return needs_gemini_profile(
         has_profile(row.get(PROFILE_COLUMN)), row.get(PROFILED_AT_COLUMN), **kwargs
     )
+
+
+def row_needs_maps_lookup(row: Mapping[str, Any], **kwargs: Any) -> bool:
+    """`needs_maps_lookup` for a row that still carries its column names."""
+    return needs_maps_lookup(row.get(MAPS_LOOKUP_AT_COLUMN), **kwargs)
 
 
 def count_needing_gemini_profile(rows: Iterable[Mapping[str, Any]], **kwargs: Any) -> int:
@@ -111,3 +159,62 @@ def count_needing_gemini_profile(rows: Iterable[Mapping[str, Any]], **kwargs: An
     if hasattr(rows, 'to_dict'):
         rows = rows.to_dict('records')
     return sum(1 for row in rows if row_needs_gemini_profile(row, **kwargs))
+
+
+def count_needing_maps_lookup(rows: Iterable[Mapping[str, Any]], **kwargs: Any) -> int:
+    """How many of these rows a run would query on Google Places."""
+    if hasattr(rows, 'to_dict'):
+        rows = rows.to_dict('records')
+    return sum(1 for row in rows if row_needs_maps_lookup(row, **kwargs))
+
+
+def summarise_gemini_freshness(
+    rows: Iterable[Mapping[str, Any]], **kwargs: Any
+) -> dict[str, int]:
+    """Break down a batch into missing, stale/forced, and cached Gemini profiles."""
+    if hasattr(rows, 'to_dict'):
+        rows = rows.to_dict('records')
+    row_list = list(rows)
+    total = len(row_list)
+    missing = 0
+    stale = 0
+    for row in row_list:
+        present = has_profile(row.get(PROFILE_COLUMN))
+        if not present:
+            missing += 1
+        elif needs_gemini_profile(True, row.get(PROFILED_AT_COLUMN), **kwargs):
+            stale += 1
+    to_refresh = missing + stale
+    return {
+        'total': total,
+        'missing': missing,
+        'stale': stale,
+        'cached': total - to_refresh,
+        'to_refresh': to_refresh,
+    }
+
+
+def summarise_maps_freshness(
+    rows: Iterable[Mapping[str, Any]], **kwargs: Any
+) -> dict[str, int]:
+    """Break down a batch into missing, stale/forced, and cached Maps lookups."""
+    if hasattr(rows, 'to_dict'):
+        rows = rows.to_dict('records')
+    row_list = list(rows)
+    total = len(row_list)
+    missing = 0
+    stale = 0
+    for row in row_list:
+        looked_up = has_maps_lookup(row.get(MAPS_LOOKUP_AT_COLUMN))
+        if not looked_up:
+            missing += 1
+        elif needs_maps_lookup(row.get(MAPS_LOOKUP_AT_COLUMN), **kwargs):
+            stale += 1
+    to_refresh = missing + stale
+    return {
+        'total': total,
+        'missing': missing,
+        'stale': stale,
+        'cached': total - to_refresh,
+        'to_refresh': to_refresh,
+    }

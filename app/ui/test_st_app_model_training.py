@@ -216,5 +216,50 @@ class TestTheOutcomeIsReported(ModelTrainingTabCase):
         st.status_lookup.assert_not_called()
 
 
+class TestFreshnessControlsAndBreakdownInTrainingTab(ModelTrainingTabCase):
+
+    def test_pressing_train_forwards_freshness_options_to_train_model(self):
+        _, train, _ = self._render(pressed={"btn_train_model_unified"})
+
+        kwargs = train.call_args.kwargs
+        self.assertIn("force_maps", kwargs)
+        self.assertIn("maps_max_age_days", kwargs)
+        self.assertIn("maps_cutoff_date", kwargs)
+        self.assertIn("force_gemini", kwargs)
+        self.assertIn("gemini_max_age_days", kwargs)
+        self.assertIn("gemini_cutoff_date", kwargs)
+        self.assertEqual(kwargs["gemini_max_age_days"], 180)
+        self.assertEqual(kwargs["maps_max_age_days"], 60)
+
+    def test_loaded_labeled_rows_display_a_live_freshness_breakdown_banner(self):
+        import pandas as pd
+
+        df = pd.DataFrame([
+            {
+                "fhrsid": "1",
+                "in_scope": True,
+                "user_rating": 8,
+                "gemini_insights_structured": '{"match_score": 90}',
+                "gemini_profiled_at": "2020-01-01 00:00:00+00:00",
+                "maps_lookup_at": None,
+            },
+            {
+                "fhrsid": "2",
+                "in_scope": True,
+                "user_rating": None,  # unlabeled row should not be counted in training set
+                "gemini_insights_structured": None,
+                "gemini_profiled_at": None,
+                "maps_lookup_at": None,
+            },
+        ])
+        st, _, _ = self._render(session={"df_enriched": df})
+
+        infos = self._messages(st, "info")
+        self.assertTrue(
+            any("Labeled Training Set:** 1 restaurants" in m and "Gemini Calls:** 1" in m and "Maps Calls:** 1" in m for m in infos),
+            f"Expected training breakdown banner in info messages, got: {infos}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
