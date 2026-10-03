@@ -65,10 +65,17 @@ def test_the_prompt_survives_a_null_field():
     were already guarded; `postcode` and `businessname` were not, which is why
     7 labelled rows had never been profiled despite being retried on every
     training and prediction run. See D-16."""
-    for column in ('businessname', 'postcode', 'addressline1', 'addressline2', 'addressline3'):
+    string_columns = (
+        'businessname', 'postcode', 'addressline1', 'addressline2', 'addressline3',
+        'localauthorityname', 'maps_types', 'business_status', 'website_url', 'maps_url',
+    )
+    for column in string_columns:
         assert f"COALESCE({column}, '')" in SCRIPT_GENERATE_INSIGHTS, column
-    # ...and no bare reference survives alongside the guarded one.
-    for column in ('businessname', 'postcode'):
+    numeric_columns = ('latitude', 'longitude', 'maps_rating', 'maps_reviews', 'price_level')
+    for column in numeric_columns:
+        assert f"COALESCE(CAST({column} AS STRING), '')" in SCRIPT_GENERATE_INSIGHTS, column
+    # Ensure no bare column reference survives alongside the guarded one.
+    for column in string_columns + numeric_columns:
         assert f",{column}," not in SCRIPT_GENERATE_INSIGHTS.replace(' ', ''), column
 
 
@@ -84,8 +91,20 @@ def test_model_params_are_valid_json():
     assert params['generationConfig']['maxOutputTokens'] > 0
 
 
+def test_model_params_enable_google_search_and_maps_grounding():
+    """Both Google Search and Google Maps grounding tools must be enabled in model_params."""
+    params = json.loads(MODEL_PARAMS_JSON)
+    tools = params.get('tools', [])
+    assert {'googleSearch': {}} in tools
+    assert {'googleMaps': {}} in tools
+    sys_text = params['systemInstruction']['parts'][0]['text']
+    assert 'GROUNDING & RESEARCH PROTOCOL' in sys_text
+    assert 'Anti-Hallucination & Sparse-Evidence Rule' in sys_text
+    assert 'Integer (1-5)' in sys_text
+
+
 def test_model_params_carry_no_triple_quote():
-    """It is embedded in r'''...''' -- a triple quote inside would terminate the literal early."""
+    """It is embedded in r-triple-quotes -- a triple quote inside would terminate the literal early."""
     assert "'''" not in MODEL_PARAMS_JSON
 
 

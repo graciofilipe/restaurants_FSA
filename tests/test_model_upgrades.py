@@ -62,6 +62,8 @@ def test_bq_utils_query_generates_gemini_3_8_flash_endpoint(mock_client_cls):
     assert len(call_args_list) >= 2
     insights_query = call_args_list[1][0][0]
     assert "publishers/google/models/gemini-3.8-flash" in insights_query
+    assert '"googleSearch": {}' in insights_query
+    assert '"googleMaps": {}' in insights_query
 
 
 def test_eval_config_judge_model():
