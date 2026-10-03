@@ -121,14 +121,22 @@ def feature_source_clause(project_id: str, dataset_id: str, source_table: str,
     row. Ascending order defaults to nulls first in BigQuery, so the plain
     ordering would deterministically pick the blank over the real demographics.
     A populated row wins.
+
+    Filtered via an outer `WHERE _rn = 1` subquery rather than `QUALIFY`:
+    BigQuery ML's `CREATE MODEL ... AS SELECT` parser rejects `QUALIFY` with
+    `400: QUALIFY is not supported`.
     """
     demographics = ", ".join(DEMOGRAPHIC_COLUMNS)
     best_first = ", ".join(f"{column} NULLS LAST" for column in DEMOGRAPHIC_COLUMNS)
     normalised = "REPLACE(UPPER(postcode), ' ', '')"
     return f"""FROM `{source_table}` AS {master}
 LEFT JOIN (
-  SELECT {normalised} AS postcode_key, {demographics}
-  FROM `{project_id}.{dataset_id}.uk_postcode_demographics`
-  QUALIFY ROW_NUMBER() OVER (PARTITION BY {normalised} ORDER BY {best_first}) = 1
+  SELECT postcode_key, {demographics}
+  FROM (
+    SELECT {normalised} AS postcode_key, {demographics},
+           ROW_NUMBER() OVER (PARTITION BY {normalised} ORDER BY {best_first}) AS _rn
+    FROM `{project_id}.{dataset_id}.uk_postcode_demographics`
+  )
+  WHERE _rn = 1
 ) AS {demo}
   ON REPLACE(UPPER({master}.postcode), ' ', '') = {demo}.postcode_key"""

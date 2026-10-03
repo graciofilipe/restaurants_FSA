@@ -203,6 +203,15 @@ class TestTheDemographicsJoinCannotFanOut(unittest.TestCase):
 
         self.assertIn("REPLACE(UPPER(m.postcode), ' ', '')", clause)
 
+    def test_avoids_qualify_for_bqml_create_model_compatibility(self):
+        """BigQuery ML's `CREATE MODEL ... AS SELECT` validator rejects `QUALIFY`
+        with `400: QUALIFY is not supported`. The `ROW_NUMBER()` filter must use
+        an outer `WHERE _rn = 1` subquery instead."""
+        clause = feature_source_clause('p', 'd', 'p.d.t')
+
+        self.assertNotIn('QUALIFY', clause.upper())
+        self.assertIn('WHERE _rn = 1', clause)
+
     def test_it_changes_row_counts_and_not_the_feature_schema(self):
         """Deduplicating rows is not a feature change, so `ML.PREDICT` against
         the already-trained model keeps working and no retrain is forced. The
