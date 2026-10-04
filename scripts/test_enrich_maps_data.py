@@ -145,3 +145,69 @@ def test_a_miss_records_the_lookup_instead_of_a_sentinel(mock_bq, mock_post, _sl
     assert 'maps_found' in merge
     assert 'maps_lookup_at' in merge
     assert '-1' not in merge
+
+
+@patch('scripts.enrich_maps_data.time.sleep')
+@patch('scripts.enrich_maps_data.requests.post')
+@patch('scripts.enrich_maps_data.bigquery.Client')
+def test_places_http_call_passes_explicit_timeout(mock_bq, mock_post, _sleep):
+    client = _mock_client([DummyRow()])
+    mock_bq.return_value = client
+    mock_post.return_value = _response({})
+
+    enrich_restaurants_by_fhrsid(fhrsids=['123'])
+
+    assert mock_post.call_args.kwargs.get('timeout') == 10
+    select_job = client.query.side_effect  # already consumed; check mock calls
+    assert client.query.call_count == 2
+
+
+@patch('scripts.enrich_maps_data.time.sleep')
+@patch('scripts.enrich_maps_data.requests.post')
+@patch('scripts.enrich_maps_data.bigquery.Client')
+def test_stalled_bigquery_select_cancels_job_and_raises(mock_bq, mock_post, _sleep):
+    import pytest
+    from app.core.profile_freshness import PreFlightEnrichmentError
+
+    client = MagicMock()
+    stalled_job = MagicMock()
+    stalled_job.result.side_effect = TimeoutError("BigQuery SELECT timed out")
+    client.query.return_value = stalled_job
+    mock_bq.return_value = client
+
+    with pytest.raises(PreFlightEnrichmentError, match="Maps BigQuery SELECT failed or timed out"):
+        enrich_restaurants_by_fhrsid(fhrsids=['123'])
+
+    stalled_job.cancel.assert_called_once()
+    mock_post.assert_not_called()
+
+
+@patch('scripts.enrich_maps_data.time.sleep')
+@patch('scripts.enrich_maps_data.requests.post')
+@patch('scripts.enrich_maps_data.bigquery.Client')
+def test_places_http_failures_exceeding_5_percent_raise_preflight_error(mock_bq, mock_post, _sleep):
+    import pytest
+    from app.core.profile_freshness import PreFlightEnrichmentError
+
+    # 1 row targeted, 1 fails (100% > 5%) -> raises
+    client = _mock_client([DummyRow('1')])
+    mock_bq.return_value = client
+    mock_post.side_effect = TimeoutError("socket hung")
+
+    with pytest.raises(PreFlightEnrichmentError, match="Maps Places API failed"):
+        enrich_restaurants_by_fhrsid(fhrsids=['1'])
+
+
+@patch('scripts.enrich_maps_data.time.sleep')
+@patch('scripts.enrich_maps_data.requests.post')
+@patch('scripts.enrich_maps_data.bigquery.Client')
+def test_places_http_failure_within_5_percent_tolerance_succeeds(mock_bq, mock_post, _sleep):
+    # 20 rows targeted, 1 fails (5% <= 5% allowed=1), 19 succeed -> returns 19
+    rows = [DummyRow(str(i)) for i in range(20)]
+    client = _mock_client(rows)
+    mock_bq.return_value = client
+    mock_post.side_effect = [TimeoutError("transient")] + [_response({}) for _ in range(19)]
+
+    updated = enrich_restaurants_by_fhrsid(fhrsids=[str(i) for i in range(20)])
+    assert updated == 19
+

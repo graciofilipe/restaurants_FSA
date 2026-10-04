@@ -1,14 +1,35 @@
 import argparse
+import datetime
 import logging
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from google.cloud import bigquery
 from google.cloud.exceptions import GoogleCloudError
 
 from app.core.model_features import feature_select_list, feature_source_clause
-from app.core.profile_freshness import needs_gemini_profile, needs_maps_lookup
+from app.core.profile_freshness import (
+    PreFlightEnrichmentError,
+    max_allowed_enrichment_failures,
+    needs_gemini_profile,
+    needs_maps_lookup,
+    verify_post_enrichment_rows,
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+PREFLIGHT_BQ_TIMEOUT_SECONDS = 60.0
+
+
+def _run_preflight_query(client: bigquery.Client, sql: str, timeout: float = PREFLIGHT_BQ_TIMEOUT_SECONDS):
+    job = client.query(sql)
+    try:
+        return job.result(timeout=timeout)
+    except Exception:
+        try:
+            job.cancel()
+        except Exception:
+            pass
+        raise
 
 
 def build_training_select(
@@ -48,23 +69,25 @@ def run_jit_preflight(
     force_gemini: bool = False,
     gemini_max_age_days: Optional[int] = None,
     gemini_cutoff_date: Optional[Any] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> None:
     """Fill in or refresh labelled rows before training on them.
 
-    Extracted from `train_model` so the dry-run guard is a named call the
-    caller can decline rather than an indentation level. This function spends
-    money -- Places lookups and grounded `AI.GENERATE` calls -- and until D15
-    it ran unconditionally, including under `--dry-run`.
-
-    Defaults to `max_age_days=None` (missing only) for headless/CLI invocations,
-    while accepting on-the-fly staleness (`maps_max_age_days`, `gemini_max_age_days`),
-    cutoff dates (`maps_cutoff_date`, `gemini_cutoff_date`), or full force flags
-    (`force_maps`, `force_gemini`) from the UI or CLI.
+    Enforces a strict pre-flight gate:
+    1. Google Maps Places regeneration runs first so Gemini sees updated ratings.
+    2. Gemini `AI.GENERATE` runs second (in bounded 25-row batches with timeouts).
+    3. Postcode demographics enrichment runs third.
+    4. Post-enrichment verification confirms `<= 5%` of targeted rows remain
+       stale or missing. Any stage error, timeout, or verification shortfall
+       raises `PreFlightEnrichmentError` and prevents training on stale data.
     """
     source_table = f"{project_id}.{dataset_id}.{table_id}"
+    started_at = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=2)
 
-    # Pre-flight JIT Enrichment: check all labeled examples for missing or stale features.
     logger.info("Executing pre-flight JIT check for labeled training examples...")
+    if progress_callback:
+        progress_callback("🔎 Auditing freshness of labeled training set in BigQuery...")
+
     # A correlated subquery, not a join: 15 normalised postcodes are duplicated
     # in the demographics table, so joining it returns those labelled rows two
     # or three times (D-31, D-32). Only "did the postcode resolve?" is read.
@@ -79,55 +102,143 @@ def run_jit_preflight(
         WHERE (m.in_scope = TRUE OR m.in_scope IS NULL) AND m.user_rating IS NOT NULL
     """
     try:
-        results = client.query(check_query).result()
+        results = _run_preflight_query(client, check_query)
         rows = list(results)
-        
-        maps_missing = [
-            str(row.fhrsid) for row in rows
-            if needs_maps_lookup(
-                row.maps_lookup_at,
-                force=force_maps,
-                max_age_days=maps_max_age_days,
-                cutoff_date=maps_cutoff_date,
-            )
-        ]
-        gemini_missing = [
-            str(row.fhrsid) for row in rows
-            if needs_gemini_profile(
-                row.has_profile,
-                row.gemini_profiled_at,
-                force=force_gemini,
-                max_age_days=gemini_max_age_days,
-                cutoff_date=gemini_cutoff_date,
-            )
-        ]
-        postcode_missing = [str(row.fhrsid) for row in rows if getattr(row, 'd_postcode', None) is None and getattr(row, 'postcode', None) is not None]
-        
-        if maps_missing:
-            maps_force_regen = bool(
-                force_maps or maps_max_age_days is not None or maps_cutoff_date is not None
-            )
-            logger.info(f"JIT: Found {len(maps_missing)} labeled restaurants needing Maps data. Triggering enrichment...")
-            from scripts.enrich_maps_data import enrich_restaurants_by_fhrsid
-            if maps_force_regen:
-                enrich_restaurants_by_fhrsid(maps_missing, limit=len(maps_missing), force_regen=True)
-            else:
-                enrich_restaurants_by_fhrsid(maps_missing, limit=len(maps_missing))
-            
-        if gemini_missing:
-            logger.info(f"JIT: Found {len(gemini_missing)} labeled restaurants needing Gemini insights. Triggering enrichment...")
-            from app.services.bq_utils import execute_gemini_enrichment
-            execute_gemini_enrichment(project_id, dataset_id, table_id, fhrsids=gemini_missing)
-            
-        if postcode_missing:
-            logger.info("JIT: Found labeled restaurants missing postcode demographics. Triggering enrichment...")
-            from scripts.enrich_postcode_demographics import enrich_postcodes
-            enriched_postcodes = enrich_postcodes(project_id=project_id, dataset_id=dataset_id, master_table=table_id)
-            if enriched_postcodes > 0:
-                logger.info(f"JIT: Enriched {enriched_postcodes} new postcodes with demographic data.")
-            
     except Exception as e:
-        logger.warning(f"JIT pre-flight check failed: {e}. Proceeding with existing data.")
+        raise PreFlightEnrichmentError(
+            f"Pre-flight BigQuery freshness audit failed or timed out: {e}"
+        ) from e
+
+    maps_missing = [
+        str(row.fhrsid) for row in rows
+        if needs_maps_lookup(
+            row.maps_lookup_at,
+            force=force_maps,
+            max_age_days=maps_max_age_days,
+            cutoff_date=maps_cutoff_date,
+        )
+    ]
+    gemini_missing = [
+        str(row.fhrsid) for row in rows
+        if needs_gemini_profile(
+            row.has_profile,
+            row.gemini_profiled_at,
+            force=force_gemini,
+            max_age_days=gemini_max_age_days,
+            cutoff_date=gemini_cutoff_date,
+        )
+    ]
+    postcode_missing = [
+        str(row.fhrsid) for row in rows
+        if getattr(row, 'd_postcode', None) is None and getattr(row, 'postcode', None) is not None
+    ]
+
+    if maps_missing:
+        maps_force_regen = bool(
+            force_maps or maps_max_age_days is not None or maps_cutoff_date is not None
+        )
+        msg = f"🗺️ Regenerating Google Maps data for {len(maps_missing)} labeled restaurant(s)..."
+        logger.info(f"JIT: Found {len(maps_missing)} labeled restaurants needing Maps data. Triggering enrichment...")
+        if progress_callback:
+            progress_callback(msg)
+        from scripts.enrich_maps_data import enrich_restaurants_by_fhrsid
+        try:
+            if maps_force_regen:
+                updated_maps = enrich_restaurants_by_fhrsid(
+                    maps_missing, limit=len(maps_missing), force_regen=True
+                )
+            else:
+                updated_maps = enrich_restaurants_by_fhrsid(
+                    maps_missing, limit=len(maps_missing)
+                )
+        except PreFlightEnrichmentError:
+            raise
+        except Exception as e:
+            raise PreFlightEnrichmentError(
+                f"Maps enrichment failed before model training: {e}"
+            ) from e
+
+        if isinstance(updated_maps, int):
+            allowed_maps = max_allowed_enrichment_failures(len(maps_missing))
+            shortfall = len(maps_missing) - updated_maps
+            if shortfall > allowed_maps:
+                raise PreFlightEnrichmentError(
+                    f"Maps enrichment updated only {updated_maps}/{len(maps_missing)} "
+                    f"restaurants ({shortfall} unrefreshed, allowed <= {allowed_maps})."
+                )
+
+    if gemini_missing:
+        logger.info(f"JIT: Found {len(gemini_missing)} labeled restaurants needing Gemini insights. Triggering enrichment...")
+        if progress_callback:
+            progress_callback(
+                f"✨ Regenerating Gemini profiles for {len(gemini_missing)} labeled restaurant(s)..."
+            )
+        from app.services.bq_utils import execute_gemini_enrichment
+        try:
+            gemini_kwargs: dict[str, Any] = {"fhrsids": gemini_missing}
+            if progress_callback is not None:
+                gemini_kwargs["progress_callback"] = progress_callback
+            gemini_ok = execute_gemini_enrichment(
+                project_id, dataset_id, table_id, **gemini_kwargs
+            )
+        except PreFlightEnrichmentError:
+            raise
+        except Exception as e:
+            raise PreFlightEnrichmentError(
+                f"Gemini enrichment failed before model training: {e}"
+            ) from e
+        if gemini_ok is False:
+            raise PreFlightEnrichmentError(
+                f"Gemini enrichment failed or timed out for {len(gemini_missing)} "
+                f"labeled restaurant(s); aborting model training."
+            )
+
+    if postcode_missing:
+        logger.info("JIT: Found labeled restaurants missing postcode demographics. Triggering enrichment...")
+        if progress_callback:
+            progress_callback(
+                f"📮 Enriching UK postcode demographics for {len(postcode_missing)} restaurant(s)..."
+            )
+        from scripts.enrich_postcode_demographics import enrich_postcodes
+        try:
+            enriched_postcodes = enrich_postcodes(
+                project_id=project_id, dataset_id=dataset_id, master_table=table_id
+            )
+            if isinstance(enriched_postcodes, int) and enriched_postcodes > 0:
+                logger.info(f"JIT: Enriched {enriched_postcodes} new postcodes with demographic data.")
+        except PreFlightEnrichmentError:
+            raise
+        except Exception as e:
+            raise PreFlightEnrichmentError(
+                f"Postcode demographics enrichment failed before model training: {e}"
+            ) from e
+
+    if maps_missing or gemini_missing:
+        if progress_callback:
+            progress_callback("✅ Verifying regenerated profile freshness in BigQuery...")
+        try:
+            verify_results = _run_preflight_query(client, check_query)
+            post_rows = list(verify_results)
+        except StopIteration:
+            post_rows = []
+        except Exception as e:
+            raise PreFlightEnrichmentError(
+                f"Post-enrichment BigQuery verification failed or timed out: {e}"
+            ) from e
+
+        if post_rows:
+            verify_post_enrichment_rows(
+                post_rows,
+                maps_targeted_fhrsids=maps_missing,
+                gemini_targeted_fhrsids=gemini_missing,
+                started_at=started_at,
+                maps_max_age_days=maps_max_age_days,
+                maps_cutoff_date=maps_cutoff_date,
+                force_maps=force_maps,
+                gemini_max_age_days=gemini_max_age_days,
+                gemini_cutoff_date=gemini_cutoff_date,
+                force_gemini=force_gemini,
+            )
 
 
 def train_model(
@@ -144,6 +255,7 @@ def train_model(
     force_gemini: bool = False,
     gemini_max_age_days: Optional[int] = None,
     gemini_cutoff_date: Optional[Any] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ):
     """
     Constructs and executes a BQML model training query.
@@ -177,6 +289,7 @@ def train_model(
             force_gemini=force_gemini,
             gemini_max_age_days=gemini_max_age_days,
             gemini_cutoff_date=gemini_cutoff_date,
+            progress_callback=progress_callback,
         )
 
     # We omit BusinessType as it is not present in the BigQuery schema for fsa_master.
@@ -203,6 +316,8 @@ def train_model(
             logger.error(f"BigQuery validation failed: {e}")
             raise
     else:
+        if progress_callback:
+            progress_callback("🚀 Submitting BQML BOOSTED_TREE_REGRESSOR training job...")
         logger.info("Executing query. This may take 10-15 minutes for BOOSTED_TREE_REGRESSOR...")
         try:
             query_job = client.query(query)

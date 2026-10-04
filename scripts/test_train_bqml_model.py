@@ -289,3 +289,132 @@ class TestReadingBackAnAsyncJob:
 
         client.get_dataset.assert_called_once_with('p.d')
         assert client.get_job.call_args.kwargs['location'] == 'EU'
+
+
+class TestStrictPreFlightGateAndOrdering:
+    """Model training must only execute after Maps and Gemini profiles have
+    regenerated, and must abort rather than train on stale profiles if
+    regeneration fails, times out, or leaves >5% of target rows unrefreshed."""
+
+    @patch('app.services.bq_utils.execute_gemini_enrichment')
+    @patch('scripts.enrich_maps_data.enrich_restaurants_by_fhrsid')
+    @patch('scripts.train_bqml_model.bigquery.Client')
+    def test_maps_regeneration_always_runs_before_gemini_regeneration(
+        self, mock_bq, mock_maps, mock_gemini
+    ):
+        call_order = []
+        mock_maps.side_effect = lambda *a, **kw: (call_order.append('maps'), 1)[1]
+        mock_gemini.side_effect = lambda *a, **kw: (call_order.append('gemini'), True)[1]
+        mock_bq.return_value = _mock_client(
+            [DummyRow('1', maps_lookup_at=None, gemini_insights_structured=None, gemini_profiled_at=None)]
+        )
+
+        train_model('p', 'd', 't', 'm', dry_run=False)
+
+        assert call_order == ['maps', 'gemini']
+
+    @patch('app.services.bq_utils.execute_gemini_enrichment', return_value=False)
+    @patch('scripts.train_bqml_model.bigquery.Client')
+    def test_failed_gemini_enrichment_aborts_training_before_create_model(
+        self, mock_bq, mock_gemini
+    ):
+        import pytest
+        from app.core.profile_freshness import PreFlightEnrichmentError
+
+        client = _mock_client(
+            [DummyRow('1', gemini_insights_structured=None, gemini_profiled_at=None)]
+        )
+        mock_bq.return_value = client
+
+        with pytest.raises(PreFlightEnrichmentError, match="Gemini enrichment failed"):
+            train_model('p', 'd', 't', 'm', dry_run=False)
+
+        submitted = [c.args[0] for c in client.query.call_args_list]
+        assert not any('CREATE OR REPLACE MODEL' in q for q in submitted)
+
+    @patch('scripts.enrich_maps_data.enrich_restaurants_by_fhrsid', return_value=0)
+    @patch('scripts.train_bqml_model.bigquery.Client')
+    def test_failed_maps_enrichment_aborts_training_before_create_model(
+        self, mock_bq, mock_maps
+    ):
+        import pytest
+        from app.core.profile_freshness import PreFlightEnrichmentError
+
+        client = _mock_client([DummyRow('1', maps_lookup_at=None)])
+        mock_bq.return_value = client
+
+        with pytest.raises(PreFlightEnrichmentError, match="Maps enrichment updated only 0/1"):
+            train_model('p', 'd', 't', 'm', dry_run=False)
+
+        submitted = [c.args[0] for c in client.query.call_args_list]
+        assert not any('CREATE OR REPLACE MODEL' in q for q in submitted)
+
+    @patch('app.services.bq_utils.execute_gemini_enrichment', return_value=True)
+    @patch('scripts.train_bqml_model.bigquery.Client')
+    def test_post_enrichment_verification_aborts_when_over_5_percent_remain_stale(
+        self, mock_bq, mock_gemini
+    ):
+        import pytest
+        from app.core.profile_freshness import PreFlightEnrichmentError
+
+        # 20 rows missing profiles initially; after enrichment, 2 are still missing (10% > 5%)
+        initial_rows = [
+            DummyRow(str(i), gemini_insights_structured=None, gemini_profiled_at=None)
+            for i in range(20)
+        ]
+        post_rows = [
+            DummyRow(
+                str(i),
+                gemini_insights_structured=None if i < 2 else '{"match_score": 80}',
+                gemini_profiled_at=None if i < 2 else '2099-01-01 00:00:00+00:00',
+            )
+            for i in range(20)
+        ]
+        client = MagicMock()
+        check_job_1 = MagicMock()
+        check_job_1.result.return_value = initial_rows
+        check_job_2 = MagicMock()
+        check_job_2.result.return_value = post_rows
+        client.query.side_effect = [check_job_1, check_job_2, MagicMock()]
+        mock_bq.return_value = client
+
+        with pytest.raises(PreFlightEnrichmentError, match="2/20 targeted restaurants remain"):
+            train_model('p', 'd', 't', 'm', dry_run=False)
+
+        submitted = [c.args[0] for c in client.query.call_args_list]
+        assert not any('CREATE OR REPLACE MODEL' in q for q in submitted)
+
+    @patch('app.services.bq_utils.execute_gemini_enrichment', return_value=True)
+    @patch('scripts.train_bqml_model.bigquery.Client')
+    def test_post_enrichment_verification_passes_when_within_5_percent_tolerance(
+        self, mock_bq, mock_gemini
+    ):
+        # 20 rows missing profiles initially; after enrichment, only 1 is still missing (5% <= 5%)
+        initial_rows = [
+            DummyRow(str(i), gemini_insights_structured=None, gemini_profiled_at=None)
+            for i in range(20)
+        ]
+        post_rows = [
+            DummyRow(
+                str(i),
+                gemini_insights_structured=None if i == 0 else '{"match_score": 80}',
+                gemini_profiled_at=None if i == 0 else '2099-01-01 00:00:00+00:00',
+            )
+            for i in range(20)
+        ]
+        client = MagicMock()
+        check_job_1 = MagicMock()
+        check_job_1.result.return_value = initial_rows
+        check_job_2 = MagicMock()
+        check_job_2.result.return_value = post_rows
+        train_job = MagicMock()
+        train_job.job_id = 'trained-ok'
+        client.query.side_effect = [check_job_1, check_job_2, train_job]
+        mock_bq.return_value = client
+
+        job_id = train_model('p', 'd', 't', 'm', dry_run=False)
+
+        assert job_id == 'trained-ok'
+        submitted = [c.args[0] for c in client.query.call_args_list]
+        assert any('CREATE OR REPLACE MODEL' in q for q in submitted)
+

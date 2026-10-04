@@ -913,3 +913,101 @@ class TestAFailedReadIsNotAnEmptyResult(unittest.TestCase):
             load_filtered_data_from_bq('p', 'd', 't')
 
         self.assertIsNotNone(ctx.exception.__cause__)
+
+
+class TestGeminiChunkingTimeoutsAndMergeGate(unittest.TestCase):
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_large_fhrsids_list_is_chunked_into_bounded_batches_with_progress(self, mock_client_cls):
+        from app.services.bq_utils import execute_gemini_enrichment
+
+        mock_client = mock_client_cls.return_value
+        mock_job = MagicMock()
+        mock_client.query.return_value = mock_job
+
+        progress_msgs = []
+        fhrsids = [str(i) for i in range(60)]
+        ok = execute_gemini_enrichment(
+            project_id='p',
+            dataset_id='d',
+            master_table_id='t',
+            fhrsids=fhrsids,
+            batch_size=25,
+            progress_callback=progress_msgs.append,
+        )
+
+        self.assertTrue(ok)
+        # 60 rows / 25 per batch = 3 batches -> 3 progress messages and 6 temp tables dropped
+        self.assertEqual(len(progress_msgs), 3)
+        self.assertIn("batch 1/3 (25 restaurant(s))", progress_msgs[0])
+        self.assertIn("batch 3/3 (10 restaurant(s))", progress_msgs[2])
+        self.assertEqual(mock_client.delete_table.call_count, 6)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_stalled_gemini_query_times_out_and_cancels_bigquery_job(self, mock_client_cls):
+        from app.services.bq_utils import execute_gemini_enrichment
+
+        mock_client = mock_client_cls.return_value
+        recents_job = MagicMock()
+        stalled_insights_job = MagicMock()
+        stalled_insights_job.result.side_effect = TimeoutError("AI.GENERATE timed out after 180s")
+        mock_client.query.side_effect = [recents_job, stalled_insights_job]
+
+        ok = execute_gemini_enrichment(
+            project_id='p',
+            dataset_id='d',
+            master_table_id='t',
+            fhrsids=['1'],
+            query_timeout=180.0,
+        )
+
+        self.assertFalse(ok)
+        recents_job.result.assert_called_once_with(timeout=180.0)
+        stalled_insights_job.result.assert_called_once_with(timeout=180.0)
+        stalled_insights_job.cancel.assert_called_once()
+        self.assertEqual(mock_client.delete_table.call_count, 2)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_merge_shortfall_exceeding_5_percent_returns_false(self, mock_client_cls):
+        from app.services.bq_utils import execute_gemini_enrichment
+
+        mock_client = mock_client_cls.return_value
+        recents_job = MagicMock()
+        insights_job = MagicMock()
+        conformance_job = MagicMock()
+        conformance_job.result.return_value = []
+        merge_job = MagicMock()
+        # 20 targeted, only 18 merged (2 failed > 1 allowed) -> returns False
+        merge_job.num_dml_affected_rows = 18
+        mock_client.query.side_effect = [recents_job, insights_job, conformance_job, merge_job]
+
+        ok = execute_gemini_enrichment(
+            project_id='p',
+            dataset_id='d',
+            master_table_id='t',
+            fhrsids=[str(i) for i in range(20)],
+        )
+        self.assertFalse(ok)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_merge_shortfall_within_5_percent_tolerance_returns_true(self, mock_client_cls):
+        from app.services.bq_utils import execute_gemini_enrichment
+
+        mock_client = mock_client_cls.return_value
+        recents_job = MagicMock()
+        insights_job = MagicMock()
+        conformance_job = MagicMock()
+        conformance_job.result.return_value = []
+        merge_job = MagicMock()
+        # 20 targeted, 19 merged (1 failed <= 1 allowed) -> returns True
+        merge_job.num_dml_affected_rows = 19
+        mock_client.query.side_effect = [recents_job, insights_job, conformance_job, merge_job]
+
+        ok = execute_gemini_enrichment(
+            project_id='p',
+            dataset_id='d',
+            master_table_id='t',
+            fhrsids=[str(i) for i in range(20)],
+        )
+        self.assertTrue(ok)
+

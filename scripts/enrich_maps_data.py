@@ -4,15 +4,44 @@ from typing import List, Optional
 from google.cloud import bigquery
 import requests
 
+from app.core.profile_freshness import (
+    PreFlightEnrichmentError,
+    max_allowed_enrichment_failures,
+)
+
 BQ_PATH = os.environ.get("BQ_PATH", "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_master")
 API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
+
+MAPS_HTTP_TIMEOUT_SECONDS = 10
+MAPS_BQ_TIMEOUT_SECONDS = 60
 
 PL_MAP = {
     "PRICE_LEVEL_FREE": 0, "PRICE_LEVEL_INEXPENSIVE": 1, "PRICE_LEVEL_MODERATE": 2,
     "PRICE_LEVEL_EXPENSIVE": 3, "PRICE_LEVEL_VERY_EXPENSIVE": 4
 }
 
-def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int = 1000, force_regen: bool = False) -> int:
+
+def _run_bq_query(client: bigquery.Client, sql: str, timeout: float):
+    job = client.query(sql)
+    try:
+        return job.result(timeout=timeout)
+    except Exception:
+        try:
+            job.cancel()
+        except Exception:
+            pass
+        raise
+
+
+def enrich_restaurants_by_fhrsid(
+    fhrsids: Optional[List[str]] = None,
+    limit: int = 1000,
+    force_regen: bool = False,
+    *,
+    request_timeout: float = MAPS_HTTP_TIMEOUT_SECONDS,
+    bq_timeout: float = MAPS_BQ_TIMEOUT_SECONDS,
+    raise_on_error: bool = True,
+) -> int:
     project_id, dataset_id, table_id = BQ_PATH.split(".")
     client = bigquery.Client(project=project_id)
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
@@ -31,9 +60,11 @@ def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int
 
     query = f"SELECT fhrsid, BusinessName, PostCode, AddressLine1 FROM `{table_ref}` WHERE BusinessName IS NOT NULL {null_filter} {fhrsid_filter} LIMIT {limit}"
     try:
-        rows_to_update = list(client.query(query).result())
+        rows_to_update = list(_run_bq_query(client, query, timeout=bq_timeout))
     except Exception as e:
         print(f"Error fetching from BQ: {e}")
+        if raise_on_error:
+            raise PreFlightEnrichmentError(f"Maps BigQuery SELECT failed or timed out: {e}") from e
         return 0
 
     if not rows_to_update:
@@ -46,11 +77,22 @@ def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int
     }
 
     updates = []
+    http_failures = 0
+    last_http_error: Optional[str] = None
     for row in rows_to_update:
         search_query = f"{row.BusinessName} {row.PostCode}" if row.PostCode else f"{row.BusinessName} {row.AddressLine1}"
         try:
-            resp = requests.post(url, json={"textQuery": search_query}, headers=headers)
-            if resp.status_code == 200 and "places" in resp.json() and resp.json()["places"]:
+            resp = requests.post(
+                url,
+                json={"textQuery": search_query},
+                headers=headers,
+                timeout=request_timeout,
+            )
+            if resp.status_code >= 400:
+                http_failures += 1
+                last_http_error = f"HTTP {resp.status_code}"
+                print(f"Error fetching for {row.BusinessName}: HTTP {resp.status_code}")
+            elif resp.status_code == 200 and "places" in resp.json() and resp.json()["places"]:
                 p = resp.json()["places"][0]
                 pr = p.get("priceLevel")
                 pl = PL_MAP.get(pr, pr) if isinstance(pr, (str, int)) else None
@@ -70,9 +112,12 @@ def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int
                 # carries that second job on its own.
                 updates.append({"fhrsid": row.fhrsid, "price_level": None, "maps_rating": None, "maps_reviews": None, "latitude": None, "longitude": None, "maps_url": None, "business_status": None, "website_url": None, "maps_types": None, "maps_found": False})
         except Exception as e:
+            http_failures += 1
+            last_http_error = str(e)
             print(f"Error fetching for {row.BusinessName}: {e}")
         time.sleep(0.05)
 
+    allowed_failures = max_allowed_enrichment_failures(len(rows_to_update))
     if updates:
         for i in range(0, len(updates), 500):
             batch = updates[i:i + 500]
@@ -95,10 +140,20 @@ def enrich_restaurants_by_fhrsid(fhrsids: Optional[List[str]] = None, limit: int
             WHEN MATCHED THEN UPDATE SET price_level=S.price_level, maps_rating=S.maps_rating, maps_reviews=S.maps_reviews, latitude=IFNULL(S.latitude, T.latitude), longitude=IFNULL(S.longitude, T.longitude), maps_url=S.maps_url, business_status=S.business_status, website_url=S.website_url, maps_types=S.maps_types, maps_found=S.maps_found, maps_lookup_at=CURRENT_TIMESTAMP()
             """
             try:
-                client.query(merge_q).result()
+                _run_bq_query(client, merge_q, timeout=bq_timeout)
             except Exception as e:
                 print(f"Merge error: {e}")
+                if raise_on_error:
+                    raise PreFlightEnrichmentError(f"Maps BigQuery MERGE failed or timed out: {e}") from e
+
+    if raise_on_error and http_failures > allowed_failures:
+        raise PreFlightEnrichmentError(
+            f"Maps Places API failed for {http_failures}/{len(rows_to_update)} restaurants "
+            f"(allowed <= {allowed_failures}; last error: {last_http_error})."
+        )
+
     return len(updates)
 
 if __name__ == "__main__":
     enrich_restaurants_by_fhrsid()
+

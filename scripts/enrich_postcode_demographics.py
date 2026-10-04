@@ -5,10 +5,14 @@ from typing import List, Optional
 from google.cloud import bigquery
 import requests
 
+from app.core.profile_freshness import PreFlightEnrichmentError
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 POSTCODES_API_URL = "https://api.postcodes.io/postcodes"
+POSTCODES_HTTP_TIMEOUT_SECONDS = 10
+POSTCODES_BQ_TIMEOUT_SECONDS = 60
 DEFAULT_BQ_PATH = os.environ.get(
     "BQ_PATH", "filipegracio-ai-learning.filipegracio_fsa_restaurants.fsa_master"
 )
@@ -58,6 +62,7 @@ def ensure_demographics_table(
     table = bigquery.Table(table_ref, schema=schema)
     return client.create_table(table, exists_ok=True)
 
+
 def enrich_postcodes(
     project_id: Optional[str] = None,
     dataset_id: Optional[str] = None,
@@ -65,6 +70,10 @@ def enrich_postcodes(
     target_table: str = "uk_postcode_demographics",
     batch_size: int = 100,
     limit: Optional[int] = None,
+    *,
+    request_timeout: float = POSTCODES_HTTP_TIMEOUT_SECONDS,
+    bq_timeout: float = POSTCODES_BQ_TIMEOUT_SECONDS,
+    raise_on_error: bool = True,
 ) -> int:
     """
     Enriches missing postcodes from fsa_master using api.postcodes.io
@@ -86,11 +95,18 @@ def enrich_postcodes(
     # 2. Query missing postcodes from fsa_master, one per normalised key
     query = build_missing_postcodes_query(master_table_ref, target_table_ref, limit)
     logger.info("Checking for missing postcodes in master table...")
+    job = client.query(query)
     try:
-        results = client.query(query).result()
+        results = job.result(timeout=bq_timeout)
         missing_postcodes = [row.postcode.strip() for row in results if row.postcode]
     except Exception as e:
+        try:
+            job.cancel()
+        except Exception:
+            pass
         logger.error(f"Failed to query missing postcodes from BigQuery: {e}")
+        if raise_on_error:
+            raise PreFlightEnrichmentError(f"Postcode BigQuery SELECT failed or timed out: {e}") from e
         return 0
 
     if not missing_postcodes:
@@ -101,10 +117,15 @@ def enrich_postcodes(
 
     # 3. Batch fetch from api.postcodes.io
     rows_to_insert = []
+    batch_errors = []
     for i in range(0, len(missing_postcodes), batch_size):
         batch = missing_postcodes[i : i + batch_size]
         try:
-            response = requests.post(POSTCODES_API_URL, json={"postcodes": batch})
+            response = requests.post(
+                POSTCODES_API_URL,
+                json={"postcodes": batch},
+                timeout=request_timeout,
+            )
             if response.status_code == 200:
                 data = response.json()
                 for item in data.get("result", []):
@@ -127,21 +148,27 @@ def enrich_postcodes(
                             "admin_district": None,
                         })
             else:
-                logger.warning(
-                    f"api.postcodes.io returned status code {response.status_code} for batch {i}"
-                )
+                msg = f"api.postcodes.io returned status code {response.status_code} for batch {i}"
+                logger.warning(msg)
+                batch_errors.append(msg)
         except Exception as e:
-            logger.error(f"Error fetching batch {i} from api.postcodes.io: {e}")
+            msg = f"Error fetching batch {i} from api.postcodes.io: {e}"
+            logger.error(msg)
+            batch_errors.append(msg)
 
     # 4. Insert enriched rows into BigQuery target table
     if not rows_to_insert:
         logger.warning("No valid rows to insert.")
+        if batch_errors and raise_on_error:
+            raise PreFlightEnrichmentError(f"Postcode API enrichment failed: {batch_errors[0]}")
         return 0
 
     logger.info(f"Inserting {len(rows_to_insert)} enriched postcode rows into {target_table_ref}...")
     errors = client.insert_rows_json(target_table_ref, rows_to_insert)
     if errors:
         logger.error(f"Errors occurred while inserting rows: {errors}")
+        if raise_on_error:
+            raise PreFlightEnrichmentError(f"Postcode BigQuery insert failed: {errors}")
         return 0
 
     logger.info(f"Successfully enriched and stored {len(rows_to_insert)} postcodes.")

@@ -1,3 +1,4 @@
+import contextlib
 import datetime
 
 import streamlit as st
@@ -517,6 +518,19 @@ def format_freshness_breakdown(
     return banner
 
 
+@contextlib.contextmanager
+def _run_with_progress(label: str):
+    """Render an expandable live status container (or spinner fallback) and yield a progress callback."""
+    status_fn = getattr(st, "status", None)
+    if callable(status_fn):
+        with status_fn(label, expanded=True) as status_box:
+            write_fn = getattr(status_box, "write", None) or st.write
+            yield write_fn
+    else:
+        with st.spinner(label):
+            yield st.caption
+
+
 def render_model_training_tab(project_id: str, dataset_id: str, table_id: str):
     """Validate the training SQL, or train on it, and say which happened.
 
@@ -593,7 +607,7 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str):
 
     if st.button("🚀 Train BQML Model (Async)", disabled=bool(running), key="btn_train_model_unified"):
         try:
-            with st.spinner("Starting BQML model training..."):
+            with _run_with_progress("Regenerating profiles & starting BQML model training...") as progress_cb:
                 job_id = train_model(
                     project_id=project_id,
                     dataset_id=dataset_id,
@@ -601,6 +615,7 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str):
                     model_name=TRAINING_MODEL_NAME,
                     dry_run=False,
                     run_async=True,
+                    progress_callback=progress_cb,
                     **freshness_opts,
                 )
             st.session_state["training_job_id"] = job_id
@@ -984,12 +999,13 @@ def main():
                 
                 if st.button(f"⚡ Generate Predictions for {num_selected} Selected", type="primary", key="btn_gen_pred_selected"):
                     fhrsids = selected_rows[id_col].astype(str).tolist() if id_col else None
-                    with st.spinner(f"Generating ML predictions for {num_selected} restaurants..."):
+                    with _run_with_progress(f"Regenerating profiles & generating ML predictions for {num_selected} restaurant(s)...") as progress_cb:
                         success, msg = generate_predictions(
                             project_id, dataset_id, table_id,
                             "restaurant_preference_model",
                             limit=len(fhrsids) if fhrsids else 50,
                             target_fhrsids=fhrsids,
+                            progress_callback=progress_cb,
                             **pred_freshness_opts,
                         )
                         if success:
@@ -1079,12 +1095,13 @@ def main():
                     
                     if st.button(f"⚡ Score Top {num_candidates} Prioritized Restaurants", type="primary", key="btn_gen_pred_batch"):
                         target_ids = top_candidates[id_col].astype(str).tolist() if id_col else None
-                        with st.spinner(f"Generating ML predictions for top {num_candidates} prioritized restaurants..."):
+                        with _run_with_progress(f"Regenerating profiles & scoring top {num_candidates} prioritized restaurant(s)...") as progress_cb:
                             success, msg = generate_predictions(
                                 project_id, dataset_id, table_id,
                                 "restaurant_preference_model",
                                 limit=num_candidates,
                                 target_fhrsids=target_ids,
+                                progress_callback=progress_cb,
                                 **pred_freshness_opts,
                             )
                             if success:

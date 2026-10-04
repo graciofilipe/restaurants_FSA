@@ -1,16 +1,30 @@
 import logging
 from google.cloud import bigquery
-from typing import Any, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 from scripts.enrich_maps_data import enrich_restaurants_by_fhrsid
 from app.core.model_features import feature_select_list, feature_source_clause
 from app.core.profile_freshness import (
     GEMINI_PROFILE_MAX_AGE_DAYS,
+    max_allowed_enrichment_failures,
     needs_gemini_profile,
     needs_maps_lookup,
 )
 from app.services.bq_utils import execute_gemini_enrichment
 
 logger = logging.getLogger(__name__)
+
+PREDICTION_BQ_TIMEOUT_SECONDS = 60.0
+
+
+def _wait_for_prediction_job(job: Any, timeout: float = PREDICTION_BQ_TIMEOUT_SECONDS) -> Any:
+    try:
+        return job.result(timeout=timeout)
+    except Exception:
+        try:
+            job.cancel()
+        except Exception:
+            pass
+        raise
 
 
 def build_prediction_input_select(project_id: str, dataset_id: str, table_ref: str,
@@ -152,16 +166,20 @@ def generate_predictions(
     maps_cutoff_date: Optional[Any] = None,
     gemini_max_age_days: Optional[int] = GEMINI_PROFILE_MAX_AGE_DAYS,
     gemini_cutoff_date: Optional[Any] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> Tuple[bool, str]:
     client = bigquery.Client(project=project_id)
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
     model_ref = f"{project_id}.{dataset_id}.{model_name}"
 
+    if progress_callback:
+        progress_callback("🔎 Auditing freshness of target prediction batch...")
+
     # Step 1: Identify target batch
     find_query = build_find_query(project_id, dataset_id, table_id,
                                   target_fhrsids=target_fhrsids, limit=limit)
     try:
-        results = client.query(find_query).result()
+        results = _wait_for_prediction_job(client.query(find_query))
         rows = list(results)
         split = split_enrichment_targets(
             rows,
@@ -185,24 +203,40 @@ def generate_predictions(
     if not fhrsids:
         return True, "No pending restaurants require predictions."
 
-    # Step 2a: Auto-enrichment Maps
+    # Step 2a: Auto-enrichment Maps (must complete before Gemini and ML.PREDICT)
     if maps_missing_fhrsids:
         refreshed_maps = len(maps_missing_fhrsids) - min(never_maps, len(maps_missing_fhrsids))
         logger.info(
             f"Running maps enrichment for {len(maps_missing_fhrsids)} restaurants "
             f"({never_maps} never looked up, {refreshed_maps} stale or forced)."
         )
+        if progress_callback:
+            progress_callback(
+                f"🗺️ Regenerating Google Maps data for {len(maps_missing_fhrsids)} restaurant(s)..."
+            )
         maps_force_regen = bool(
             force_maps or maps_max_age_days is not None or maps_cutoff_date is not None
         )
         try:
-            enrich_restaurants_by_fhrsid(
+            updated_maps = enrich_restaurants_by_fhrsid(
                 maps_missing_fhrsids,
                 limit=len(maps_missing_fhrsids),
                 force_regen=maps_force_regen,
             )
         except Exception as e:
-            logger.warning(f"Maps Auto-enrichment encountered an error: {e}")
+            logger.error(f"Maps Auto-enrichment failed: {e}")
+            return False, f"Pre-prediction Maps enrichment failed: {e}"
+
+        if isinstance(updated_maps, int):
+            allowed_maps = max_allowed_enrichment_failures(len(maps_missing_fhrsids))
+            shortfall = len(maps_missing_fhrsids) - updated_maps
+            if shortfall > allowed_maps:
+                msg = (
+                    f"Pre-prediction Maps enrichment updated only {updated_maps}/{len(maps_missing_fhrsids)} "
+                    f"restaurants ({shortfall} unrefreshed, allowed <= {allowed_maps})."
+                )
+                logger.error(msg)
+                return False, msg
 
     # Step 2b: Auto-enrichment Gemini Insights
     if gemini_missing_fhrsids:
@@ -212,21 +246,46 @@ def generate_predictions(
         logger.info(
             f"Running Gemini enrichment for {len(gemini_missing_fhrsids)} restaurants "
             f"({never_profiled} never profiled, {refreshed} stale or forced).")
+        if progress_callback:
+            progress_callback(
+                f"✨ Regenerating Gemini profiles for {len(gemini_missing_fhrsids)} restaurant(s)..."
+            )
         try:
-            execute_gemini_enrichment(project_id, dataset_id, table_id, fhrsids=gemini_missing_fhrsids)
+            gemini_kwargs: dict[str, Any] = {"fhrsids": gemini_missing_fhrsids}
+            if progress_callback is not None:
+                gemini_kwargs["progress_callback"] = progress_callback
+            gemini_ok = execute_gemini_enrichment(
+                project_id, dataset_id, table_id, **gemini_kwargs
+            )
         except Exception as e:
-            logger.warning(f"Gemini Auto-enrichment encountered an error: {e}")
+            logger.error(f"Gemini Auto-enrichment failed: {e}")
+            return False, f"Pre-prediction Gemini enrichment failed: {e}"
+        if gemini_ok is False:
+            msg = (
+                f"Pre-prediction Gemini enrichment failed or timed out for "
+                f"{len(gemini_missing_fhrsids)} restaurant(s)."
+            )
+            logger.error(msg)
+            return False, msg
 
     # Step 2c: Auto-enrichment Postcode Demographics
     if postcodes_missing:
         logger.info(f"Running Postcode Demographics enrichment for {len(postcodes_missing)} restaurants.")
+        if progress_callback:
+            progress_callback(
+                f"📮 Enriching UK postcode demographics for {len(postcodes_missing)} restaurant(s)..."
+            )
         try:
             from scripts.enrich_postcode_demographics import enrich_postcodes
             enrich_postcodes(project_id=project_id, dataset_id=dataset_id, master_table=table_id)
         except Exception as e:
-            logger.warning(f"Postcode Demographics Auto-enrichment encountered an error: {e}")
+            logger.error(f"Postcode Demographics Auto-enrichment failed: {e}")
+            return False, f"Pre-prediction Postcode enrichment failed: {e}"
 
     # Step 3: Run Prediction
+    if progress_callback:
+        progress_callback(f"⚡ Scoring {len(fhrsids)} restaurant(s) via BigQuery ML.PREDICT...")
+
     escaped_ids = [fid.replace("'", "''") for fid in fhrsids]
     id_list_str = ", ".join([f"'{fid}'" for fid in escaped_ids])
 
@@ -248,7 +307,7 @@ def generate_predictions(
 
     try:
         job = client.query(predict_query)
-        job.result()
+        _wait_for_prediction_job(job)
         updated_rows = job.num_dml_affected_rows
         return True, f"Successfully predicted ratings for {updated_rows} restaurants."
     except Exception as e:

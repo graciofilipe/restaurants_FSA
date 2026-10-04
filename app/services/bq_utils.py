@@ -1,7 +1,7 @@
 import logging
 import re
 import uuid
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery, exceptions as google_cloud_exceptions
 import pandas as pd
@@ -11,6 +11,7 @@ from app.core.pillar_schema import (
     sql_conformance_check,
     summarise_conformance,
 )
+from app.core.profile_freshness import max_allowed_enrichment_failures
 from scripts.bq_scripts import (
     MODEL_PARAMS_JSON,
     SCRIPT_BULK_UPDATE_MERGE,
@@ -20,6 +21,9 @@ from scripts.bq_scripts import (
 )
 
 logger = logging.getLogger(__name__)
+
+GEMINI_ENRICHMENT_BATCH_SIZE = 25
+GEMINI_BQ_TIMEOUT_SECONDS = 180.0
 
 # The fields the weekly ingest copies out of an FSA establishment. Flat keys
 # only -- `process_and_update_master_data` copies by key, so `latitude` and
@@ -44,6 +48,21 @@ def _sql_quote(val: Any) -> str:
     s = str(val).replace("'", "''")
     return f"'{s}'"
 
+
+def _wait_for_job(job: Any, timeout: Optional[float] = GEMINI_BQ_TIMEOUT_SECONDS) -> Any:
+    """Wait for a BigQuery job with a hard timeout, cancelling the job if it stalls."""
+    try:
+        if timeout is not None:
+            return job.result(timeout=timeout)
+        return job.result()
+    except Exception:
+        try:
+            job.cancel()
+        except Exception:
+            pass
+        raise
+
+
 def log_insight_conformance(
     client: "bigquery.Client", project_id: str, dataset_id: str, insights_table_id: str
 ) -> Optional[Dict[str, Any]]:
@@ -61,7 +80,7 @@ def log_insight_conformance(
     """
     table_ref = f"{project_id}.{dataset_id}.{insights_table_id}"
     try:
-        rows = list(client.query(sql_conformance_check(table_ref)).result())
+        rows = list(client.query(sql_conformance_check(table_ref)).result(timeout=60))
         if not rows:
             return None
         row = dict(rows[0])
@@ -90,64 +109,108 @@ def execute_gemini_enrichment(
     days_recent: int = 33,
     excluded_locations: Optional[List[str]] = None,
     fhrsids: Optional[List[str]] = None,
+    *,
+    batch_size: int = GEMINI_ENRICHMENT_BATCH_SIZE,
+    query_timeout: Optional[float] = GEMINI_BQ_TIMEOUT_SECONDS,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> bool:
-    """Orchestrates the Gemini enrichment process using BigQuery SQL scripts."""
+    """Orchestrates the Gemini enrichment process using BigQuery SQL scripts.
+
+    When `fhrsids` exceeds `batch_size`, chunks execution into bounded batches
+    with a per-step `query_timeout` (cancelling stalled BigQuery jobs) and
+    verifies that at least 95% of targeted rows were merged.
+    """
     client = bigquery.Client(project=project_id)
-    # Per-run names: these scratch tables sit in the production dataset, and two
-    # overlapping runs sharing `recents` would each profile the other's selection.
-    run_id = uuid.uuid4().hex[:12]
-    recents_table_id, insights_table_id = f"recents_{run_id}", f"genairesults_temp_{run_id}"
-    try:
-        if fhrsids:
-            escaped = [_sql_quote(f) for f in fhrsids]
-            filter_condition = f"CAST(fhrsid AS STRING) IN ({', '.join(escaped)})"
-        else:
-            excl_clause = ""
-            if excluded_locations:
-                escaped_locs = [_sql_quote(l) for l in excluded_locations]
-                excl_clause = f"AND localauthorityname NOT IN ({', '.join(escaped_locs)})"
-            # `in_scope IS NOT FALSE`, not `IS TRUE`: every row arrives untriaged
-            # and profiling is usually what decides the question, so `IS TRUE`
-            # would mean a new restaurant is never looked at. What this does
-            # exclude is the already-answered no -- a cafe or a bakery, judged
-            # by triage or by an earlier profile, which there is no reason to
-            # pay to profile again. It replaces `manual_review IN (...)`, a
-            # free-text column whose dominant value is 'rejected' on 9,348 rows
-            # that are in scope.
-            filter_condition = f"DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent} AND in_scope IS NOT FALSE {excl_clause}"
+    effective_batch_size = max(1, int(batch_size))
+    if fhrsids:
+        batches: List[Optional[List[str]]] = [
+            fhrsids[i : i + effective_batch_size]
+            for i in range(0, len(fhrsids), effective_batch_size)
+        ]
+    else:
+        batches = [None]
 
-        q_recents = SCRIPT_IDENTIFY_RECENTS.format(
-            project_id=project_id, dataset_id=dataset_id, source_table=master_table_id,
-            target_table_recents=recents_table_id, filter_condition=filter_condition
-        )
-        client.query(q_recents).result()
+    total_merged = 0
+    tracked_dml_counts = False
 
-        q_insights = SCRIPT_GENERATE_INSIGHTS.format(
-            project_id=project_id, dataset_id=dataset_id, source_table_recents=recents_table_id,
-            target_table_insights=insights_table_id, connection_id=connection_id,
-            model_endpoint=model_endpoint, model_params_json=MODEL_PARAMS_JSON
-        )
-        client.query(q_insights).result()
+    for batch_idx, batch_ids in enumerate(batches, start=1):
+        # Per-run names: these scratch tables sit in the production dataset, and two
+        # overlapping runs sharing `recents` would each profile the other's selection.
+        run_id = uuid.uuid4().hex[:12]
+        recents_table_id, insights_table_id = f"recents_{run_id}", f"genairesults_temp_{run_id}"
+        try:
+            if batch_ids is not None:
+                if progress_callback:
+                    progress_callback(
+                        f"✨ Regenerating Gemini profiles: batch {batch_idx}/{len(batches)} "
+                        f"({len(batch_ids)} restaurant(s))..."
+                    )
+                escaped = [_sql_quote(f) for f in batch_ids]
+                filter_condition = f"CAST(fhrsid AS STRING) IN ({', '.join(escaped)})"
+            else:
+                if progress_callback:
+                    progress_callback("✨ Running Gemini enrichment for recent restaurants...")
+                excl_clause = ""
+                if excluded_locations:
+                    escaped_locs = [_sql_quote(l) for l in excluded_locations]
+                    excl_clause = f"AND localauthorityname NOT IN ({', '.join(escaped_locs)})"
+                # `in_scope IS NOT FALSE`, not `IS TRUE`: every row arrives untriaged
+                # and profiling is usually what decides the question, so `IS TRUE`
+                # would mean a new restaurant is never looked at. What this does
+                # exclude is the already-answered no -- a cafe or a bakery, judged
+                # by triage or by an earlier profile, which there is no reason to
+                # pay to profile again. It replaces `manual_review IN (...)`, a
+                # free-text column whose dominant value is 'rejected' on 9,348 rows
+                # that are in scope.
+                filter_condition = f"DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent} AND in_scope IS NOT FALSE {excl_clause}"
 
-        log_insight_conformance(client, project_id, dataset_id, insights_table_id)
+            q_recents = SCRIPT_IDENTIFY_RECENTS.format(
+                project_id=project_id, dataset_id=dataset_id, source_table=master_table_id,
+                target_table_recents=recents_table_id, filter_condition=filter_condition
+            )
+            _wait_for_job(client.query(q_recents), timeout=query_timeout)
 
-        q_merge = SCRIPT_MERGE_INSIGHTS.format(
-            project_id=project_id, dataset_id=dataset_id, source_table_insights=insights_table_id,
-            target_table_master=master_table_id
-        )
-        job = client.query(q_merge)
-        job.result()
-        return True
-    except Exception as e:
-        logger.error(f"Error during Gemini enrichment: {e}")
-        return False
-    finally:
-        for temp_table_id in (recents_table_id, insights_table_id):
-            try:
-                client.delete_table(f"{project_id}.{dataset_id}.{temp_table_id}", not_found_ok=True)
-            except Exception as e:
-                # The table expires on its own; a failed drop is not worth failing the run.
-                logger.warning(f"Could not drop temp table {temp_table_id}: {e}")
+            q_insights = SCRIPT_GENERATE_INSIGHTS.format(
+                project_id=project_id, dataset_id=dataset_id, source_table_recents=recents_table_id,
+                target_table_insights=insights_table_id, connection_id=connection_id,
+                model_endpoint=model_endpoint, model_params_json=MODEL_PARAMS_JSON
+            )
+            _wait_for_job(client.query(q_insights), timeout=query_timeout)
+
+            log_insight_conformance(client, project_id, dataset_id, insights_table_id)
+
+            q_merge = SCRIPT_MERGE_INSIGHTS.format(
+                project_id=project_id, dataset_id=dataset_id, source_table_insights=insights_table_id,
+                target_table_master=master_table_id
+            )
+            job = client.query(q_merge)
+            _wait_for_job(job, timeout=query_timeout)
+            dml_rows = getattr(job, "num_dml_affected_rows", None)
+            if isinstance(dml_rows, int):
+                tracked_dml_counts = True
+                total_merged += dml_rows
+        except Exception as e:
+            logger.error(f"Error during Gemini enrichment (batch {batch_idx}/{len(batches)}): {e}")
+            return False
+        finally:
+            for temp_table_id in (recents_table_id, insights_table_id):
+                try:
+                    client.delete_table(f"{project_id}.{dataset_id}.{temp_table_id}", not_found_ok=True)
+                except Exception as e:
+                    # The table expires on its own; a failed drop is not worth failing the run.
+                    logger.warning(f"Could not drop temp table {temp_table_id}: {e}")
+
+    if fhrsids and tracked_dml_counts:
+        allowed_failures = max_allowed_enrichment_failures(len(fhrsids))
+        shortfall = len(fhrsids) - total_merged
+        if shortfall > allowed_failures:
+            logger.error(
+                f"Gemini enrichment merged only {total_merged}/{len(fhrsids)} profiles "
+                f"({shortfall} failed/NULL, allowed <= {allowed_failures})."
+            )
+            return False
+
+    return True
 
 def load_fhrsids_from_bq(project_id: str, dataset_id: str, table_id: str) -> Set[str]:
     """Loads just the FHRSIDs from a table, for deduplicating an ingest.

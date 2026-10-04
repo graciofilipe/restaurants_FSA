@@ -260,6 +260,29 @@ class TestFreshnessControlsAndBreakdownInTrainingTab(ModelTrainingTabCase):
             f"Expected training breakdown banner in info messages, got: {infos}",
         )
 
+    def test_pressing_train_passes_callable_progress_callback(self):
+        _, train, _ = self._render(pressed={"btn_train_model_unified"})
+
+        self.assertIn("progress_callback", train.call_args.kwargs)
+        self.assertTrue(callable(train.call_args.kwargs["progress_callback"]))
+
+    def test_preflight_enrichment_error_surfaces_in_ui_and_starts_no_job(self):
+        from app.core.profile_freshness import PreFlightEnrichmentError
+
+        st, _, state = self._render(
+            pressed={"btn_train_model_unified"},
+            train_error=PreFlightEnrichmentError(
+                "Gemini enrichment failed or exceeded 5% tolerance before model training."
+            ),
+        )
+
+        self.assertIsNone(state.get("training_job_id"))
+        self.assertTrue(
+            any("exceeded 5% tolerance" in m for m in self._messages(st, "error")),
+            f"Expected PreFlightEnrichmentError message in st.error, got: {self._messages(st, 'error')}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
+

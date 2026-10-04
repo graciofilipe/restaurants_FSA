@@ -15,7 +15,8 @@ nothing today; the first sweep is a deliberate, budget-capped decision rather
 than something that happens the moment this lands.
 """
 import datetime
-from typing import Any, Iterable, Mapping, Optional
+import math
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 # Six months. A profile describes a restaurant's cuisine, menu language and
 # neighbourhood -- things that move on the scale of a refurbishment, not a
@@ -23,12 +24,19 @@ from typing import Any, Iterable, Mapping, Optional
 # a budget decision as much as a quality one.
 GEMINI_PROFILE_MAX_AGE_DAYS = 180
 MAPS_LOOKUP_MAX_AGE_DAYS = 60
+MAX_ENRICHMENT_FAILURE_RATIO = 0.05
 
 PROFILE_COLUMN = 'gemini_insights_structured'
 PROFILED_AT_COLUMN = 'gemini_profiled_at'
 MAPS_LOOKUP_AT_COLUMN = 'maps_lookup_at'
 
 _UTC = datetime.timezone.utc
+
+
+class PreFlightEnrichmentError(RuntimeError):
+    """Raised when pre-training or pre-prediction enrichment fails, times out,
+    or leaves more than the allowed tolerance of target rows unrefreshed."""
+
 
 
 def _is_missing(value: Any) -> bool:
@@ -218,3 +226,103 @@ def summarise_maps_freshness(
         'cached': total - to_refresh,
         'to_refresh': to_refresh,
     }
+
+
+def max_allowed_enrichment_failures(
+    total_targeted: int, max_failure_ratio: float = MAX_ENRICHMENT_FAILURE_RATIO
+) -> int:
+    """How many target rows may remain unrefreshed before aborting training/prediction.
+
+    Small targeted batches (`< 5` rows) require 100% success (`0` failures
+    allowed). Batches of `>= 5` rows tolerate up to `ceil(total_targeted * 0.05)`
+    transient row failures (e.g. 1 row out of 5-20, 5 rows out of 100).
+    """
+    if total_targeted < 5 or max_failure_ratio <= 0:
+        return 0
+    return math.ceil(total_targeted * max_failure_ratio)
+
+
+def _row_attr(row: Any, key: str, default: Any = None) -> Any:
+    if isinstance(row, Mapping):
+        return row.get(key, default)
+    return getattr(row, key, default)
+
+
+def verify_post_enrichment_rows(
+    rows: Iterable[Any],
+    *,
+    maps_targeted_fhrsids: Sequence[str] = (),
+    gemini_targeted_fhrsids: Sequence[str] = (),
+    started_at: Optional[datetime.datetime] = None,
+    maps_max_age_days: Optional[int] = None,
+    maps_cutoff_date: Optional[Any] = None,
+    force_maps: bool = False,
+    gemini_max_age_days: Optional[int] = None,
+    gemini_cutoff_date: Optional[Any] = None,
+    force_gemini: bool = False,
+    now: Optional[datetime.datetime] = None,
+    max_failure_ratio: float = MAX_ENRICHMENT_FAILURE_RATIO,
+) -> None:
+    """Verify that targeted Maps and Gemini rows were actually refreshed.
+
+    When `force_maps` or `force_gemini` is True, a row counts as refreshed if
+    its timestamp is at or after `started_at` (when provided). Otherwise, it
+    counts as refreshed if it no longer triggers `needs_maps_lookup` /
+    `needs_gemini_profile`. Raises `PreFlightEnrichmentError` if the number of
+    unrefreshed rows exceeds `max_allowed_enrichment_failures`.
+    """
+    row_by_id = {str(_row_attr(r, 'fhrsid')): r for r in rows if _row_attr(r, 'fhrsid') is not None}
+    if not row_by_id:
+        return
+
+    maps_effective_cutoff = started_at if (force_maps and started_at is not None) else maps_cutoff_date
+    gemini_effective_cutoff = started_at if (force_gemini and started_at is not None) else gemini_cutoff_date
+
+    if maps_targeted_fhrsids:
+        still_stale_maps = []
+        for fid in maps_targeted_fhrsids:
+            r = row_by_id.get(str(fid))
+            if r is None:
+                continue
+            if needs_maps_lookup(
+                _row_attr(r, MAPS_LOOKUP_AT_COLUMN),
+                force=False,
+                now=now,
+                max_age_days=maps_max_age_days,
+                cutoff_date=maps_effective_cutoff,
+            ):
+                still_stale_maps.append(str(fid))
+        allowed_maps = max_allowed_enrichment_failures(len(maps_targeted_fhrsids), max_failure_ratio)
+        if len(still_stale_maps) > allowed_maps:
+            sample = ", ".join(still_stale_maps[:5])
+            raise PreFlightEnrichmentError(
+                f"Maps enrichment verification failed: {len(still_stale_maps)}/{len(maps_targeted_fhrsids)} "
+                f"targeted restaurants remain unrefreshed (allowed <= {allowed_maps}; sample FHRSIDs: {sample})."
+            )
+
+    if gemini_targeted_fhrsids:
+        still_stale_gemini = []
+        for fid in gemini_targeted_fhrsids:
+            r = row_by_id.get(str(fid))
+            if r is None:
+                continue
+            row_has_prof = _row_attr(r, 'has_profile')
+            if row_has_prof is None:
+                row_has_prof = has_profile(_row_attr(r, PROFILE_COLUMN))
+            if needs_gemini_profile(
+                bool(row_has_prof),
+                _row_attr(r, PROFILED_AT_COLUMN),
+                force=False,
+                now=now,
+                max_age_days=gemini_max_age_days,
+                cutoff_date=gemini_effective_cutoff,
+            ):
+                still_stale_gemini.append(str(fid))
+        allowed_gemini = max_allowed_enrichment_failures(len(gemini_targeted_fhrsids), max_failure_ratio)
+        if len(still_stale_gemini) > allowed_gemini:
+            sample = ", ".join(still_stale_gemini[:5])
+            raise PreFlightEnrichmentError(
+                f"Gemini enrichment verification failed: {len(still_stale_gemini)}/{len(gemini_targeted_fhrsids)} "
+                f"targeted restaurants remain unprofiled or stale (allowed <= {allowed_gemini}; sample FHRSIDs: {sample})."
+            )
+

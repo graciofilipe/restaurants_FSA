@@ -386,3 +386,69 @@ class TestTheFindQueryReturnsOneRowPerRestaurant:
 
         assert 'LIMIT 50' in query
         assert query.upper().count('FROM `P.D.T`') == 1
+
+
+class TestPredictionPreFlightGateAndTimeout:
+    """Predictions must never run `ML.PREDICT` if Maps, Gemini, or Postcode
+    enrichment fails, and a stalled prediction query must be cancelled."""
+
+    @patch('app.services.ml_prediction.bigquery.Client')
+    @patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
+    @patch('app.services.ml_prediction.execute_gemini_enrichment')
+    def test_maps_enrichment_failure_aborts_before_ml_predict(self, mock_gemini, mock_maps, mock_bq):
+        from app.core.profile_freshness import PreFlightEnrichmentError
+
+        row = DummyRow('1', maps_rating=None, maps_lookup_at=None, gemini_insights_structured=None)
+        client = _mock_client([row])
+        mock_bq.return_value = client
+        mock_maps.side_effect = PreFlightEnrichmentError("Maps enrichment failed: 1/1 errors")
+
+        ok, msg = generate_predictions('p', 'd', 't', 'm', target_fhrsids=['1'])
+
+        assert ok is False
+        assert 'Pre-prediction Maps enrichment failed' in msg
+        mock_gemini.assert_not_called()
+        assert client.query.call_count == 1  # Only find_query ran, never ML.PREDICT
+
+    @patch('app.services.ml_prediction.bigquery.Client')
+    @patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
+    @patch('app.services.ml_prediction.execute_gemini_enrichment')
+    def test_gemini_enrichment_failure_aborts_before_ml_predict(self, mock_gemini, mock_maps, mock_bq):
+        row = DummyRow('1', gemini_insights_structured=None)
+        client = _mock_client([row])
+        mock_bq.return_value = client
+        mock_gemini.return_value = False
+
+        ok, msg = generate_predictions('p', 'd', 't', 'm', target_fhrsids=['1'])
+
+        assert ok is False
+        assert 'Pre-prediction Gemini enrichment failed' in msg
+        assert client.query.call_count == 1  # Only find_query ran, never ML.PREDICT
+
+    @patch('app.services.ml_prediction.bigquery.Client')
+    @patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
+    @patch('app.services.ml_prediction.execute_gemini_enrichment')
+    def test_prediction_job_timeout_cancels_bq_job(self, mock_gemini, mock_maps, mock_bq):
+        row = DummyRow('1', gemini_insights_structured='{"match_score": 80}')
+        client = MagicMock()
+        find_job = MagicMock()
+        find_job.result.return_value = [row]
+        predict_job = MagicMock()
+        predict_job.result.side_effect = TimeoutError("Prediction query timed out")
+        client.query.side_effect = [find_job, predict_job]
+        mock_bq.return_value = client
+
+        progress_messages = []
+        ok, msg = generate_predictions(
+            'p', 'd', 't', 'm',
+            target_fhrsids=['1'],
+            progress_callback=progress_messages.append,
+        )
+
+        assert ok is False
+        assert 'Prediction query timed out' in msg
+        predict_job.cancel.assert_called_once()
+        assert any('Auditing freshness of target prediction batch' in m for m in progress_messages)
+        assert any('Scoring 1 restaurant(s) via BigQuery ML.PREDICT' in m for m in progress_messages)
+
+

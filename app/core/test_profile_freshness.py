@@ -231,5 +231,83 @@ class TestBothSurfacesUseIt(unittest.TestCase):
         self.assertNotIn('row.gemini_insights_structured is None', source)
 
 
+class TestPostEnrichmentVerificationGate(unittest.TestCase):
+
+    def test_max_allowed_failures_enforces_zero_for_small_batches_and_5_percent_for_larger(self):
+        from app.core.profile_freshness import max_allowed_enrichment_failures
+
+        self.assertEqual(max_allowed_enrichment_failures(1), 0)
+        self.assertEqual(max_allowed_enrichment_failures(4), 0)
+        self.assertEqual(max_allowed_enrichment_failures(5), 1)
+        self.assertEqual(max_allowed_enrichment_failures(20), 1)
+        self.assertEqual(max_allowed_enrichment_failures(21), 2)
+        self.assertEqual(max_allowed_enrichment_failures(100), 5)
+
+    def test_verify_post_enrichment_rows_raises_when_single_target_fails(self):
+        from app.core.profile_freshness import (
+            PreFlightEnrichmentError,
+            verify_post_enrichment_rows,
+        )
+
+        rows = [{'fhrsid': '1', 'has_profile': False, 'gemini_profiled_at': None}]
+        with self.assertRaises(PreFlightEnrichmentError):
+            verify_post_enrichment_rows(rows, gemini_targeted_fhrsids=['1'], now=NOW)
+
+    def test_verify_post_enrichment_rows_tolerates_1_of_20_failures_but_rejects_2_of_20(self):
+        from app.core.profile_freshness import (
+            PreFlightEnrichmentError,
+            verify_post_enrichment_rows,
+        )
+
+        ids = [str(i) for i in range(20)]
+        rows_1_failed = [
+            {
+                'fhrsid': str(i),
+                'has_profile': i != 0,
+                'gemini_profiled_at': days_ago(0) if i != 0 else None,
+            }
+            for i in range(20)
+        ]
+        verify_post_enrichment_rows(rows_1_failed, gemini_targeted_fhrsids=ids, now=NOW)
+
+        rows_2_failed = [
+            {
+                'fhrsid': str(i),
+                'has_profile': i >= 2,
+                'gemini_profiled_at': days_ago(0) if i >= 2 else None,
+            }
+            for i in range(20)
+        ]
+        with self.assertRaises(PreFlightEnrichmentError):
+            verify_post_enrichment_rows(rows_2_failed, gemini_targeted_fhrsids=ids, now=NOW)
+
+    def test_verify_post_enrichment_rows_checks_started_at_when_force_is_true(self):
+        from app.core.profile_freshness import (
+            PreFlightEnrichmentError,
+            verify_post_enrichment_rows,
+        )
+
+        # Row has a profile from yesterday, but force_gemini=True started at NOW
+        stale_for_force = [{'fhrsid': '1', 'has_profile': True, 'gemini_profiled_at': days_ago(1)}]
+        with self.assertRaises(PreFlightEnrichmentError):
+            verify_post_enrichment_rows(
+                stale_for_force,
+                gemini_targeted_fhrsids=['1'],
+                force_gemini=True,
+                started_at=NOW,
+                now=NOW,
+            )
+
+        # Once stamped at NOW, force verification passes
+        fresh_for_force = [{'fhrsid': '1', 'has_profile': True, 'gemini_profiled_at': NOW}]
+        verify_post_enrichment_rows(
+            fresh_for_force,
+            gemini_targeted_fhrsids=['1'],
+            force_gemini=True,
+            started_at=NOW,
+            now=NOW,
+        )
+
+
 if __name__ == '__main__':
     unittest.main()
