@@ -937,10 +937,12 @@ class TestGeminiChunkingTimeoutsAndMergeGate(unittest.TestCase):
         )
 
         self.assertTrue(ok)
-        # 60 rows / 25 per batch = 3 batches -> 3 progress messages and 6 temp tables dropped
-        self.assertEqual(len(progress_msgs), 3)
-        self.assertIn("batch 1/3 (25 restaurant(s))", progress_msgs[0])
-        self.assertIn("batch 3/3 (10 restaurant(s))", progress_msgs[2])
+        # 60 rows / 25 per batch = 3 batches -> 3 start messages + 3 merge completion messages = 6 messages, and 6 temp tables dropped
+        self.assertEqual(len(progress_msgs), 6)
+        self.assertIn("batch 1/3 (25 restaurant(s), rows 1–25 of 60)", progress_msgs[0])
+        self.assertIn("Gemini batch 1/3 merged:", progress_msgs[1])
+        self.assertIn("batch 3/3 (10 restaurant(s), rows 51–60 of 60)", progress_msgs[4])
+        self.assertIn("Gemini batch 3/3 merged:", progress_msgs[5])
         self.assertEqual(mock_client.delete_table.call_count, 6)
 
     @patch('app.services.bq_utils.bigquery.Client')

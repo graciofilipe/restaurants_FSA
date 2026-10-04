@@ -133,6 +133,15 @@ def run_jit_preflight(
         if getattr(row, 'd_postcode', None) is None and getattr(row, 'postcode', None) is not None
     ]
 
+    if progress_callback:
+        gemini_batches = (len(gemini_missing) + 24) // 25
+        progress_callback(
+            f"📋 Audit complete ({len(rows)} labeled restaurant(s)): "
+            f"{len(maps_missing)} Maps lookups · "
+            f"{len(gemini_missing)} Gemini profiles ({gemini_batches} batch(es) of 25) · "
+            f"{len(postcode_missing)} Postcode lookups."
+        )
+
     if maps_missing:
         maps_force_regen = bool(
             force_maps or maps_max_age_days is not None or maps_cutoff_date is not None
@@ -143,14 +152,14 @@ def run_jit_preflight(
             progress_callback(msg)
         from scripts.enrich_maps_data import enrich_restaurants_by_fhrsid
         try:
+            maps_kwargs: dict[str, Any] = {"limit": len(maps_missing)}
             if maps_force_regen:
-                updated_maps = enrich_restaurants_by_fhrsid(
-                    maps_missing, limit=len(maps_missing), force_regen=True
-                )
-            else:
-                updated_maps = enrich_restaurants_by_fhrsid(
-                    maps_missing, limit=len(maps_missing)
-                )
+                maps_kwargs["force_regen"] = True
+            if progress_callback is not None:
+                maps_kwargs["progress_callback"] = progress_callback
+            updated_maps = enrich_restaurants_by_fhrsid(
+                maps_missing, **maps_kwargs
+            )
         except PreFlightEnrichmentError:
             raise
         except Exception as e:

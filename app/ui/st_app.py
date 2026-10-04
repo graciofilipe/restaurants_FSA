@@ -1,5 +1,8 @@
 import contextlib
 import datetime
+import re
+import time
+from typing import Optional
 
 import streamlit as st
 import pandas as pd
@@ -525,17 +528,194 @@ def format_freshness_breakdown(
     return banner
 
 
+def _estimate_progress_fraction(msg: str, current_pct: float = 0.02) -> float:
+    """Map a live pipeline telemetry message onto a monotonic [0.02, 1.0] progress fraction."""
+    pct = current_pct
+    if "Auditing freshness" in msg:
+        pct = max(pct, 0.05)
+    elif "Audit complete" in msg:
+        pct = max(pct, 0.10)
+    elif "Regenerating Google Maps" in msg or "Google Maps data: all" in msg:
+        pct = max(pct, 0.12)
+    elif "Maps lookup " in msg or "Merged Maps batch" in msg:
+        m = re.search(r"\((\d+)/(\d+) complete\)", msg) or re.search(r"Maps lookup (\d+)/(\d+)", msg)
+        if m:
+            done, total = int(m.group(1)), max(1, int(m.group(2)))
+            pct = max(pct, 0.12 + 0.33 * min(1.0, done / total))
+        else:
+            pct = max(pct, 0.25)
+    elif "Gemini batch " in msg and "merged:" in msg:
+        m = re.search(r"batch (\d+)/(\d+)", msg)
+        if m:
+            b_idx, b_total = int(m.group(1)), max(1, int(m.group(2)))
+            pct = max(pct, 0.45 + 0.43 * min(1.0, b_idx / b_total))
+        else:
+            pct = max(pct, 0.70)
+    elif "Regenerating Gemini profiles" in msg or "Gemini profiles: all" in msg:
+        m = re.search(r"batch (\d+)/(\d+)", msg)
+        if m:
+            b_idx, b_total = int(m.group(1)), max(1, int(m.group(2)))
+            pct = max(pct, 0.45 + 0.43 * min(1.0, (b_idx - 0.5) / b_total))
+        else:
+            pct = max(pct, 0.45)
+    elif "Enriching UK postcode" in msg:
+        pct = max(pct, 0.90)
+    elif "Verifying regenerated profile" in msg or "Scoring " in msg or "Submitting BQML" in msg:
+        pct = max(pct, 0.94)
+    elif "Scored and updated" in msg:
+        pct = 1.0
+    return min(1.0, max(0.0, pct))
+
+
 @contextlib.contextmanager
-def _run_with_progress(label: str):
-    """Render an expandable live status container (or spinner fallback) and yield a progress callback."""
+def _run_with_progress(label: str, log_state_key: Optional[str] = None):
+    """Render an expandable live status container with a progress bar and streaming timestamped log console."""
+    start_mono = time.monotonic()
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    log_lines = [f"[{now_utc.strftime('%H:%M:%S')} +0.0s] 🚀 Started: {label}"]
+    state_obj = getattr(st, "session_state", None)
+    log_entry = {
+        "title": label,
+        "lines": log_lines,
+        "started_at": now_utc.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "finished_at": None,
+        "status": "running",
+        "summary": None,
+        "just_completed": False,
+    }
+    if log_state_key and isinstance(state_obj, dict):
+        state_obj[log_state_key] = log_entry
+
     status_fn = getattr(st, "status", None)
-    if callable(status_fn):
-        with status_fn(label, expanded=True) as status_box:
-            write_fn = getattr(status_box, "write", None) or st.write
-            yield write_fn
-    else:
-        with st.spinner(label):
-            yield st.caption
+    cm = status_fn(label, expanded=True) if callable(status_fn) else st.spinner(label)
+    with cm as status_box:
+        progress_bar = None
+        log_console = None
+        if callable(getattr(st, "progress", None)):
+            try:
+                progress_bar = st.progress(0.02, text=f"Starting: {label}")
+            except Exception:
+                progress_bar = None
+        if callable(getattr(st, "empty", None)):
+            try:
+                log_console = st.empty()
+                if hasattr(log_console, "code"):
+                    log_console.code("\n".join(log_lines), language="text")
+            except Exception:
+                log_console = None
+
+        current_pct = 0.02
+        fallback_write = getattr(status_box, "write", None) or getattr(st, "write", None)
+
+        def _emit(msg: str) -> None:
+            nonlocal current_pct
+            elapsed = time.monotonic() - start_mono
+            ts_str = datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S")
+            stamped = f"[{ts_str} +{elapsed:.1f}s] {msg}"
+            log_lines.append(stamped)
+            current_pct = _estimate_progress_fraction(msg, current_pct)
+            if progress_bar is not None and hasattr(progress_bar, "progress"):
+                try:
+                    progress_bar.progress(current_pct, text=msg)
+                except Exception:
+                    pass
+            if log_console is not None and hasattr(log_console, "code"):
+                try:
+                    log_console.code("\n".join(log_lines), language="text")
+                    return
+                except Exception:
+                    pass
+            if callable(fallback_write):
+                fallback_write(stamped)
+
+        try:
+            yield _emit
+        except BaseException as exc:
+            elapsed = time.monotonic() - start_mono
+            ts_str = datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S")
+            log_lines.append(
+                f"[{ts_str} +{elapsed:.1f}s] ⚠️ Run interrupted or failed ({type(exc).__name__}): {exc}"
+            )
+            log_entry["finished_at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            log_entry["status"] = "error"
+            log_entry["summary"] = str(exc)
+            if log_console is not None and hasattr(log_console, "code"):
+                try:
+                    log_console.code("\n".join(log_lines), language="text")
+                except Exception:
+                    pass
+            raise
+        else:
+            elapsed = time.monotonic() - start_mono
+            log_entry["finished_at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            if log_entry["status"] == "running":
+                log_entry["status"] = "success"
+            if progress_bar is not None and hasattr(progress_bar, "progress"):
+                try:
+                    progress_bar.progress(1.0, text=f"Completed in {elapsed:.1f}s")
+                except Exception:
+                    pass
+            if status_box is not None and hasattr(status_box, "update"):
+                try:
+                    status_box.update(label=f"✅ {label} ({elapsed:.1f}s)", state="complete", expanded=True)
+                except Exception:
+                    pass
+
+
+def _finalize_run_log(
+    log_state_key: str,
+    success: bool,
+    summary: str,
+    *,
+    before_rerun: bool = False,
+) -> None:
+    state_obj = getattr(st, "session_state", None)
+    if not isinstance(state_obj, dict):
+        return
+    entry = state_obj.get(log_state_key)
+    if not isinstance(entry, dict):
+        return
+    ts_str = datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S")
+    icon = "🏁" if success else "❌"
+    entry["lines"].append(f"[{ts_str}] {icon} {summary}")
+    entry["status"] = "success" if success else "error"
+    entry["summary"] = summary
+    entry["finished_at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    entry["just_completed"] = bool(before_rerun)
+
+
+def render_persistent_run_log(log_state_key: str, clear_key: str) -> None:
+    """Render the persisted execution log from the most recent scoring or training run."""
+    state_obj = getattr(st, "session_state", None)
+    if not isinstance(state_obj, dict):
+        return
+    entry = state_obj.get(log_state_key)
+    if not isinstance(entry, dict) or not entry.get("lines"):
+        return
+
+    just_completed = bool(entry.get("just_completed", False))
+    entry["just_completed"] = False
+    status = entry.get("status", "success")
+    summary = entry.get("summary")
+    finished_at = entry.get("finished_at") or entry.get("started_at") or "in progress"
+    lines = entry.get("lines", [])
+
+    if just_completed and summary:
+        if status == "success":
+            st.success(summary)
+        elif status == "error":
+            st.error(summary)
+
+    icon = "✅" if status == "success" else ("❌" if status == "error" else "⏳")
+    header = f"📋 Last Run Execution Log — {icon} {finished_at} ({len(lines)} event(s))"
+    with st.expander(header, expanded=just_completed or status == "error"):
+        if summary:
+            st.caption(f"**Result:** {summary}")
+        st.code("\n".join(lines), language="text")
+        if st.button("🗑️ Clear Execution Log", key=clear_key):
+            state_obj.pop(log_state_key, None)
+            st.rerun()
+
 
 
 @st.cache_data(ttl=300)
@@ -741,7 +921,10 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str, d
 
     if st.button("🚀 Train BQML Model (Async)", disabled=bool(running), key="btn_train_model_unified"):
         try:
-            with _run_with_progress("Regenerating profiles & starting BQML model training...") as progress_cb:
+            with _run_with_progress(
+                "Regenerating profiles & starting BQML model training...",
+                log_state_key="last_training_log",
+            ) as progress_cb:
                 job_id = train_model(
                     project_id=project_id,
                     dataset_id=dataset_id,
@@ -752,12 +935,15 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str, d
                     progress_callback=progress_cb,
                     **freshness_opts,
                 )
+            _finalize_run_log("last_training_log", True, f"Started model training. Job ID: {job_id}")
             st.session_state["training_job_id"] = job_id
             st.session_state.pop("training_last_outcome", None)
             st.success(f"Started model training. Job ID: {job_id}")
         except Exception as e:
+            _finalize_run_log("last_training_log", False, f"Failed to start training: {e}")
             st.error(f"Failed to start training: {e}")
 
+    render_persistent_run_log("last_training_log", "btn_clear_train_log")
     render_feature_importance_section(diagnostics=diagnostics)
 
 
@@ -1134,6 +1320,7 @@ def main():
         with tab_predictions:
             st.subheader("ML Predictions & Auto-Enrichment")
             st.caption("Generate preference ratings using BigQuery ML with automatic Maps & Gemini enrichment.")
+            render_persistent_run_log("last_prediction_log", "btn_clear_pred_log")
 
             pred_freshness_opts = render_freshness_controls(
                 key_prefix="pred",
@@ -1149,7 +1336,10 @@ def main():
                 
                 if st.button(f"⚡ Generate Predictions for {num_selected} Selected", type="primary", key="btn_gen_pred_selected"):
                     fhrsids = selected_rows[id_col].astype(str).tolist() if id_col else None
-                    with _run_with_progress(f"Regenerating profiles & generating ML predictions for {num_selected} restaurant(s)...") as progress_cb:
+                    with _run_with_progress(
+                        f"Regenerating profiles & generating ML predictions for {num_selected} restaurant(s)...",
+                        log_state_key="last_prediction_log",
+                    ) as progress_cb:
                         success, msg = generate_predictions(
                             project_id, dataset_id, table_id,
                             "restaurant_preference_model",
@@ -1158,6 +1348,7 @@ def main():
                             progress_callback=progress_cb,
                             **pred_freshness_opts,
                         )
+                        _finalize_run_log("last_prediction_log", success, msg, before_rerun=success)
                         if success:
                             clear_diagnostics_cache()
                             st.success(msg)
@@ -1246,7 +1437,10 @@ def main():
                     
                     if st.button(f"⚡ Score Top {num_candidates} Prioritized Restaurants", type="primary", key="btn_gen_pred_batch"):
                         target_ids = top_candidates[id_col].astype(str).tolist() if id_col else None
-                        with _run_with_progress(f"Regenerating profiles & scoring top {num_candidates} prioritized restaurant(s)...") as progress_cb:
+                        with _run_with_progress(
+                            f"Regenerating profiles & scoring top {num_candidates} prioritized restaurant(s)...",
+                            log_state_key="last_prediction_log",
+                        ) as progress_cb:
                             success, msg = generate_predictions(
                                 project_id, dataset_id, table_id,
                                 "restaurant_preference_model",
@@ -1255,6 +1449,7 @@ def main():
                                 progress_callback=progress_cb,
                                 **pred_freshness_opts,
                             )
+                            _finalize_run_log("last_prediction_log", success, msg, before_rerun=success)
                             if success:
                                 clear_diagnostics_cache()
                                 st.success(msg)

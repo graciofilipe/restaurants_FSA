@@ -105,7 +105,63 @@ class TestSystemStampAndDiagnosticsUi(unittest.TestCase):
             content,
         )
 
+    def test_estimate_progress_fraction_advances_monotonically_across_stages(self):
+        from app.ui import st_app
+
+        pct = 0.02
+        pct = st_app._estimate_progress_fraction("🔎 Auditing freshness of target prediction batch...", pct)
+        self.assertAlmostEqual(pct, 0.05)
+        pct = st_app._estimate_progress_fraction("📋 Audit complete (200 target restaurant(s))...", pct)
+        self.assertAlmostEqual(pct, 0.10)
+        pct = st_app._estimate_progress_fraction("🗺️ Maps lookup 100/200 (50%): 90 found...", pct)
+        self.assertAlmostEqual(pct, 0.285)
+        pct = st_app._estimate_progress_fraction("💾 Merged Maps batch to BigQuery (200/200 complete)", pct)
+        self.assertAlmostEqual(pct, 0.45)
+        pct = st_app._estimate_progress_fraction("✅ Gemini batch 2/4 merged: 25 row(s) updated in 14.2s", pct)
+        self.assertAlmostEqual(pct, 0.665)
+        pct = st_app._estimate_progress_fraction("⚡ Scoring 200 restaurant(s) via BigQuery ML.PREDICT...", pct)
+        self.assertAlmostEqual(pct, 0.94)
+        pct = st_app._estimate_progress_fraction("✅ Scored and updated 200 restaurant(s) in BigQuery.", pct)
+        self.assertAlmostEqual(pct, 1.0)
+
+    def test_run_with_progress_streams_timestamped_lines_and_persists_across_rerun(self):
+        from app.ui import st_app
+
+        state = {}
+        with patch.object(st_app, "st") as mock_st:
+            mock_st.session_state = state
+            mock_bar = MagicMock()
+            mock_console = MagicMock()
+            mock_st.progress.return_value = mock_bar
+            mock_st.empty.return_value = mock_console
+
+            with st_app._run_with_progress("Scoring 50 restaurants...", log_state_key="last_prediction_log") as cb:
+                cb("🔎 Auditing freshness of target prediction batch...")
+                cb("🗺️ Maps lookup 10/50 (20%): 9 found, 1 not found — latest: Pho House (4.7★)")
+            st_app._finalize_run_log(
+                "last_prediction_log",
+                True,
+                "Successfully predicted ratings for 50 restaurants.",
+                before_rerun=True,
+            )
+
+            self.assertIn("last_prediction_log", state)
+            entry = state["last_prediction_log"]
+            self.assertEqual(entry["status"], "success")
+            self.assertTrue(entry["just_completed"])
+            self.assertEqual(len(entry["lines"]), 4)
+            self.assertTrue(any("Pho House (4.7★)" in line for line in entry["lines"]))
+            self.assertTrue(mock_console.code.called)
+            self.assertTrue(mock_bar.progress.called)
+
+            # Simulate next rerun after st.rerun()
+            mock_st.button.return_value = False
+            st_app.render_persistent_run_log("last_prediction_log", "btn_clear_pred_log")
+            mock_st.success.assert_called_once_with("Successfully predicted ratings for 50 restaurants.")
+            self.assertFalse(state["last_prediction_log"]["just_completed"])
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

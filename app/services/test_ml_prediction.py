@@ -449,6 +449,30 @@ class TestPredictionPreFlightGateAndTimeout:
         assert 'Prediction query timed out' in msg
         predict_job.cancel.assert_called_once()
         assert any('Auditing freshness of target prediction batch' in m for m in progress_messages)
+        assert any('Audit complete (1 target restaurant(s))' in m for m in progress_messages)
         assert any('Scoring 1 restaurant(s) via BigQuery ML.PREDICT' in m for m in progress_messages)
+
+    @patch('app.services.ml_prediction.bigquery.Client')
+    @patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid', return_value=1)
+    @patch('app.services.ml_prediction.execute_gemini_enrichment', return_value=True)
+    def test_progress_callback_emits_audit_summary_and_forwards_to_maps_and_gemini(
+        self, mock_gemini, mock_maps, mock_bq
+    ):
+        row = DummyRow('1', maps_rating=None, maps_lookup_at=None, gemini_insights_structured=None)
+        mock_bq.return_value = _mock_client([row])
+
+        progress_messages = []
+        ok, msg = generate_predictions(
+            'p', 'd', 't', 'm',
+            target_fhrsids=['1'],
+            progress_callback=progress_messages.append,
+        )
+
+        assert ok is True
+        assert mock_maps.call_args.kwargs.get('progress_callback') == progress_messages.append
+        assert mock_gemini.call_args.kwargs.get('progress_callback') == progress_messages.append
+        assert any('Audit complete (1 target restaurant(s)): 1 Maps lookups · 1 Gemini profiles (1 batch(es) of 25) · 0 Postcode lookups' in m for m in progress_messages)
+        assert any('Scored and updated' in m for m in progress_messages)
+
 
 

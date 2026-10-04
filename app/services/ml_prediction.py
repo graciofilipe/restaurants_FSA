@@ -203,6 +203,15 @@ def generate_predictions(
     if not fhrsids:
         return True, "No pending restaurants require predictions."
 
+    if progress_callback:
+        gemini_batches = (len(gemini_missing_fhrsids) + 24) // 25
+        progress_callback(
+            f"📋 Audit complete ({len(fhrsids)} target restaurant(s)): "
+            f"{len(maps_missing_fhrsids)} Maps lookups · "
+            f"{len(gemini_missing_fhrsids)} Gemini profiles ({gemini_batches} batch(es) of 25) · "
+            f"{len(postcodes_missing)} Postcode lookups."
+        )
+
     # Step 2a: Auto-enrichment Maps (must complete before Gemini and ML.PREDICT)
     if maps_missing_fhrsids:
         refreshed_maps = len(maps_missing_fhrsids) - min(never_maps, len(maps_missing_fhrsids))
@@ -212,16 +221,22 @@ def generate_predictions(
         )
         if progress_callback:
             progress_callback(
-                f"🗺️ Regenerating Google Maps data for {len(maps_missing_fhrsids)} restaurant(s)..."
+                f"🗺️ Regenerating Google Maps data for {len(maps_missing_fhrsids)} restaurant(s) "
+                f"({never_maps} missing, {refreshed_maps} stale/forced)..."
             )
         maps_force_regen = bool(
             force_maps or maps_max_age_days is not None or maps_cutoff_date is not None
         )
         try:
+            maps_kwargs: dict[str, Any] = {
+                "limit": len(maps_missing_fhrsids),
+                "force_regen": maps_force_regen,
+            }
+            if progress_callback is not None:
+                maps_kwargs["progress_callback"] = progress_callback
             updated_maps = enrich_restaurants_by_fhrsid(
                 maps_missing_fhrsids,
-                limit=len(maps_missing_fhrsids),
-                force_regen=maps_force_regen,
+                **maps_kwargs,
             )
         except Exception as e:
             logger.error(f"Maps Auto-enrichment failed: {e}")
@@ -237,18 +252,24 @@ def generate_predictions(
                 )
                 logger.error(msg)
                 return False, msg
+    elif progress_callback:
+        progress_callback(
+            f"🗺️ Google Maps data: all {len(fhrsids)} target restaurant(s) are already fresh (0 to regenerate)."
+        )
 
     # Step 2b: Auto-enrichment Gemini Insights
     if gemini_missing_fhrsids:
         # Split the count: a refresh of an existing profile is a cost decision,
         # and it should be visible in the log that one happened.
         refreshed = len(gemini_missing_fhrsids) - min(never_profiled, len(gemini_missing_fhrsids))
+        gemini_batches = (len(gemini_missing_fhrsids) + 24) // 25
         logger.info(
             f"Running Gemini enrichment for {len(gemini_missing_fhrsids)} restaurants "
             f"({never_profiled} never profiled, {refreshed} stale or forced).")
         if progress_callback:
             progress_callback(
-                f"✨ Regenerating Gemini profiles for {len(gemini_missing_fhrsids)} restaurant(s)..."
+                f"✨ Regenerating Gemini profiles for {len(gemini_missing_fhrsids)} restaurant(s) "
+                f"across {gemini_batches} batch(es) ({never_profiled} missing, {refreshed} stale/forced)..."
             )
         try:
             gemini_kwargs: dict[str, Any] = {"fhrsids": gemini_missing_fhrsids}
@@ -267,6 +288,10 @@ def generate_predictions(
             )
             logger.error(msg)
             return False, msg
+    elif progress_callback:
+        progress_callback(
+            f"✨ Gemini profiles: all {len(fhrsids)} target restaurant(s) are already fresh (0 to regenerate)."
+        )
 
     # Step 2c: Auto-enrichment Postcode Demographics
     if postcodes_missing:
@@ -309,6 +334,8 @@ def generate_predictions(
         job = client.query(predict_query)
         _wait_for_prediction_job(job)
         updated_rows = job.num_dml_affected_rows
+        if progress_callback:
+            progress_callback(f"✅ Scored and updated {updated_rows} restaurant(s) in BigQuery.")
         return True, f"Successfully predicted ratings for {updated_rows} restaurants."
     except Exception as e:
         logger.error(f"Prediction failed: {e}")

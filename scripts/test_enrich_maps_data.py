@@ -211,3 +211,39 @@ def test_places_http_failure_within_5_percent_tolerance_succeeds(mock_bq, mock_p
     updated = enrich_restaurants_by_fhrsid(fhrsids=[str(i) for i in range(20)])
     assert updated == 19
 
+
+@patch('scripts.enrich_maps_data.time.sleep')
+@patch('scripts.enrich_maps_data.requests.post')
+@patch('scripts.enrich_maps_data.bigquery.Client')
+def test_progress_callback_emits_every_10_rows_and_flushes_every_50_rows(mock_bq, mock_post, _sleep):
+    rows = [DummyRow(str(i), BusinessName=f"Resto {i}") for i in range(120)]
+    client = MagicMock()
+    select_job = MagicMock()
+    select_job.result.return_value = rows
+    # 1 SELECT + 3 MERGE batches (50 + 50 + 20)
+    client.query.side_effect = [select_job, MagicMock(), MagicMock(), MagicMock()]
+    mock_bq.return_value = client
+    mock_post.return_value = _response({"places": [{"rating": 4.6, "userRatingCount": 42}]})
+
+    msgs = []
+    updated = enrich_restaurants_by_fhrsid(
+        fhrsids=[str(i) for i in range(120)],
+        progress_callback=msgs.append,
+    )
+
+    assert updated == 120
+    # 1 SELECT + 3 MERGE queries
+    assert client.query.call_count == 4
+    lookup_msgs = [m for m in msgs if "Maps lookup " in m]
+    merge_msgs = [m for m in msgs if "Merged Maps batch to BigQuery" in m]
+    # 120 / 10 = 12 lookup progress messages
+    assert len(lookup_msgs) == 12
+    assert "Maps lookup 10/120" in lookup_msgs[0]
+    assert "Resto 9 (4.6★)" in lookup_msgs[0]
+    assert "Maps lookup 120/120 (100%)" in lookup_msgs[-1]
+    # 3 incremental MERGE confirmations (50/120, 100/120, 120/120)
+    assert len(merge_msgs) == 3
+    assert "(50/120 complete)" in merge_msgs[0]
+    assert "(100/120 complete)" in merge_msgs[1]
+    assert "(120/120 complete)" in merge_msgs[2]
+

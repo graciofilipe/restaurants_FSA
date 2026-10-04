@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from google.auth.exceptions import DefaultCredentialsError
@@ -138,12 +139,16 @@ def execute_gemini_enrichment(
         # overlapping runs sharing `recents` would each profile the other's selection.
         run_id = uuid.uuid4().hex[:12]
         recents_table_id, insights_table_id = f"recents_{run_id}", f"genairesults_temp_{run_id}"
+        batch_start_ts = time.monotonic()
         try:
             if batch_ids is not None:
+                start_row = (batch_idx - 1) * effective_batch_size + 1
+                end_row = start_row + len(batch_ids) - 1
+                total_target = len(fhrsids) if fhrsids else len(batch_ids)
                 if progress_callback:
                     progress_callback(
                         f"✨ Regenerating Gemini profiles: batch {batch_idx}/{len(batches)} "
-                        f"({len(batch_ids)} restaurant(s))..."
+                        f"({len(batch_ids)} restaurant(s), rows {start_row}–{end_row} of {total_target})..."
                     )
                 escaped = [_sql_quote(f) for f in batch_ids]
                 filter_condition = f"CAST(fhrsid AS STRING) IN ({', '.join(escaped)})"
@@ -189,6 +194,16 @@ def execute_gemini_enrichment(
             if isinstance(dml_rows, int):
                 tracked_dml_counts = True
                 total_merged += dml_rows
+                merged_in_batch = dml_rows
+            else:
+                merged_in_batch = len(batch_ids) if batch_ids is not None else 0
+            batch_elapsed = time.monotonic() - batch_start_ts
+            if progress_callback and batch_ids is not None:
+                total_target = len(fhrsids) if fhrsids else len(batch_ids)
+                done_count = total_merged if tracked_dml_counts else min(total_target, batch_idx * effective_batch_size)
+                progress_callback(
+                    f"✅ Gemini batch {batch_idx}/{len(batches)} merged: {merged_in_batch} row(s) updated in {batch_elapsed:.1f}s ({done_count}/{total_target} complete)"
+                )
         except Exception as e:
             logger.error(f"Error during Gemini enrichment (batch {batch_idx}/{len(batches)}): {e}")
             return False
