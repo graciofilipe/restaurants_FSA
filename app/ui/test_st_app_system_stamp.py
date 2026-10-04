@@ -97,6 +97,15 @@ class TestSystemStampAndDiagnosticsUi(unittest.TestCase):
         df_rendered = mock_st.dataframe.call_args.args[0]
         self.assertEqual(list(df_rendered["feature"]), ["maps_types_array", "match_score"])
 
+    def test_batch_size_slider_allows_up_to_1000(self):
+        with open("app/ui/st_app.py", "r") as f:
+            content = f.read()
+        self.assertIn(
+            'st.slider("Batch Size (Budget of Restaurants to Score)", min_value=5, max_value=1000, value=25, step=5, key="batch_pred_limit")',
+            content,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
+

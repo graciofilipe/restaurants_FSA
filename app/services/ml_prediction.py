@@ -13,7 +13,7 @@ from app.services.bq_utils import execute_gemini_enrichment
 
 logger = logging.getLogger(__name__)
 
-PREDICTION_BQ_TIMEOUT_SECONDS = 60.0
+PREDICTION_BQ_TIMEOUT_SECONDS = 180.0
 
 
 def _wait_for_prediction_job(job: Any, timeout: float = PREDICTION_BQ_TIMEOUT_SECONDS) -> Any:

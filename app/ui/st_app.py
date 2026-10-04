@@ -1159,6 +1159,7 @@ def main():
                             **pred_freshness_opts,
                         )
                         if success:
+                            clear_diagnostics_cache()
                             st.success(msg)
                             load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
                             st.rerun()
@@ -1220,7 +1221,7 @@ def main():
 
                 df_ranked = df_candidates.sort_values(by="priority_score", ascending=False)
 
-                batch_limit = st.slider("Batch Size (Budget of Restaurants to Score)", min_value=5, max_value=100, value=25, step=5, key="batch_pred_limit")
+                batch_limit = st.slider("Batch Size (Budget of Restaurants to Score)", min_value=5, max_value=1000, value=25, step=5, key="batch_pred_limit")
 
                 top_candidates = df_ranked.head(batch_limit)
                 num_candidates = len(top_candidates)
@@ -1255,6 +1256,7 @@ def main():
                                 **pred_freshness_opts,
                             )
                             if success:
+                                clear_diagnostics_cache()
                                 st.success(msg)
                                 load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
                                 st.rerun()
