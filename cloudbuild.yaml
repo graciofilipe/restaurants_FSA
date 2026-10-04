@@ -13,16 +13,21 @@ steps:
         # unnoticed (D11).
         python -m pytest
 
-  # Step 2: Build Docker image
+  # Step 2: Build Docker image with commit and UTC build timestamp stamps
   - name: 'gcr.io/cloud-builders/docker'
     id: 'build-image'
+    entrypoint: 'bash'
     args:
-      - 'build'
-      - '-t'
-      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$COMMIT_SHA'
-      - '-t'
-      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:latest'
-      - '.'
+      - '-c'
+      - |
+        BUILD_TS=$$(date -u +"%Y-%m-%d %H:%M UTC")
+        docker build \
+          --build-arg COMMIT_SHA=$COMMIT_SHA \
+          --build-arg BUILD_TIMESTAMP="$$BUILD_TS" \
+          -t "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$COMMIT_SHA" \
+          -t "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:latest" \
+          .
+
 
   # Step 3: Push Docker image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'

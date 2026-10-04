@@ -8,6 +8,7 @@ from app.services.bq_utils import (
     get_distinct_outcodes,
     load_filtered_data_from_bq,
     bulk_update_reviews,
+    fetch_system_diagnostics,
 )
 from app.services.ml_prediction import generate_predictions
 from app.core.data_processing import (
@@ -23,6 +24,12 @@ from app.core.profile_freshness import (
     count_needing_maps_lookup,
     summarise_gemini_freshness,
     summarise_maps_freshness,
+)
+from app.core.system_stamp import (
+    format_relative_age,
+    format_timestamp_utc,
+    format_top_status_bar,
+    get_runtime_build_stamp,
 )
 
 st.set_page_config(page_title="FSA Restaurant Explorer", layout="wide")
@@ -531,7 +538,132 @@ def _run_with_progress(label: str):
             yield st.caption
 
 
-def render_model_training_tab(project_id: str, dataset_id: str, table_id: str):
+@st.cache_data(ttl=300)
+def get_cached_system_diagnostics(project_id: str, dataset_id: str, table_id: str, model_name: str = TRAINING_MODEL_NAME):
+    return fetch_system_diagnostics(project_id, dataset_id, table_id, model_name=model_name)
+
+
+def clear_diagnostics_cache():
+    try:
+        get_cached_system_diagnostics.clear()
+    except Exception:
+        pass
+    if hasattr(st, "session_state") and isinstance(st.session_state, dict):
+        st.session_state.pop("system_diagnostics", None)
+
+
+def render_system_status_bar(diagnostics=None):
+    """Render the compact 1-line deployment, model, and drift status bar under the title."""
+    runtime_stamp = get_runtime_build_stamp()
+    st.caption(format_top_status_bar(runtime_stamp, diagnostics))
+
+
+def render_feature_importance_section(diagnostics=None):
+    """Render the BigQuery-persisted Model Feature Importance table in the Model Training tab."""
+    diag = diagnostics if diagnostics is not None else (
+        st.session_state.get("system_diagnostics") if isinstance(getattr(st, "session_state", None), dict) else None
+    )
+    if not diag:
+        return
+    rows = diag.get("feature_importance") or []
+    if not rows:
+        return
+
+    st.divider()
+    ver = diag.get("vertex_version")
+    trained_str = format_timestamp_utc(diag.get("model_trained_at"))
+    ver_label = f"v{ver} · " if ver else ""
+    st.subheader(f"📊 Model Feature Importance ({ver_label}Trained {trained_str})")
+    st.caption(
+        "Generated once per trained model via `ML.FEATURE_IMPORTANCE` and saved in BigQuery "
+        "(`model_feature_importance`)."
+    )
+    df_fi = pd.DataFrame(rows)
+    display_cols = [
+        c for c in ("feature", "gain_pct", "importance_gain", "importance_weight", "importance_cover")
+        if c in df_fi.columns
+    ]
+    st.dataframe(df_fi[display_cols], hide_index=True, use_container_width=True)
+
+
+def render_sidebar_diagnostics(
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    model_name: str = TRAINING_MODEL_NAME,
+    diagnostics=None,
+):
+    """Render the collapsible System & Pipeline Diagnostics panel in the sidebar."""
+    runtime_stamp = get_runtime_build_stamp()
+    diag = diagnostics or {}
+
+    with st.expander("🩺 System & Pipeline Diagnostics", expanded=False):
+        if st.button("🔄 Refresh Diagnostics", key="btn_refresh_diagnostics", use_container_width=True):
+            clear_diagnostics_cache()
+            st.rerun()
+
+        st.markdown("**🚀 Build & Runtime**")
+        st.caption(
+            f"- **Deployed / Built:** {runtime_stamp['build_timestamp']}\n"
+            f"- **Commit / Revision:** `{runtime_stamp['commit_sha']}` · `{runtime_stamp['revision']}`\n"
+            f"- **Gemini Standard:** `gemini-3.8-flash`"
+        )
+
+        st.markdown("**🧠 BQML Model (`restaurant_preference_model`)**")
+        if diag.get("model_trained_at") is not None:
+            trained_str = format_timestamp_utc(diag.get("model_trained_at"))
+            age_str = format_relative_age(diag.get("model_trained_at"))
+            ver = diag.get("vertex_version") or "n/a"
+            mae = diag.get("mae")
+            r2 = diag.get("r_squared")
+            iters = diag.get("iterations")
+            feats = diag.get("feature_count")
+            mae_str = f"{mae:.3f}" if isinstance(mae, (int, float)) else "n/a"
+            r2_str = f"{r2:.3f}" if isinstance(r2, (int, float)) else "n/a"
+            st.caption(
+                f"- **Trained At:** {trained_str} ({age_str})\n"
+                f"- **Vertex Version:** `v{ver}` ({feats or '?'} features, {iters or '?'} trees)\n"
+                f"- **Eval Metrics:** MAE `{mae_str}` · R² `{r2_str}`"
+            )
+        else:
+            st.caption("- Model metadata unavailable")
+
+        st.markdown("**🎯 Model-vs-Prediction Drift (In-Scope)**")
+        if diag.get("in_scope_rows") is not None:
+            st.caption(
+                f"- **Current Model Predictions:** {int(diag.get('current_predictions', 0)):,}\n"
+                f"- **Stale Predictions (Pre-Train):** {int(diag.get('stale_predictions', 0)):,}\n"
+                f"- **Unscored In-Scope:** {int(diag.get('unscored_in_scope', 0)):,}\n"
+                f"- **Labeled Ground Truth:** {int(diag.get('labeled_rows', 0)):,} rated"
+            )
+
+        st.markdown("**📥 Data & Enrichment Freshness**")
+        if diag.get("table_modified_at") is not None or diag.get("latest_first_seen"):
+            tbl_mod = format_timestamp_utc(diag.get("table_modified_at"))
+            old_gem = format_timestamp_utc(diag.get("oldest_gemini_at"))
+            new_gem = format_timestamp_utc(diag.get("newest_gemini_at"))
+            old_maps = format_timestamp_utc(diag.get("oldest_maps_at"))
+            new_maps = format_timestamp_utc(diag.get("newest_maps_at"))
+            st.caption(
+                f"- **Table Modified:** {tbl_mod}\n"
+                f"- **Newest FSA Ingest (`first_seen`):** {diag.get('latest_first_seen', 'unknown')}\n"
+                f"- **Gemini Profiled (In-Scope):** {int(diag.get('gemini_profiled_in_scope', 0)):,} "
+                f"(`{old_gem[:10]}` → `{new_gem[:10]}`)\n"
+                f"- **Maps Checked (In-Scope):** {int(diag.get('maps_checked_in_scope', 0)):,} "
+                f"(`{old_maps[:10]}` → `{new_maps[:10]}`)"
+            )
+
+        fi_rows = diag.get("feature_importance") or []
+        if fi_rows:
+            st.markdown("**📊 Top 5 Model Features (`gain_pct`)**")
+            top_lines = "\n".join(
+                f"- `{r.get('feature')}`: **{r.get('gain_pct', 0):.1f}%** (gain {r.get('importance_gain', 0):.1f})"
+                for r in fi_rows[:5]
+            )
+            st.caption(top_lines)
+
+
+def render_model_training_tab(project_id: str, dataset_id: str, table_id: str, diagnostics=None):
     """Validate the training SQL, or train on it, and say which happened.
 
     Extracted from `main` so the three D-28 defects on it are testable: the tab
@@ -575,6 +707,8 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str):
         if status and status["state"] == "DONE":
             st.session_state["training_last_outcome"] = {"job_id": tracked, "error": status["error"]}
             st.session_state.pop("training_job_id", None)
+            if not status["error"]:
+                clear_diagnostics_cache()
 
     running = st.session_state.get("training_job_id")
     outcome = st.session_state.get("training_last_outcome")
@@ -624,6 +758,8 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str):
         except Exception as e:
             st.error(f"Failed to start training: {e}")
 
+    render_feature_importance_section(diagnostics=diagnostics)
+
 
 def main():
     st.title("🍔 FSA Restaurant Explorer & Scoring Engine")
@@ -637,6 +773,15 @@ def main():
     # offer this as an editable box whose value was never read.
     bq_path = DEFAULT_BQ_PATH
     project_id, dataset_id, table_id = bq_path.split('.')
+
+    try:
+        system_diagnostics = get_cached_system_diagnostics(
+            project_id, dataset_id, table_id, TRAINING_MODEL_NAME
+        )
+    except Exception:
+        system_diagnostics = {}
+    st.session_state["system_diagnostics"] = system_diagnostics
+    render_system_status_bar(system_diagnostics)
 
     # --- Sidebar Filters ---
     with st.sidebar:
@@ -747,6 +892,11 @@ def main():
             options=list(SORT_OPTIONS),
             index=0,
             key="slicer_sort_by"
+        )
+
+        st.divider()
+        render_sidebar_diagnostics(
+            project_id, dataset_id, table_id, TRAINING_MODEL_NAME, system_diagnostics
         )
 
     # --- Main Interface ---

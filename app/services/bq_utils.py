@@ -444,6 +444,208 @@ def get_distinct_outcodes(project_id: str, dataset_id: str, table_id: str) -> Li
         logger.error(f"Error fetching outcodes: {e}")
         raise BigQueryExecutionError(f"Could not load outcodes from {table_ref}: {e}") from e
 
+
+FEATURE_IMPORTANCE_TABLE_ID = "model_feature_importance"
+
+
+def _to_utc_dt(val: Any) -> Optional[ Any ]:
+    import datetime as _dt
+    if val is None:
+        return None
+    if isinstance(val, _dt.datetime):
+        return val.replace(tzinfo=_dt.timezone.utc) if val.tzinfo is None else val.astimezone(_dt.timezone.utc)
+    if isinstance(val, str):
+        try:
+            parsed = _dt.datetime.fromisoformat(val.strip().replace("Z", "+00:00"))
+            return parsed.replace(tzinfo=_dt.timezone.utc) if parsed.tzinfo is None else parsed.astimezone(_dt.timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def ensure_model_feature_importance(
+    project_id: str,
+    dataset_id: str,
+    model_name: str = "restaurant_preference_model",
+    model_trained_at: Any = None,
+    vertex_version: Optional[str] = None,
+    client: Optional["bigquery.Client"] = None,
+) -> List[Dict[str, Any]]:
+    """Return the latest model's feature importance, generating and saving it in
+    BigQuery (`model_feature_importance`) at most once per trained model version.
+    """
+    bq_client = client or bigquery.Client(project=project_id)
+    fi_table_ref = f"{project_id}.{dataset_id}.{FEATURE_IMPORTANCE_TABLE_ID}"
+    model_ref = f"{project_id}.{dataset_id}.{model_name}"
+    expected_dt = _to_utc_dt(model_trained_at)
+
+    read_sql = f"""
+    SELECT
+      model_name,
+      model_trained_at,
+      vertex_version,
+      feature,
+      importance_weight,
+      importance_gain,
+      importance_cover,
+      gain_pct,
+      computed_at
+    FROM `{fi_table_ref}`
+    ORDER BY importance_gain DESC
+    """
+    try:
+        existing_rows = [dict(r) for r in _wait_for_job(bq_client.query(read_sql), timeout=30.0)]
+        if existing_rows:
+            stored_dt = _to_utc_dt(existing_rows[0].get("model_trained_at"))
+            if expected_dt is None or (
+                stored_dt is not None and abs((expected_dt - stored_dt).total_seconds()) < 2.0
+            ):
+                return existing_rows
+    except Exception:
+        # Table does not exist yet or schema changed; regenerate below.
+        pass
+
+    trained_iso = expected_dt.strftime("%Y-%m-%d %H:%M:%S+00:00") if expected_dt else "1970-01-01 00:00:00+00:00"
+    ver_literal = _sql_quote(vertex_version or "")
+    model_literal = _sql_quote(model_name)
+
+    materialize_sql = f"""
+    CREATE OR REPLACE TABLE `{fi_table_ref}` AS
+    SELECT
+      {model_literal} AS model_name,
+      TIMESTAMP('{trained_iso}') AS model_trained_at,
+      {ver_literal} AS vertex_version,
+      CAST(feature AS STRING) AS feature,
+      CAST(importance_weight AS INT64) AS importance_weight,
+      CAST(importance_gain AS FLOAT64) AS importance_gain,
+      CAST(importance_cover AS FLOAT64) AS importance_cover,
+      ROUND(100.0 * SAFE_DIVIDE(importance_gain, SUM(importance_gain) OVER ()), 2) AS gain_pct,
+      CURRENT_TIMESTAMP() AS computed_at
+    FROM ML.FEATURE_IMPORTANCE(MODEL `{model_ref}`)
+    ORDER BY importance_gain DESC
+    """
+    try:
+        _wait_for_job(bq_client.query(materialize_sql), timeout=60.0)
+        return [dict(r) for r in _wait_for_job(bq_client.query(read_sql), timeout=30.0)]
+    except Exception as e:
+        logger.warning(f"Could not materialize or read model feature importance for {model_ref}: {e}")
+        return []
+
+
+def fetch_system_diagnostics(
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    model_name: str = "restaurant_preference_model",
+) -> Dict[str, Any]:
+    """Fetch live model training metadata, table metadata, prediction drift,
+    enrichment freshness ranges, and once-per-model feature importance."""
+    diag: Dict[str, Any] = {
+        "model_name": model_name,
+        "model_trained_at": None,
+        "vertex_version": None,
+        "model_type": None,
+        "feature_count": None,
+        "mae": None,
+        "r_squared": None,
+        "iterations": None,
+        "table_modified_at": None,
+        "table_total_rows": None,
+        "feature_importance": [],
+    }
+    try:
+        client = bigquery.Client(project=project_id)
+    except Exception as e:
+        diag["error"] = str(e)
+        return diag
+
+    model_ref = f"{project_id}.{dataset_id}.{model_name}"
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+
+    # 1. Free BQML Model Metadata Read (0 bytes scanned)
+    try:
+        model = client.get_model(model_ref)
+        diag["model_trained_at"] = getattr(model, "created", None)
+        diag["model_type"] = getattr(model, "model_type", None)
+        feature_cols = getattr(model, "feature_columns", None)
+        if feature_cols is not None:
+            diag["feature_count"] = len(feature_cols)
+
+        props = getattr(model, "_properties", {}) or {}
+        runs = props.get("trainingRuns") or getattr(model, "training_runs", None) or []
+        if runs:
+            latest_run = runs[-1] if isinstance(runs[-1], dict) else {}
+            diag["vertex_version"] = latest_run.get("vertexAiModelVersion")
+            reg_metrics = (
+                (latest_run.get("evaluationMetrics") or {}).get("regressionMetrics") or {}
+            )
+            if "meanAbsoluteError" in reg_metrics:
+                diag["mae"] = float(reg_metrics["meanAbsoluteError"])
+            if "rSquared" in reg_metrics:
+                diag["r_squared"] = float(reg_metrics["rSquared"])
+            results = latest_run.get("results") or []
+            if results:
+                diag["iterations"] = len(results)
+    except Exception as e:
+        logger.warning(f"Could not read model metadata for {model_ref}: {e}")
+
+    # 2. Free Table Metadata Read (0 bytes scanned)
+    try:
+        table = client.get_table(table_ref)
+        diag["table_modified_at"] = getattr(table, "modified", None)
+        diag["table_total_rows"] = getattr(table, "num_rows", None)
+    except Exception as e:
+        logger.warning(f"Could not read table metadata for {table_ref}: {e}")
+
+    # 3. 1-Row Drift & Freshness Summary Query
+    trained_dt = _to_utc_dt(diag.get("model_trained_at"))
+    if trained_dt is not None:
+        cutoff_expr = f"TIMESTAMP('{trained_dt.strftime('%Y-%m-%d %H:%M:%S+00:00')}')"
+        current_pred_cond = f"predicted_at >= {cutoff_expr}"
+        stale_pred_cond = f"(predicted_at IS NULL OR predicted_at < {cutoff_expr})"
+    else:
+        current_pred_cond = "predicted_at IS NOT NULL"
+        stale_pred_cond = "FALSE"
+
+    summary_sql = f"""
+    SELECT
+      COUNT(*) AS total_rows,
+      COUNTIF(in_scope IS TRUE) AS in_scope_rows,
+      COUNTIF(in_scope IS NULL) AS untriaged_rows,
+      COUNTIF(in_scope IS TRUE AND user_rating IS NOT NULL) AS labeled_rows,
+      CAST(MAX(first_seen) AS STRING) AS latest_first_seen,
+      COUNTIF(in_scope IS TRUE AND predicted_user_rating IS NOT NULL AND {current_pred_cond}) AS current_predictions,
+      COUNTIF(in_scope IS TRUE AND predicted_user_rating IS NOT NULL AND {stale_pred_cond}) AS stale_predictions,
+      COUNTIF(in_scope IS TRUE AND predicted_user_rating IS NULL) AS unscored_in_scope,
+      COUNTIF(in_scope IS TRUE AND gemini_insights_structured IS NOT NULL AND TRIM(gemini_insights_structured) != '') AS gemini_profiled_in_scope,
+      MIN(IF(in_scope IS TRUE, gemini_profiled_at, NULL)) AS oldest_gemini_at,
+      MAX(IF(in_scope IS TRUE, gemini_profiled_at, NULL)) AS newest_gemini_at,
+      COUNTIF(in_scope IS TRUE AND maps_found IS NOT NULL) AS maps_checked_in_scope,
+      MIN(IF(in_scope IS TRUE, maps_lookup_at, NULL)) AS oldest_maps_at,
+      MAX(IF(in_scope IS TRUE, maps_lookup_at, NULL)) AS newest_maps_at
+    FROM `{table_ref}`
+    """
+    try:
+        rows = list(_wait_for_job(client.query(summary_sql), timeout=30.0))
+        if rows:
+            diag.update(dict(rows[0]))
+    except Exception as e:
+        logger.warning(f"Could not run diagnostics summary query on {table_ref}: {e}")
+
+    # 4. Model Feature Importance (materialized once per model_trained_at in BigQuery)
+    if diag.get("model_trained_at") is not None:
+        diag["feature_importance"] = ensure_model_feature_importance(
+            project_id=project_id,
+            dataset_id=dataset_id,
+            model_name=model_name,
+            model_trained_at=diag.get("model_trained_at"),
+            vertex_version=diag.get("vertex_version"),
+            client=client,
+        )
+
+    return diag
+
+
 MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('fhrsid', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('businessname', 'STRING', mode='NULLABLE'),

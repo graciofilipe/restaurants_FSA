@@ -1011,3 +1011,140 @@ class TestGeminiChunkingTimeoutsAndMergeGate(unittest.TestCase):
         )
         self.assertTrue(ok)
 
+
+class TestSystemDiagnosticsAndFeatureImportance(unittest.TestCase):
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_ensure_model_feature_importance_skips_materialize_when_timestamp_matches(self, mock_client_cls):
+        import datetime
+        from app.services.bq_utils import ensure_model_feature_importance
+
+        trained_at = datetime.datetime(2026, 10, 4, 6, 14, 29, tzinfo=datetime.timezone.utc)
+        cached_row = {
+            "model_name": "restaurant_preference_model",
+            "model_trained_at": trained_at,
+            "vertex_version": "18",
+            "feature": "maps_types_array",
+            "importance_weight": 123,
+            "importance_gain": 82.55,
+            "importance_cover": 6952.4,
+            "gain_pct": 43.9,
+            "computed_at": trained_at,
+        }
+        mock_client = mock_client_cls.return_value
+        read_job = MagicMock()
+        read_job.result.return_value = [cached_row]
+        mock_client.query.return_value = read_job
+
+        rows = ensure_model_feature_importance(
+            "p", "d", "restaurant_preference_model",
+            model_trained_at=trained_at,
+            vertex_version="18",
+            client=mock_client,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["feature"], "maps_types_array")
+        self.assertEqual(mock_client.query.call_count, 1)  # Only SELECT ran, no CREATE OR REPLACE
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_ensure_model_feature_importance_regenerates_when_model_trained_at_changes(self, mock_client_cls):
+        import datetime
+        from app.services.bq_utils import ensure_model_feature_importance
+
+        old_trained = datetime.datetime(2026, 10, 3, 20, 0, 0, tzinfo=datetime.timezone.utc)
+        new_trained = datetime.datetime(2026, 10, 4, 6, 14, 29, tzinfo=datetime.timezone.utc)
+        stale_row = {"model_trained_at": old_trained, "feature": "old_feat"}
+        fresh_row = {"model_trained_at": new_trained, "feature": "maps_types_array", "gain_pct": 43.9}
+
+        mock_client = mock_client_cls.return_value
+        stale_read_job = MagicMock()
+        stale_read_job.result.return_value = [stale_row]
+        materialize_job = MagicMock()
+        materialize_job.result.return_value = []
+        fresh_read_job = MagicMock()
+        fresh_read_job.result.return_value = [fresh_row]
+        mock_client.query.side_effect = [stale_read_job, materialize_job, fresh_read_job]
+
+        rows = ensure_model_feature_importance(
+            "p", "d", "restaurant_preference_model",
+            model_trained_at=new_trained,
+            vertex_version="18",
+            client=mock_client,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["feature"], "maps_types_array")
+        self.assertEqual(mock_client.query.call_count, 3)
+        materialize_sql = mock_client.query.call_args_list[1].args[0]
+        self.assertIn("CREATE OR REPLACE TABLE `p.d.model_feature_importance`", materialize_sql)
+        self.assertIn("ML.FEATURE_IMPORTANCE", materialize_sql)
+
+    @patch('app.services.bq_utils.ensure_model_feature_importance')
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_fetch_system_diagnostics_combines_model_table_drift_and_features(
+        self, mock_client_cls, mock_ensure_fi
+    ):
+        import datetime
+        from app.services.bq_utils import fetch_system_diagnostics
+
+        trained_at = datetime.datetime(2026, 10, 4, 6, 14, 29, tzinfo=datetime.timezone.utc)
+        table_mod = datetime.datetime(2026, 10, 4, 6, 15, 0, tzinfo=datetime.timezone.utc)
+
+        mock_client = mock_client_cls.return_value
+        mock_model = MagicMock()
+        mock_model.created = trained_at
+        mock_model.model_type = "BOOSTED_TREE_REGRESSOR"
+        mock_model.feature_columns = [MagicMock()] * 21
+        mock_model._properties = {
+            "trainingRuns": [
+                {
+                    "vertexAiModelVersion": "18",
+                    "evaluationMetrics": {
+                        "regressionMetrics": {
+                            "meanAbsoluteError": 0.1601,
+                            "rSquared": 0.9835,
+                        }
+                    },
+                    "results": [{}] * 20,
+                }
+            ]
+        }
+        mock_client.get_model.return_value = mock_model
+
+        mock_table = MagicMock()
+        mock_table.modified = table_mod
+        mock_table.num_rows = 11268
+        mock_client.get_table.return_value = mock_table
+
+        summary_job = MagicMock()
+        summary_job.result.return_value = [
+            {
+                "total_rows": 11268,
+                "in_scope_rows": 3100,
+                "untriaged_rows": 200,
+                "labeled_rows": 444,
+                "latest_first_seen": "2026-09-28",
+                "current_predictions": 0,
+                "stale_predictions": 1941,
+                "unscored_in_scope": 1159,
+                "gemini_profiled_in_scope": 2767,
+                "maps_checked_in_scope": 2900,
+            }
+        ]
+        mock_client.query.return_value = summary_job
+        mock_ensure_fi.return_value = [{"feature": "maps_types_array", "gain_pct": 43.9}]
+
+        diag = fetch_system_diagnostics("p", "d", "t", "restaurant_preference_model")
+
+        self.assertEqual(diag["model_trained_at"], trained_at)
+        self.assertEqual(diag["vertex_version"], "18")
+        self.assertAlmostEqual(diag["mae"], 0.1601)
+        self.assertAlmostEqual(diag["r_squared"], 0.9835)
+        self.assertEqual(diag["iterations"], 20)
+        self.assertEqual(diag["feature_count"], 21)
+        self.assertEqual(diag["stale_predictions"], 1941)
+        self.assertEqual(diag["labeled_rows"], 444)
+        self.assertEqual(diag["feature_importance"][0]["feature"], "maps_types_array")
+
+

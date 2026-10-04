@@ -166,6 +166,10 @@ def run_jit_preflight(
                     f"Maps enrichment updated only {updated_maps}/{len(maps_missing)} "
                     f"restaurants ({shortfall} unrefreshed, allowed <= {allowed_maps})."
                 )
+    elif progress_callback:
+        progress_callback(
+            f"🗺️ Google Maps data: all {len(rows)} labeled restaurant(s) are already fresh (0 to regenerate)."
+        )
 
     if gemini_missing:
         logger.info(f"JIT: Found {len(gemini_missing)} labeled restaurants needing Gemini insights. Triggering enrichment...")
@@ -192,6 +196,10 @@ def run_jit_preflight(
                 f"Gemini enrichment failed or timed out for {len(gemini_missing)} "
                 f"labeled restaurant(s); aborting model training."
             )
+    elif progress_callback:
+        progress_callback(
+            f"✨ Gemini profiles: all {len(rows)} labeled restaurant(s) are already fresh (0 to regenerate)."
+        )
 
     if postcode_missing:
         logger.info("JIT: Found labeled restaurants missing postcode demographics. Triggering enrichment...")
