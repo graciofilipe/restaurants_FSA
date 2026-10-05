@@ -6,6 +6,8 @@ from google.cloud import bigquery
 from google.cloud.exceptions import GoogleCloudError
 
 from app.core.model_features import (
+    counterweight_linear_replication_sql,
+    counterweight_linear_where_clause,
     feature_select_list,
     feature_source_clause,
     normalized_brand_key_sql,
@@ -23,6 +25,15 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 PREFLIGHT_BQ_TIMEOUT_SECONDS = 60.0
+LINEAR_MODEL_SUFFIX = "_linear"
+
+
+def companion_linear_model_name(model_name: str) -> str:
+    """Return the companion Course 2b linear regression model name for a given
+    primary model name."""
+    if model_name.endswith(LINEAR_MODEL_SUFFIX):
+        return model_name
+    return f"{model_name}{LINEAR_MODEL_SUFFIX}"
 
 
 def _run_preflight_query(client: bigquery.Client, sql: str, timeout: float = PREFLIGHT_BQ_TIMEOUT_SECONDS):
@@ -38,23 +49,50 @@ def _run_preflight_query(client: bigquery.Client, sql: str, timeout: float = PRE
 
 
 def build_training_select(
-    project_id: str, dataset_id: str, source_table: str, extra_predicate: str = ""
+    project_id: str,
+    dataset_id: str,
+    source_table: str,
+    extra_predicate: str = "",
+    model_family: str = "boosted_tree",
 ) -> str:
-    """The labelled Stage-2 feature set the model trains on.
+    """The labelled feature set the model trains on.
 
     Extracted so `scripts/evaluate_model.py` measures the features production
     actually uses rather than a third hand-copy of them. `extra_predicate` is
     appended to the WHERE clause, which is how the evaluation harness carves
     out its train/holdout split without restating any of this.
 
-    Filters exclusively to Stage-2 sit-down `RESTAURANT_DINING` candidates with
-    `< 5` branches (`stage2_training_where_clause`), and weights visited ground
-    truth (`rating_source = 'visited'`) 2x relative to desk/NULL triage labels
-    (1x) via `CROSS JOIN UNNEST(GENERATE_ARRAY(...))`.
+    Hybrid Ensemble routing:
+    * `boosted_tree` (Course 1b — Location-Blind Stage-2 Tree):
+      Selects `feature_select_list(include_location=False)` (omitting
+      `localauthorityname` and `imd_rank` for 0.000 borough bias), filters
+      exclusively to Stage-2 sit-down `RESTAURANT_DINING` candidates with `< 5`
+      branches (`stage2_training_where_clause`), and weights visited ground
+      truth (`rating_source = 'visited'`) 2x relative to desk/NULL triage labels
+      (1x).
+    * `linear_reg` (Course 2b — 4:2:1 Counter-Weighted All-Scope Linear):
+      Selects `feature_select_list(include_location=True)` (retaining
+      `localauthorityname`, `imd_rank`, and Stage-1 regime columns), trains on
+      all `in_scope` labeled rows (`counterweight_linear_where_clause`), and
+      applies `4:2:1` integer replication (`counterweight_linear_replication_sql`)
+      so non-plausible local rows anchor borough intercepts without stealing
+      tree splits.
     """
+    if model_family == "linear_reg":
+        return f"""
+SELECT
+{feature_select_list(include_location=True)}
+{feature_source_clause(project_id, dataset_id, source_table)}
+CROSS JOIN UNNEST(GENERATE_ARRAY(1, {counterweight_linear_replication_sql('m', 'b')})) AS _rep
+WHERE
+  {counterweight_linear_where_clause('m')}
+  {extra_predicate}
+"""
+    if model_family != "boosted_tree":
+        raise ValueError(f"Unsupported model_family: {model_family!r}")
     return f"""
 SELECT
-{feature_select_list()}
+{feature_select_list(include_location=False)}
 {feature_source_clause(project_id, dataset_id, source_table)}
 CROSS JOIN UNNEST(GENERATE_ARRAY(1, IF(m.rating_source = 'visited', 2, 1))) AS _rep
 WHERE
@@ -72,7 +110,7 @@ def build_create_model_sql(
     extra_predicate: str = "",
     register_vertex: bool = True,
 ) -> str:
-    """Construct the `CREATE OR REPLACE MODEL` DDL for Stage-2 training."""
+    """Construct the `CREATE OR REPLACE MODEL` DDL for Stage-2 / Hybrid training."""
     registry_opt = ",\n      model_registry='vertex_ai'" if register_vertex else ""
     if model_family == "linear_reg":
         options = (
@@ -103,7 +141,7 @@ def build_create_model_sql(
     OPTIONS(
       {options}
     ) AS
-    {build_training_select(project_id, dataset_id, source_table, extra_predicate=extra_predicate)}
+    {build_training_select(project_id, dataset_id, source_table, extra_predicate=extra_predicate, model_family=model_family)}
     """
 
 
@@ -332,6 +370,7 @@ def train_model(
     run_async: bool = False,
     *,
     model_family: str = "boosted_tree",
+    train_companion_linear: bool = True,
     force_maps: bool = False,
     maps_max_age_days: Optional[int] = None,
     maps_cutoff_date: Optional[Any] = None,
@@ -377,13 +416,29 @@ def train_model(
             progress_callback=progress_callback,
         )
 
-    query = build_create_model_sql(
+    tree_query = build_create_model_sql(
         project_id,
         dataset_id,
         source_table,
         full_model_name,
         model_family=model_family,
     )
+
+    should_train_companion = train_companion_linear and model_family == "boosted_tree"
+    if should_train_companion:
+        linear_model_name = companion_linear_model_name(model_name)
+        full_linear_model_name = f"{project_id}.{dataset_id}.{linear_model_name}"
+        linear_query = build_create_model_sql(
+            project_id,
+            dataset_id,
+            source_table,
+            full_linear_model_name,
+            model_family="linear_reg",
+            register_vertex=False,
+        )
+        query = f"{linear_query.strip()};\n{tree_query.strip()}"
+    else:
+        query = tree_query
 
     logger.info(f"Preparing BQML Training Query for {full_model_name} (family={model_family})...")
     if dry_run:

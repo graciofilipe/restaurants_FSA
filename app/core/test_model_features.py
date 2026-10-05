@@ -13,7 +13,11 @@ from app.core.model_features import (
     DEMOGRAPHIC_FEATURE_COLUMNS,
     ENGINEERED_FEATURE_ALIASES,
     FEATURE_ALIASES,
+    LOCATION_FEATURE_ALIASES,
     PILLAR_FEATURE_ALIASES,
+    TREE_FEATURE_ALIASES,
+    counterweight_linear_replication_sql,
+    counterweight_linear_where_clause,
     feature_select_list,
     feature_source_clause,
     is_stage1_gated_sql,
@@ -44,6 +48,19 @@ class TestFeatureList(unittest.TestCase):
         for alias in ('maps_rating', 'maps_reviews', 'price_level', 'ratingvalue',
                       'business_status', 'localauthorityname', 'imd_rank'):
             self.assertIn(alias, FEATURE_ALIASES, alias)
+
+    def test_location_blind_feature_list_omits_borough_and_imd_rank(self):
+        """Course 1b location-blind Boosted Tree omits `localauthorityname` and
+        `imd_rank` while keeping all other 21 features."""
+        sql_no_loc = feature_select_list(include_location=False)
+        self.assertEqual(LOCATION_FEATURE_ALIASES, ('localauthorityname', 'imd_rank'))
+        self.assertNotIn('localauthorityname', sql_no_loc)
+        self.assertNotIn('imd_rank', sql_no_loc)
+        aliases = [
+            line.strip().rstrip(',').rsplit(' AS ', 1)[-1].rsplit('.', 1)[-1]
+            for line in sql_no_loc.splitlines()
+        ]
+        self.assertEqual(tuple(aliases), TREE_FEATURE_ALIASES)
 
     def test_high_cardinality_memorization_features_are_pruned(self):
         """`postcode`, `lsoa`, `msoa`, `latitude`, `longitude`, and
@@ -152,6 +169,16 @@ class TestStage1AndStage2SqlHelpers(unittest.TestCase):
         self.assertIn("m.pillar_establishment_type = 'RESTAURANT_DINING'", sql)
         self.assertIn('COALESCE(b.branch_count_in_fsa, 1) < 5', sql)
 
+    def test_counterweight_linear_helpers_use_all_in_scope_and_4_2_1_replication(self):
+        where_sql = counterweight_linear_where_clause('m')
+        self.assertIn('m.user_rating IS NOT NULL', where_sql)
+        self.assertIn('(m.in_scope = TRUE OR m.in_scope IS NULL)', where_sql)
+
+        rep_sql = counterweight_linear_replication_sql('m', 'b')
+        self.assertIn("m.rating_source = 'visited'", rep_sql)
+        self.assertIn(', 4, ', rep_sql)
+        self.assertIn(', 2, 1))', rep_sql)
+
 
 class TestFormatTemplateEscaping(unittest.TestCase):
     """The regex contains braces, and one of the two consumers runs the SQL
@@ -176,12 +203,13 @@ class TestTrainServeParity(unittest.TestCase):
         from app.services.ml_prediction import build_prediction_input_select
         from scripts.train_bqml_model import build_training_select
 
-        training = build_training_select('p', 'd', 'p.d.t')
+        training_tree = build_training_select('p', 'd', 'p.d.t', model_family='boosted_tree')
+        training_linear = build_training_select('p', 'd', 'p.d.t', model_family='linear_reg')
         prediction = build_prediction_input_select('p', 'd', 'p.d.t', "'1'")
 
-        shared = feature_select_list()
-        self.assertIn(shared, training)
-        self.assertIn(shared, prediction)
+        self.assertIn(feature_select_list(include_location=False), training_tree)
+        self.assertIn(feature_select_list(include_location=True), training_linear)
+        self.assertIn(feature_select_list(include_location=True), prediction)
 
     def test_prediction_additionally_selects_the_join_key(self):
         from app.services.ml_prediction import build_prediction_input_select
@@ -193,7 +221,8 @@ class TestTrainServeParity(unittest.TestCase):
         from app.services.ml_prediction import build_prediction_input_select
         from scripts.train_bqml_model import build_training_select
 
-        for sql in (build_training_select('p', 'd', 'p.d.t'),
+        for sql in (build_training_select('p', 'd', 'p.d.t', model_family='boosted_tree'),
+                    build_training_select('p', 'd', 'p.d.t', model_family='linear_reg'),
                     build_prediction_input_select('p', 'd', 'p.d.t', "'1'")):
             self.assertEqual(sql.count('JSON_EXTRACT_SCALAR'), len(PILLAR_FEATURE_ALIASES))
 

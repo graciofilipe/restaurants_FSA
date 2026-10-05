@@ -119,11 +119,18 @@ WHERE
   {predicate}"""
 
 
-def build_evaluate_sql(project_id, dataset_id, source_table, model_name, predicate) -> str:
+def build_evaluate_sql(
+    project_id,
+    dataset_id,
+    source_table,
+    model_name,
+    predicate,
+    model_family: str = "boosted_tree",
+) -> str:
     """ML.EVALUATE of a trained model against the holdout rows."""
     return f"""SELECT * FROM ML.EVALUATE(
   MODEL `{project_id}.{dataset_id}.{model_name}`,
-  ({build_training_select(project_id, dataset_id, source_table, predicate)})
+  ({build_training_select(project_id, dataset_id, source_table, predicate, model_family=model_family)})
 )"""
 
 
@@ -145,13 +152,20 @@ WHERE (m.in_scope = TRUE OR m.in_scope IS NULL) AND m.user_rating IS NOT NULL
 {holdout_predicate}"""
 
 
-def build_rank_correlation_sql(project_id, dataset_id, source_table, model_name, predicate) -> str:
+def build_rank_correlation_sql(
+    project_id,
+    dataset_id,
+    source_table,
+    model_name,
+    predicate,
+    model_family: str = "boosted_tree",
+) -> str:
     """Spearman correlation between predicted and actual on the holdout."""
     return f"""WITH scored AS (
   SELECT predicted_user_rating, user_rating
   FROM ML.PREDICT(
     MODEL `{project_id}.{dataset_id}.{model_name}`,
-    ({build_training_select(project_id, dataset_id, source_table, predicate)})
+    ({build_training_select(project_id, dataset_id, source_table, predicate, model_family=model_family)})
   )
 ),
 ranked AS (
@@ -316,17 +330,17 @@ def build_all_statements(project_id, dataset_id, table_id, modulus) -> list:
         ("train_match_score_baseline",
          build_match_score_model_sql(project_id, dataset_id, source_table, match_model, train), True),
         ("evaluate_boosted_tree",
-         build_evaluate_sql(project_id, dataset_id, source_table, tree_model, holdout), False),
+         build_evaluate_sql(project_id, dataset_id, source_table, tree_model, holdout, model_family="boosted_tree"), False),
         ("evaluate_linear_reg",
-         build_evaluate_sql(project_id, dataset_id, source_table, linear_reg_model, holdout), False),
+         build_evaluate_sql(project_id, dataset_id, source_table, linear_reg_model, holdout, model_family="linear_reg"), False),
         ("evaluate_match_score",
          build_evaluate_sql(project_id, dataset_id, source_table, match_model, holdout), False),
         ("mean_baseline",
          build_mean_baseline_sql(project_id, dataset_id, source_table, train, holdout), False),
         ("rank_correlation_boosted_tree",
-         build_rank_correlation_sql(project_id, dataset_id, source_table, tree_model, holdout), False),
+         build_rank_correlation_sql(project_id, dataset_id, source_table, tree_model, holdout, model_family="boosted_tree"), False),
         ("rank_correlation_linear_reg",
-         build_rank_correlation_sql(project_id, dataset_id, source_table, linear_reg_model, holdout), False),
+         build_rank_correlation_sql(project_id, dataset_id, source_table, linear_reg_model, holdout, model_family="linear_reg"), False),
         ("rank_correlation_match_score",
          build_match_score_rank_sql(source_table, holdout), False),
         ("two_stage_hurdle_benchmark",

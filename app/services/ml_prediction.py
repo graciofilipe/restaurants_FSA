@@ -19,6 +19,9 @@ from app.services.bq_utils import execute_gemini_enrichment
 logger = logging.getLogger(__name__)
 
 PREDICTION_BQ_TIMEOUT_SECONDS = 180.0
+HYBRID_TREE_WEIGHT = 0.5
+HYBRID_LINEAR_WEIGHT = 0.5
+LINEAR_MODEL_SUFFIX = "_linear"
 
 
 def _wait_for_prediction_job(job: Any, timeout: float = PREDICTION_BQ_TIMEOUT_SECONDS) -> Any:
@@ -37,12 +40,12 @@ def build_prediction_input_select(project_id: str, dataset_id: str, table_ref: s
     """The `ML.PREDICT` input: the training features, plus the join key and
     Two-Stage Hurdle Stage-1 routing columns.
 
-    Byte-identical to `build_training_select`'s feature list by construction --
-    both call `feature_select_list()`. The only additions are `m.fhrsid`,
-    `_is_stage1_gated`, and `_stage1_capped_score`, which `ML.PREDICT` passes
-    through so the MERGE can route structural non-candidates to their
-    deterministic Stage-1 cap (`<= 2.0`) and plausible sit-down candidates to
-    the Stage-2 model's prediction.
+    Byte-identical to `build_training_select(..., model_family='linear_reg')`'s
+    feature list by construction -- both call `feature_select_list()`. The only
+    additions are `m.fhrsid`, `_is_stage1_gated`, and `_stage1_capped_score`,
+    which `ML.PREDICT` passes through so the MERGE can route structural
+    non-candidates to their deterministic Stage-1 cap (`<= 2.0`) and plausible
+    sit-down candidates to the Hybrid Ensemble prediction.
     """
     return f'''          SELECT
             m.fhrsid,
@@ -51,6 +54,57 @@ def build_prediction_input_select(project_id: str, dataset_id: str, table_ref: s
 {feature_select_list()}
 {feature_source_clause(project_id, dataset_id, table_ref)}
           WHERE m.fhrsid IN ({id_list_str})'''
+
+
+def build_hybrid_merge_query(
+    project_id: str,
+    dataset_id: str,
+    table_ref: str,
+    model_ref: str,
+    linear_model_ref: str,
+    id_list_str: str,
+) -> str:
+    """Construct the Hybrid Ensemble `MERGE` query scoring against both
+    `model_ref` (Course 1b Location-Blind Stage-2 Boosted Tree) and
+    `linear_model_ref` (Course 2b 4:2:1 Counter-Weighted All-Scope Linear Reg)."""
+    return f'''
+    MERGE `{table_ref}` T
+    USING (
+      WITH input_features AS (
+{build_prediction_input_select(project_id, dataset_id, table_ref, id_list_str)}
+      ),
+      tree_preds AS (
+        SELECT
+          fhrsid,
+          _is_stage1_gated,
+          _stage1_capped_score,
+          predicted_user_rating AS tree_pred
+        FROM ML.PREDICT(MODEL `{model_ref}`, TABLE input_features)
+      ),
+      lin_preds AS (
+        SELECT
+          fhrsid,
+          predicted_user_rating AS lin_pred
+        FROM ML.PREDICT(MODEL `{linear_model_ref}`, TABLE input_features)
+      )
+      SELECT
+        t.fhrsid,
+        t._is_stage1_gated,
+        t._stage1_capped_score,
+        ({HYBRID_TREE_WEIGHT} * t.tree_pred + {HYBRID_LINEAR_WEIGHT} * l.lin_pred) AS predicted_user_rating
+      FROM tree_preds AS t
+      JOIN lin_preds AS l USING (fhrsid)
+    ) S
+    ON T.fhrsid = S.fhrsid
+    WHEN MATCHED THEN
+      UPDATE SET
+        predicted_user_rating = IF(
+          S._is_stage1_gated,
+          S._stage1_capped_score,
+          ROUND(LEAST(10.0, GREATEST(1.0, S.predicted_user_rating)), 2)
+        ),
+        predicted_at = CURRENT_TIMESTAMP()
+    '''
 
 def build_find_query(project_id: str, dataset_id: str, table_id: str,
                      target_fhrsids: List[str] = None, limit: int = 50) -> str:
@@ -320,31 +374,21 @@ def generate_predictions(
 
     escaped_ids = [fid.replace("'", "''") for fid in fhrsids]
     id_list_str = ", ".join([f"'{fid}'" for fid in escaped_ids])
+    linear_model_name = (
+        model_name
+        if model_name.endswith(LINEAR_MODEL_SUFFIX)
+        else f"{model_name}{LINEAR_MODEL_SUFFIX}"
+    )
+    linear_model_ref = f"{project_id}.{dataset_id}.{linear_model_name}"
 
-    predict_query = f'''
-    MERGE `{table_ref}` T
-    USING (
-      SELECT
-        fhrsid,
-        _is_stage1_gated,
-        _stage1_capped_score,
-        predicted_user_rating
-      FROM ML.PREDICT(MODEL `{model_ref}`,
-        (
-{build_prediction_input_select(project_id, dataset_id, table_ref, id_list_str)}
-        )
-      )
-    ) S
-    ON T.fhrsid = S.fhrsid
-    WHEN MATCHED THEN
-      UPDATE SET
-        predicted_user_rating = IF(
-          S._is_stage1_gated,
-          S._stage1_capped_score,
-          ROUND(LEAST(10.0, GREATEST(1.0, S.predicted_user_rating)), 2)
-        ),
-        predicted_at = CURRENT_TIMESTAMP()
-    '''
+    predict_query = build_hybrid_merge_query(
+        project_id,
+        dataset_id,
+        table_ref,
+        model_ref,
+        linear_model_ref,
+        id_list_str,
+    )
 
     try:
         job = client.query(predict_query)

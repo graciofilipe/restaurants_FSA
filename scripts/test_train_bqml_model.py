@@ -421,16 +421,29 @@ class TestStrictPreFlightGateAndOrdering:
 
 class TestStage2TrainingAndModelFamilies:
     """Tests for the Two-Stage Hurdle Stage-2 filter, 2x visited weighting,
-    and regularized model options."""
+    Course 1b location-blind tree, Course 2b 4:2:1 counter-weighted linear,
+    and companion linear model orchestration."""
 
     def test_training_select_filters_to_stage2_and_weights_visited_2x(self):
         from scripts.train_bqml_model import build_training_select
 
-        sql = build_training_select('p', 'd', 'p.d.t')
+        sql = build_training_select('p', 'd', 'p.d.t', model_family='boosted_tree')
         assert 'm.pillar_is_sit_down IS TRUE' in sql
         assert "m.pillar_establishment_type = 'RESTAURANT_DINING'" in sql
         assert 'COALESCE(b.branch_count_in_fsa, 1) < 5' in sql
         assert "GENERATE_ARRAY(1, IF(m.rating_source = 'visited', 2, 1))" in sql
+        assert 'm.localauthorityname' not in sql
+        assert 'd.imd_rank' not in sql
+
+    def test_linear_reg_training_select_includes_location_and_4_2_1_counterweights(self):
+        from scripts.train_bqml_model import build_training_select
+
+        sql = build_training_select('p', 'd', 'p.d.t', model_family='linear_reg')
+        assert 'm.localauthorityname' in sql
+        assert 'd.imd_rank' in sql
+        assert '(m.in_scope = TRUE OR m.in_scope IS NULL)' in sql
+        assert ', 4, ' in sql
+        assert ', 2, 1))' in sql
 
     def test_boosted_tree_options_use_shallow_regularized_hyperparameters(self):
         from scripts.train_bqml_model import build_create_model_sql
@@ -444,6 +457,8 @@ class TestStage2TrainingAndModelFamilies:
         assert 'colsample_bytree=0.8' in sql
         assert 'l2_reg=1.0' in sql
         assert 'max_iterations=25' in sql
+        assert 'm.localauthorityname' not in sql
+        assert 'd.imd_rank' not in sql
 
     def test_linear_reg_options_use_ridge_regularization(self):
         from scripts.train_bqml_model import build_create_model_sql
@@ -452,6 +467,19 @@ class TestStage2TrainingAndModelFamilies:
         assert "model_type='LINEAR_REG'" in sql
         assert 'l2_reg=1.0' in sql
         assert "data_split_method='NO_SPLIT'" in sql
+        assert 'm.localauthorityname' in sql
+        assert 'd.imd_rank' in sql
+
+    @patch('scripts.train_bqml_model.bigquery.Client')
+    def test_train_model_trains_companion_linear_model_by_default(self, mock_bq):
+        client = _mock_client([])
+        mock_bq.return_value = client
+
+        train_model('p', 'd', 't', 'restaurant_preference_model', dry_run=False)
+
+        submitted = [c.args[0] for c in client.query.call_args_list]
+        assert any('CREATE OR REPLACE MODEL `p.d.restaurant_preference_model_linear`' in q for q in submitted)
+        assert any('CREATE OR REPLACE MODEL `p.d.restaurant_preference_model`' in q for q in submitted)
 
     @patch('app.services.bq_utils.execute_gemini_enrichment', return_value=True)
     @patch('scripts.train_bqml_model.bigquery.Client')

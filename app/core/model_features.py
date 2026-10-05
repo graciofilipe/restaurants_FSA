@@ -71,6 +71,18 @@ FEATURE_ALIASES: Tuple[str, ...] = (
     + DEMOGRAPHIC_FEATURE_COLUMNS
 )
 
+# Location features excluded from the Stage-2 Boosted Tree (Course 1b) so the
+# tree has 0.000 borough bias and spends 100% of its splits on culinary merit,
+# while retained in the 4:2:1 Counter-Weighted All-Scope Linear model (Course 2b).
+LOCATION_FEATURE_ALIASES: Tuple[str, ...] = (
+    'localauthorityname',
+    'imd_rank',
+)
+
+TREE_FEATURE_ALIASES: Tuple[str, ...] = tuple(
+    alias for alias in FEATURE_ALIASES if alias not in LOCATION_FEATURE_ALIASES
+)
+
 # The raw JSON the pillar features are read out of. Phase 7 switches this to the
 # typed columns the Phase 5 backfill filled; because both consumers come through
 # here, that is a one-line change rather than two hand-edited query bodies.
@@ -123,8 +135,27 @@ def stage2_training_where_clause(master: str = 'm', branch: str = 'b') -> str:
     )
 
 
+def counterweight_linear_where_clause(master: str = 'm') -> str:
+    """Course 2b training filter for the linear model: all in-scope labeled rows
+    (both Stage-2 plausible sit-down restaurants and Stage-1 local counter-weights)."""
+    return (
+        f"{master}.user_rating IS NOT NULL "
+        f"AND ({master}.in_scope = TRUE OR {master}.in_scope IS NULL)"
+    )
+
+
+def counterweight_linear_replication_sql(master: str = 'm', branch: str = 'b') -> str:
+    """4:2:1 sample replication for Course 2b linear regression:
+    4x for visited Stage-2, 2x for desk Stage-2, 1x for Stage-1 counter-weights."""
+    return (
+        f"IF({master}.rating_source = 'visited' AND NOT {is_stage1_gated_sql(master, branch)}, 4, "
+        f"IF(NOT {is_stage1_gated_sql(master, branch)}, 2, 1))"
+    )
+
+
 def feature_select_list(master: str = 'm', demo: str = 'd', branch: str = 'b',
-                        for_format_template: bool = False) -> str:
+                        for_format_template: bool = False,
+                        include_location: bool = True) -> str:
     """The shared `SELECT` fragment, without a trailing comma.
 
     Emitted at a fixed indent so both call sites interpolate byte-identical
@@ -134,8 +165,16 @@ def feature_select_list(master: str = 'm', demo: str = 'd', branch: str = 'b',
     `for_format_template` doubles the braces in the unwrap regex for SQL that
     later passes through `str.format()`. Get it wrong and the regex matches
     nothing, which is D2's failure mode all over again.
+
+    When `include_location=False` (Course 1b location-blind Boosted Tree),
+    `localauthorityname` and `imd_rank` are omitted from the projection.
     """
-    lines = [f"{_INDENT}{master}.{column}" for column in MASTER_COLUMNS]
+    master_cols = (
+        MASTER_COLUMNS
+        if include_location
+        else tuple(c for c in MASTER_COLUMNS if c not in LOCATION_FEATURE_ALIASES)
+    )
+    lines = [f"{_INDENT}{master}.{column}" for column in master_cols]
     lines.extend([
         f"{_INDENT}LOG10(GREATEST(COALESCE(SAFE_CAST({master}.maps_reviews AS FLOAT64), 0.0), 0.0) + 1.0) AS log_maps_reviews",
         f"{_INDENT}COALESCE({branch}.branch_count_in_fsa, 1) AS branch_count_in_fsa",
@@ -151,7 +190,8 @@ def feature_select_list(master: str = 'm', demo: str = 'd', branch: str = 'b',
             lines.append(f"{_INDENT}{extracted} AS {field.column}")
         else:
             lines.append(f"{_INDENT}COALESCE({extracted}, 3) AS {field.column}")
-    lines.extend(f"{_INDENT}{demo}.{column}" for column in DEMOGRAPHIC_FEATURE_COLUMNS)
+    if include_location:
+        lines.extend(f"{_INDENT}{demo}.{column}" for column in DEMOGRAPHIC_FEATURE_COLUMNS)
     return ",\n".join(lines)
 
 

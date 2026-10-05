@@ -16,6 +16,7 @@ from scripts.evaluate_model import (
     build_all_statements,
     build_boosted_tree_model_sql,
     build_evaluate_sql,
+    build_linear_reg_model_sql,
     build_match_score_model_sql,
     split_predicate,
 )
@@ -69,9 +70,17 @@ def test_eval_models_stay_out_of_the_vertex_registry():
 def test_the_boosted_tree_trains_on_the_production_feature_set():
     """If the harness drifts from `train_bqml_model.py`, it baselines a model
     that does not exist. Phase 9's delta would then be measuring the drift."""
-    features = build_training_select(PROJECT, DATASET, SOURCE)
+    features = build_training_select(PROJECT, DATASET, SOURCE, model_family='boosted_tree')
     sql = build_boosted_tree_model_sql(PROJECT, DATASET, SOURCE, 'm', '')
     assert features.strip() in sql
+
+
+def test_the_linear_reg_trains_and_evaluates_on_the_counterweight_feature_set():
+    features = build_training_select(PROJECT, DATASET, SOURCE, model_family='linear_reg')
+    sql = build_linear_reg_model_sql(PROJECT, DATASET, SOURCE, 'm_lin', '')
+    assert features.strip() in sql
+    evaluate = build_evaluate_sql(PROJECT, DATASET, SOURCE, 'm_lin', 'AND 1=1', model_family='linear_reg')
+    assert build_training_select(PROJECT, DATASET, SOURCE, 'AND 1=1', model_family='linear_reg').strip() in evaluate
 
 
 def test_evaluation_uses_the_same_feature_set_as_training():
