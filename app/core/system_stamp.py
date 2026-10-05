@@ -127,6 +127,12 @@ def format_top_status_bar(
             metrics_bits.append(f"MAE {mae:.2f}")
         if isinstance(r2, (int, float)):
             metrics_bits.append(f"R² {r2:.2f}")
+        lin_mae = diag.get("linear_mae")
+        lin_r2 = diag.get("linear_r_squared")
+        if isinstance(lin_mae, (int, float)):
+            metrics_bits.append(f"Lin MAE {lin_mae:.2f}")
+        if isinstance(lin_r2, (int, float)):
+            metrics_bits.append(f"Lin R² {lin_r2:.2f}")
         parts.append(f"🧠 **Model:** {ver_badge}{ts_str} ({' · '.join(metrics_bits)})")
     else:
         parts.append("🧠 **Model:** unknown")

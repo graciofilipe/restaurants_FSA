@@ -72,3 +72,26 @@ class TestFormatTopStatusBar:
         assert "`v18` 2026-10-04 06:14 UTC (26m ago · MAE 0.16 · R² 0.98)" in bar
         assert "120 current / 1,821 stale / 45 unscored" in bar
         assert "2026-09-28" in bar
+
+    def test_includes_companion_linear_model_metrics_when_present(self):
+        now = datetime.datetime(2026, 10, 5, 8, 31, 0, tzinfo=datetime.timezone.utc)
+        trained_at = datetime.datetime(2026, 10, 5, 7, 31, 0, tzinfo=datetime.timezone.utc)
+        runtime_stamp = {
+            "build_timestamp": "2026-10-05 08:00 UTC",
+            "commit_sha": "4fdc481",
+            "revision": "restaurants-fsa-00245-p24",
+        }
+        diag = {
+            "model_trained_at": trained_at,
+            "vertex_version": "21",
+            "mae": 0.96,
+            "r_squared": 0.42,
+            "linear_mae": 0.70,
+            "linear_r_squared": 0.56,
+            "current_predictions": 3333,
+            "stale_predictions": 0,
+            "unscored_in_scope": 0,
+        }
+
+        bar = format_top_status_bar(runtime_stamp, diag, now=now)
+        assert "`v21` 2026-10-05 07:31 UTC (1h ago · MAE 0.96 · R² 0.42 · Lin MAE 0.70 · Lin R² 0.56)" in bar

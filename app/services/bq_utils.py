@@ -461,6 +461,8 @@ def get_distinct_outcodes(project_id: str, dataset_id: str, table_id: str) -> Li
 
 
 FEATURE_IMPORTANCE_TABLE_ID = "model_feature_importance"
+LINEAR_MODEL_NAME = "restaurant_preference_model_linear"
+LINEAR_WEIGHTS_TABLE_ID = "model_linear_weights"
 
 
 def _to_utc_dt(val: Any) -> Optional[ Any ]:
@@ -547,14 +549,144 @@ def ensure_model_feature_importance(
         return []
 
 
+def ensure_model_linear_weights(
+    project_id: str,
+    dataset_id: str,
+    linear_model_name: str = LINEAR_MODEL_NAME,
+    model_trained_at: Any = None,
+    client: Optional["bigquery.Client"] = None,
+) -> List[Dict[str, Any]]:
+    """Return the companion linear model's feature weights (`ML.WEIGHTS`),
+    generating and saving them in BigQuery (`model_linear_weights`) at most
+    once per trained linear model version.
+    """
+    bq_client = client or bigquery.Client(project=project_id)
+    lw_table_ref = f"{project_id}.{dataset_id}.{LINEAR_WEIGHTS_TABLE_ID}"
+    model_ref = f"{project_id}.{dataset_id}.{linear_model_name}"
+    expected_dt = _to_utc_dt(model_trained_at)
+
+    read_sql = f"""
+    SELECT
+      model_name,
+      model_trained_at,
+      feature,
+      feature_type,
+      standardized_weight,
+      raw_weight,
+      category_count,
+      category_spread,
+      importance_magnitude,
+      top_categories,
+      computed_at
+    FROM `{lw_table_ref}`
+    ORDER BY IF(feature_type = 'intercept', 1, 0) ASC, importance_magnitude DESC
+    """
+    try:
+        existing_rows = [dict(r) for r in _wait_for_job(bq_client.query(read_sql), timeout=30.0)]
+        if existing_rows:
+            stored_dt = _to_utc_dt(existing_rows[0].get("model_trained_at"))
+            if expected_dt is None or (
+                stored_dt is not None and abs((expected_dt - stored_dt).total_seconds()) < 2.0
+            ):
+                return existing_rows
+    except Exception:
+        # Table does not exist yet or schema changed; regenerate below.
+        pass
+
+    trained_iso = expected_dt.strftime("%Y-%m-%d %H:%M:%S+00:00") if expected_dt else "1970-01-01 00:00:00+00:00"
+    model_literal = _sql_quote(linear_model_name)
+
+    materialize_sql = f"""
+    CREATE OR REPLACE TABLE `{lw_table_ref}` AS
+    WITH std_w AS (
+      SELECT * FROM ML.WEIGHTS(MODEL `{model_ref}`, STRUCT(TRUE AS standardize))
+    ),
+    raw_w AS (
+      SELECT * FROM ML.WEIGHTS(MODEL `{model_ref}`, STRUCT(FALSE AS standardize))
+    )
+    SELECT
+      {model_literal} AS model_name,
+      TIMESTAMP('{trained_iso}') AS model_trained_at,
+      CAST(s.processed_input AS STRING) AS feature,
+      CASE
+        WHEN s.processed_input = '__INTERCEPT__' THEN 'intercept'
+        WHEN ARRAY_LENGTH(s.category_weights) > 0 THEN 'categorical'
+        ELSE 'numeric'
+      END AS feature_type,
+      ROUND(CAST(s.weight AS FLOAT64), 4) AS standardized_weight,
+      ROUND(CAST(r.weight AS FLOAT64), 4) AS raw_weight,
+      CAST(ARRAY_LENGTH(s.category_weights) AS INT64) AS category_count,
+      ROUND(
+        (
+          SELECT MAX(cw.weight) - MIN(cw.weight)
+          FROM UNNEST(s.category_weights) AS cw
+          WHERE cw.category != '_null_filler'
+        ),
+        4
+      ) AS category_spread,
+      ROUND(
+        COALESCE(
+          ABS(CAST(s.weight AS FLOAT64)),
+          (
+            SELECT MAX(cw.weight) - MIN(cw.weight)
+            FROM UNNEST(s.category_weights) AS cw
+            WHERE cw.category != '_null_filler'
+          ),
+          0.0
+        ),
+        4
+      ) AS importance_magnitude,
+      (
+        SELECT STRING_AGG(
+          CONCAT(
+            ranked.category,
+            ' (',
+            IF(ranked.weight >= 0, '+', ''),
+            CAST(ROUND(ranked.weight, 2) AS STRING),
+            ')'
+          ),
+          ', '
+          ORDER BY ranked.weight DESC
+        )
+        FROM (
+          SELECT
+            cw.category,
+            cw.weight,
+            ROW_NUMBER() OVER (ORDER BY cw.weight DESC) AS rn_desc,
+            ROW_NUMBER() OVER (ORDER BY cw.weight ASC) AS rn_asc
+          FROM UNNEST(s.category_weights) AS cw
+          WHERE cw.category != '_null_filler'
+        ) AS ranked
+        WHERE ranked.rn_desc <= 2 OR ranked.rn_asc <= 2
+      ) AS top_categories,
+      CURRENT_TIMESTAMP() AS computed_at
+    FROM std_w AS s
+    LEFT JOIN raw_w AS r
+      USING (processed_input)
+    ORDER BY IF(s.processed_input = '__INTERCEPT__', 1, 0) ASC, importance_magnitude DESC
+    """
+    try:
+        _wait_for_job(bq_client.query(materialize_sql), timeout=60.0)
+        return [dict(r) for r in _wait_for_job(bq_client.query(read_sql), timeout=30.0)]
+    except Exception as e:
+        logger.warning(f"Could not materialize or read linear model weights for {model_ref}: {e}")
+        return []
+
+
 def fetch_system_diagnostics(
     project_id: str,
     dataset_id: str,
     table_id: str,
     model_name: str = "restaurant_preference_model",
+    linear_model_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Fetch live model training metadata, table metadata, prediction drift,
-    enrichment freshness ranges, and once-per-model feature importance."""
+    """Fetch live model training metadata (for both primary Boosted Tree and
+    companion Linear Regression model), table metadata, prediction drift,
+    enrichment freshness ranges, once-per-model feature importance, and
+    once-per-model linear weights."""
+    resolved_linear_name = linear_model_name or (
+        model_name if model_name.endswith("_linear") else f"{model_name}_linear"
+    )
     diag: Dict[str, Any] = {
         "model_name": model_name,
         "model_trained_at": None,
@@ -564,9 +696,16 @@ def fetch_system_diagnostics(
         "mae": None,
         "r_squared": None,
         "iterations": None,
+        "linear_model_name": resolved_linear_name,
+        "linear_model_trained_at": None,
+        "linear_model_type": None,
+        "linear_feature_count": None,
+        "linear_mae": None,
+        "linear_r_squared": None,
         "table_modified_at": None,
         "table_total_rows": None,
         "feature_importance": [],
+        "linear_weights": [],
     }
     try:
         client = bigquery.Client(project=project_id)
@@ -575,9 +714,10 @@ def fetch_system_diagnostics(
         return diag
 
     model_ref = f"{project_id}.{dataset_id}.{model_name}"
+    linear_model_ref = f"{project_id}.{dataset_id}.{resolved_linear_name}"
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
 
-    # 1. Free BQML Model Metadata Read (0 bytes scanned)
+    # 1a. Free BQML Primary Tree Model Metadata Read (0 bytes scanned)
     try:
         model = client.get_model(model_ref)
         diag["model_trained_at"] = getattr(model, "created", None)
@@ -604,6 +744,36 @@ def fetch_system_diagnostics(
     except Exception as e:
         logger.warning(f"Could not read model metadata for {model_ref}: {e}")
 
+    # 1b. Free BQML Companion Linear Model Metadata Read (0 bytes scanned)
+    try:
+        linear_model = client.get_model(linear_model_ref)
+        linear_type = getattr(linear_model, "model_type", None)
+        if linear_type in ("LINEAR_REGRESSION", "LINEAR_REG"):
+            diag["linear_model_trained_at"] = getattr(linear_model, "created", None)
+            diag["linear_model_type"] = linear_type
+            lin_cols = getattr(linear_model, "feature_columns", None)
+            if lin_cols is not None:
+                diag["linear_feature_count"] = len(lin_cols)
+
+            lin_props = getattr(linear_model, "_properties", {}) or {}
+            lin_runs = (
+                lin_props.get("trainingRuns")
+                or getattr(linear_model, "training_runs", None)
+                or []
+            )
+            if lin_runs:
+                latest_lin_run = lin_runs[-1] if isinstance(lin_runs[-1], dict) else {}
+                lin_reg_metrics = (
+                    (latest_lin_run.get("evaluationMetrics") or {}).get("regressionMetrics")
+                    or {}
+                )
+                if "meanAbsoluteError" in lin_reg_metrics:
+                    diag["linear_mae"] = float(lin_reg_metrics["meanAbsoluteError"])
+                if "rSquared" in lin_reg_metrics:
+                    diag["linear_r_squared"] = float(lin_reg_metrics["rSquared"])
+    except Exception as e:
+        logger.warning(f"Could not read companion linear model metadata for {linear_model_ref}: {e}")
+
     # 2. Free Table Metadata Read (0 bytes scanned)
     try:
         table = client.get_table(table_ref)
@@ -612,8 +782,11 @@ def fetch_system_diagnostics(
     except Exception as e:
         logger.warning(f"Could not read table metadata for {table_ref}: {e}")
 
-    # 3. 1-Row Drift & Freshness Summary Query
-    trained_dt = _to_utc_dt(diag.get("model_trained_at"))
+    # 3. 1-Row Drift & Freshness Summary Query (uses latest of tree & linear trained_at)
+    tree_dt = _to_utc_dt(diag.get("model_trained_at"))
+    linear_dt = _to_utc_dt(diag.get("linear_model_trained_at"))
+    candidate_dts = [dt for dt in (tree_dt, linear_dt) if dt is not None]
+    trained_dt = max(candidate_dts) if candidate_dts else None
     if trained_dt is not None:
         cutoff_expr = f"TIMESTAMP('{trained_dt.strftime('%Y-%m-%d %H:%M:%S+00:00')}')"
         current_pred_cond = f"predicted_at >= {cutoff_expr}"
@@ -647,7 +820,7 @@ def fetch_system_diagnostics(
     except Exception as e:
         logger.warning(f"Could not run diagnostics summary query on {table_ref}: {e}")
 
-    # 4. Model Feature Importance (materialized once per model_trained_at in BigQuery)
+    # 4a. Primary Tree Model Feature Importance (materialized once per model_trained_at in BigQuery)
     if diag.get("model_trained_at") is not None:
         diag["feature_importance"] = ensure_model_feature_importance(
             project_id=project_id,
@@ -655,6 +828,16 @@ def fetch_system_diagnostics(
             model_name=model_name,
             model_trained_at=diag.get("model_trained_at"),
             vertex_version=diag.get("vertex_version"),
+            client=client,
+        )
+
+    # 4b. Companion Linear Model Weights (materialized once per linear_model_trained_at in BigQuery)
+    if diag.get("linear_model_trained_at") is not None:
+        diag["linear_weights"] = ensure_model_linear_weights(
+            project_id=project_id,
+            dataset_id=dataset_id,
+            linear_model_name=resolved_linear_name,
+            model_trained_at=diag.get("linear_model_trained_at"),
             client=client,
         )
 

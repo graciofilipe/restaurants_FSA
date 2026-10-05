@@ -1149,4 +1149,149 @@ class TestSystemDiagnosticsAndFeatureImportance(unittest.TestCase):
         self.assertEqual(diag["labeled_rows"], 444)
         self.assertEqual(diag["feature_importance"][0]["feature"], "maps_types_array")
 
+    def test_ensure_model_linear_weights_reuses_existing_table_when_timestamp_matches(self):
+        import datetime
+        from app.services.bq_utils import ensure_model_linear_weights
+
+        trained_at = datetime.datetime(2026, 10, 5, 7, 29, 44, tzinfo=datetime.timezone.utc)
+        mock_client = MagicMock()
+        read_job = MagicMock()
+        read_job.result.return_value = [
+            {
+                "model_name": "restaurant_preference_model_linear",
+                "model_trained_at": trained_at,
+                "feature": "match_score",
+                "feature_type": "numeric",
+                "standardized_weight": 0.674,
+                "raw_weight": 0.045,
+                "category_count": 0,
+                "category_spread": None,
+                "importance_magnitude": 0.674,
+                "top_categories": None,
+                "computed_at": trained_at,
+            }
+        ]
+        mock_client.query.return_value = read_job
+
+        rows = ensure_model_linear_weights(
+            "p", "d", "restaurant_preference_model_linear",
+            model_trained_at=trained_at,
+            client=mock_client,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["feature"], "match_score")
+        mock_client.query.assert_called_once()
+
+    def test_ensure_model_linear_weights_materializes_when_missing_or_stale(self):
+        import datetime
+        from app.services.bq_utils import ensure_model_linear_weights
+
+        old_trained = datetime.datetime(2026, 10, 4, 0, 0, 0, tzinfo=datetime.timezone.utc)
+        new_trained = datetime.datetime(2026, 10, 5, 7, 29, 44, tzinfo=datetime.timezone.utc)
+        mock_client = MagicMock()
+
+        stale_read_job = MagicMock()
+        stale_read_job.result.return_value = [
+            {"model_trained_at": old_trained, "feature": "match_score", "importance_magnitude": 0.5}
+        ]
+        create_job = MagicMock()
+        create_job.result.return_value = []
+        fresh_read_job = MagicMock()
+        fresh_read_job.result.return_value = [
+            {
+                "model_name": "restaurant_preference_model_linear",
+                "model_trained_at": new_trained,
+                "feature": "localauthorityname",
+                "feature_type": "categorical",
+                "standardized_weight": None,
+                "raw_weight": None,
+                "category_count": 34,
+                "category_spread": 0.59,
+                "importance_magnitude": 0.59,
+                "top_categories": "Redbridge (-0.3), Kensington and Chelsea (+0.29)",
+                "computed_at": new_trained,
+            }
+        ]
+        mock_client.query.side_effect = [stale_read_job, create_job, fresh_read_job]
+
+        rows = ensure_model_linear_weights(
+            "p", "d", "restaurant_preference_model_linear",
+            model_trained_at=new_trained,
+            client=mock_client,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["feature"], "localauthorityname")
+        self.assertEqual(mock_client.query.call_count, 3)
+        materialize_sql = mock_client.query.call_args_list[1].args[0]
+        self.assertIn("CREATE OR REPLACE TABLE `p.d.model_linear_weights`", materialize_sql)
+        self.assertIn("ML.WEIGHTS", materialize_sql)
+
+    @patch('app.services.bq_utils.ensure_model_linear_weights')
+    @patch('app.services.bq_utils.ensure_model_feature_importance')
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_fetch_system_diagnostics_populates_companion_linear_model_and_weights(
+        self, mock_client_cls, mock_ensure_fi, mock_ensure_lw
+    ):
+        import datetime
+        from app.services.bq_utils import fetch_system_diagnostics
+
+        tree_trained = datetime.datetime(2026, 10, 5, 7, 31, 41, tzinfo=datetime.timezone.utc)
+        lin_trained = datetime.datetime(2026, 10, 5, 7, 29, 44, tzinfo=datetime.timezone.utc)
+
+        mock_client = mock_client_cls.return_value
+        mock_tree = MagicMock()
+        mock_tree.created = tree_trained
+        mock_tree.model_type = "BOOSTED_TREE_REGRESSOR"
+        mock_tree.feature_columns = [MagicMock()] * 23
+        mock_tree._properties = {
+            "trainingRuns": [
+                {
+                    "vertexAiModelVersion": "21",
+                    "evaluationMetrics": {
+                        "regressionMetrics": {"meanAbsoluteError": 0.960, "rSquared": 0.415}
+                    },
+                    "results": [{}] * 15,
+                }
+            ]
+        }
+
+        mock_lin = MagicMock()
+        mock_lin.created = lin_trained
+        mock_lin.model_type = "LINEAR_REGRESSION"
+        mock_lin.feature_columns = [MagicMock()] * 25
+        mock_lin._properties = {
+            "trainingRuns": [
+                {
+                    "evaluationMetrics": {
+                        "regressionMetrics": {"meanAbsoluteError": 0.699, "rSquared": 0.562}
+                    }
+                }
+            ]
+        }
+        mock_client.get_model.side_effect = [mock_tree, mock_lin]
+
+        mock_table = MagicMock()
+        mock_table.modified = tree_trained
+        mock_table.num_rows = 11268
+        mock_client.get_table.return_value = mock_table
+
+        summary_job = MagicMock()
+        summary_job.result.return_value = [{"total_rows": 11268, "in_scope_rows": 3333}]
+        mock_client.query.return_value = summary_job
+        mock_ensure_fi.return_value = [{"feature": "maps_rating", "gain_pct": 21.8}]
+        mock_ensure_lw.return_value = [{"feature": "match_score", "standardized_weight": 0.674}]
+
+        diag = fetch_system_diagnostics("p", "d", "t", "restaurant_preference_model")
+
+        self.assertEqual(diag["vertex_version"], "21")
+        self.assertEqual(diag["feature_count"], 23)
+        self.assertEqual(diag["linear_model_name"], "restaurant_preference_model_linear")
+        self.assertEqual(diag["linear_model_trained_at"], lin_trained)
+        self.assertEqual(diag["linear_feature_count"], 25)
+        self.assertAlmostEqual(diag["linear_mae"], 0.699)
+        self.assertAlmostEqual(diag["linear_r_squared"], 0.562)
+        self.assertEqual(diag["linear_weights"][0]["feature"], "match_score")
+
 

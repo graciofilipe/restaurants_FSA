@@ -770,31 +770,82 @@ def render_system_status_bar(diagnostics=None):
 
 
 def render_feature_importance_section(diagnostics=None):
-    """Render the BigQuery-persisted Model Feature Importance table in the Model Training tab."""
+    """Render the BigQuery-persisted Boosted Tree Feature Importance and
+    Companion Linear Model Weights tables in the Model Training tab."""
     diag = diagnostics if diagnostics is not None else (
         st.session_state.get("system_diagnostics") if isinstance(getattr(st, "session_state", None), dict) else None
     )
     if not diag:
         return
     rows = diag.get("feature_importance") or []
-    if not rows:
+    lw_rows = diag.get("linear_weights") or []
+    if not rows and not lw_rows:
         return
 
     st.divider()
-    ver = diag.get("vertex_version")
-    trained_str = format_timestamp_utc(diag.get("model_trained_at"))
-    ver_label = f"v{ver} · " if ver else ""
-    st.subheader(f"📊 Model Feature Importance ({ver_label}Trained {trained_str})")
-    st.caption(
-        "Generated once per trained model via `ML.FEATURE_IMPORTANCE` and saved in BigQuery "
-        "(`model_feature_importance`)."
-    )
-    df_fi = pd.DataFrame(rows)
-    display_cols = [
-        c for c in ("feature", "gain_pct", "importance_gain", "importance_weight", "importance_cover")
-        if c in df_fi.columns
-    ]
-    st.dataframe(df_fi[display_cols], hide_index=True, use_container_width=True)
+    if rows:
+        ver = diag.get("vertex_version")
+        trained_str = format_timestamp_utc(diag.get("model_trained_at"))
+        ver_label = f"v{ver} · " if ver else ""
+        st.subheader(
+            f"📊 Model Feature Importance — Stage-2 Location-Blind Boosted Tree ({ver_label}Trained {trained_str})"
+        )
+        st.caption(
+            "Generated once per trained tree model (`restaurant_preference_model`, 70% ensemble weight) via "
+            "`ML.FEATURE_IMPORTANCE` and saved in BigQuery (`model_feature_importance`)."
+        )
+        df_fi = pd.DataFrame(rows)
+        display_cols = [
+            c for c in ("feature", "gain_pct", "importance_gain", "importance_weight", "importance_cover")
+            if c in df_fi.columns
+        ]
+        st.dataframe(df_fi[display_cols], hide_index=True, use_container_width=True)
+
+    if lw_rows:
+        lin_trained_str = format_timestamp_utc(
+            diag.get("linear_model_trained_at") or diag.get("model_trained_at")
+        )
+        lin_name = diag.get("linear_model_name") or "restaurant_preference_model_linear"
+        st.subheader(
+            f"📐 Companion Linear Model Weights — 4:2:1 Counter-Weighted (`{lin_name}` · Trained {lin_trained_str})"
+        )
+        st.caption(
+            "Generated once per trained linear model (`restaurant_preference_model_linear`, 30% ensemble weight) "
+            "via `ML.WEIGHTS` and saved in BigQuery (`model_linear_weights`). Numeric features report standardized "
+            "(`standardized_weight`) and raw slopes; categorical features report level count, max-min "
+            "`category_spread`, and top/bottom level offsets."
+        )
+        df_lw = pd.DataFrame(lw_rows)
+        lw_cols = [
+            c for c in (
+                "feature",
+                "feature_type",
+                "importance_magnitude",
+                "standardized_weight",
+                "raw_weight",
+                "category_count",
+                "category_spread",
+                "top_categories",
+            )
+            if c in df_lw.columns
+        ]
+        st.dataframe(df_lw[lw_cols], hide_index=True, use_container_width=True)
+
+
+def _format_linear_driver_line(r: dict) -> str:
+    feat = r.get("feature", "?")
+    ftype = r.get("feature_type", "numeric")
+    if ftype == "categorical":
+        spread = r.get("category_spread") or r.get("importance_magnitude") or 0.0
+        cnt = r.get("category_count") or 0
+        top_cats = r.get("top_categories") or ""
+        suffix = f" · {top_cats}" if top_cats else ""
+        return f"- `{feat}`: **spread {float(spread):.2f}** ({int(cnt)} levels{suffix})"
+    std_w = r.get("standardized_weight")
+    raw_w = r.get("raw_weight")
+    std_str = f"{float(std_w):+.3f}" if isinstance(std_w, (int, float)) else "n/a"
+    raw_str = f"{float(raw_w):+.4f}" if isinstance(raw_w, (int, float)) else "n/a"
+    return f"- `{feat}`: **std {std_str}** (raw {raw_str})"
 
 
 def render_sidebar_diagnostics(
@@ -820,7 +871,7 @@ def render_sidebar_diagnostics(
             f"- **Gemini Standard:** `gemini-3.8-flash`"
         )
 
-        st.markdown("**🧠 BQML Model (`restaurant_preference_model`)**")
+        st.markdown("**🧠 BQML Hybrid Ensemble (`70% Tree + 30% Linear`)**")
         if diag.get("model_trained_at") is not None:
             trained_str = format_timestamp_utc(diag.get("model_trained_at"))
             age_str = format_relative_age(diag.get("model_trained_at"))
@@ -831,11 +882,25 @@ def render_sidebar_diagnostics(
             feats = diag.get("feature_count")
             mae_str = f"{mae:.3f}" if isinstance(mae, (int, float)) else "n/a"
             r2_str = f"{r2:.3f}" if isinstance(r2, (int, float)) else "n/a"
-            st.caption(
-                f"- **Trained At:** {trained_str} ({age_str})\n"
-                f"- **Vertex Version:** `v{ver}` ({feats or '?'} features, {iters or '?'} trees)\n"
-                f"- **Eval Metrics:** MAE `{mae_str}` · R² `{r2_str}`"
-            )
+            model_lines = [
+                f"- **Tree (`restaurant_preference_model`):** {trained_str} ({age_str})",
+                f"- **Vertex Version:** `v{ver}` ({feats or '?'} features, {iters or '?'} trees, location-blind)",
+                f"- **Tree Eval Metrics:** MAE `{mae_str}` · R² `{r2_str}`",
+            ]
+            if diag.get("linear_model_trained_at") is not None or diag.get("linear_mae") is not None:
+                lin_trained_str = format_timestamp_utc(diag.get("linear_model_trained_at"))
+                lin_age_str = format_relative_age(diag.get("linear_model_trained_at"))
+                lin_feats = diag.get("linear_feature_count")
+                lin_mae = diag.get("linear_mae")
+                lin_r2 = diag.get("linear_r_squared")
+                lin_mae_str = f"{lin_mae:.3f}" if isinstance(lin_mae, (int, float)) else "n/a"
+                lin_r2_str = f"{lin_r2:.3f}" if isinstance(lin_r2, (int, float)) else "n/a"
+                lin_name = diag.get("linear_model_name") or "restaurant_preference_model_linear"
+                model_lines.extend([
+                    f"- **Linear (`{lin_name}`):** {lin_trained_str} ({lin_age_str}, {lin_feats or '?'} features, 4:2:1 counter-weighted)",
+                    f"- **Linear Eval Metrics:** MAE `{lin_mae_str}` · R² `{lin_r2_str}`",
+                ])
+            st.caption("\n".join(model_lines))
         else:
             st.caption("- Model metadata unavailable")
 
@@ -866,12 +931,21 @@ def render_sidebar_diagnostics(
 
         fi_rows = diag.get("feature_importance") or []
         if fi_rows:
-            st.markdown("**📊 Top 5 Model Features (`gain_pct`)**")
+            st.markdown("**📊 Top 5 Tree Features (`gain_pct`)**")
             top_lines = "\n".join(
                 f"- `{r.get('feature')}`: **{r.get('gain_pct', 0):.1f}%** (gain {r.get('importance_gain', 0):.1f})"
                 for r in fi_rows[:5]
             )
             st.caption(top_lines)
+
+        lw_rows = [
+            r for r in (diag.get("linear_weights") or [])
+            if r.get("feature_type") != "intercept" and r.get("feature") != "__INTERCEPT__"
+        ]
+        if lw_rows:
+            st.markdown("**📐 Top 5 Linear Drivers (`ML.WEIGHTS`)**")
+            lin_lines = "\n".join(_format_linear_driver_line(r) for r in lw_rows[:5])
+            st.caption(lin_lines)
 
 
 def render_model_training_tab(project_id: str, dataset_id: str, table_id: str, diagnostics=None):
@@ -887,8 +961,12 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str, d
     """
     from scripts.train_bqml_model import train_model, training_job_status
 
-    st.subheader("Train BQML Boosted Tree Regressor")
-    st.caption("Trains continuous preference regression model using all in-scope rated restaurants (`user_rating` 1-10).")
+    st.subheader("Train BQML Hybrid Ensemble (Stage-2 Tree + Counter-Weighted Linear)")
+    st.caption(
+        "Trains both the **Course 1b Location-Blind Stage-2 Boosted Tree** (`restaurant_preference_model`, 70% blend) "
+        "and the **Course 2b 4:2:1 Counter-Weighted All-Scope Linear Regressor** (`restaurant_preference_model_linear`, "
+        "30% blend) using in-scope rated restaurants (`user_rating` 1-10)."
+    )
 
     freshness_opts = render_freshness_controls(
         key_prefix="train",
@@ -933,7 +1011,10 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str, d
         if outcome["error"]:
             st.error(f"Training job `{outcome['job_id']}` failed: {outcome['error']}")
         else:
-            st.success(f"✅ Training job `{outcome['job_id']}` finished. `restaurant_preference_model` has been replaced.")
+            st.success(
+                f"✅ Training job `{outcome['job_id']}` finished. "
+                f"`restaurant_preference_model` and `restaurant_preference_model_linear` have been replaced."
+            )
 
     if st.button("🔍 Validate Training SQL (Dry Run)", key="btn_train_dry_run"):
         try:
@@ -1504,7 +1585,7 @@ def main():
         # SUB-TAB 4: MODEL TRAINING & OPERATIONS
         # -------------------------------------------------------------
         with tab_model:
-            render_model_training_tab(project_id, dataset_id, table_id)
+            render_model_training_tab(project_id, dataset_id, table_id, diagnostics=system_diagnostics)
 
     elif st.session_state.data_loaded and st.session_state.df_enriched.empty:
         st.warning("No data found. Try adjusting filters in the sidebar and clicking 'Load Data'.")

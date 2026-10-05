@@ -97,6 +97,94 @@ class TestSystemStampAndDiagnosticsUi(unittest.TestCase):
         df_rendered = mock_st.dataframe.call_args.args[0]
         self.assertEqual(list(df_rendered["feature"]), ["maps_types_array", "match_score"])
 
+    def test_render_feature_importance_section_displays_both_tree_and_linear_tables(self):
+        from app.ui import st_app
+
+        diag = {
+            "model_trained_at": datetime.datetime(2026, 10, 5, 7, 31, tzinfo=datetime.timezone.utc),
+            "linear_model_trained_at": datetime.datetime(2026, 10, 5, 7, 29, tzinfo=datetime.timezone.utc),
+            "vertex_version": "21",
+            "feature_importance": [
+                {
+                    "feature": "maps_rating",
+                    "gain_pct": 21.8,
+                    "importance_gain": 6.23,
+                    "importance_weight": 39,
+                    "importance_cover": 22.8,
+                }
+            ],
+            "linear_weights": [
+                {
+                    "feature": "match_score",
+                    "feature_type": "numeric",
+                    "importance_magnitude": 0.674,
+                    "standardized_weight": 0.674,
+                    "raw_weight": 0.045,
+                    "category_count": 0,
+                    "category_spread": None,
+                    "top_categories": None,
+                },
+                {
+                    "feature": "localauthorityname",
+                    "feature_type": "categorical",
+                    "importance_magnitude": 0.59,
+                    "standardized_weight": None,
+                    "raw_weight": None,
+                    "category_count": 34,
+                    "category_spread": 0.59,
+                    "top_categories": "Redbridge (-0.30), Kensington and Chelsea (+0.29)",
+                },
+            ],
+        }
+        with patch.object(st_app, "st") as mock_st:
+            st_app.render_feature_importance_section(diagnostics=diag)
+
+        self.assertEqual(mock_st.subheader.call_count, 2)
+        self.assertEqual(mock_st.dataframe.call_count, 2)
+        df_lw_rendered = mock_st.dataframe.call_args_list[1].args[0]
+        self.assertEqual(list(df_lw_rendered["feature"]), ["match_score", "localauthorityname"])
+
+    def test_render_sidebar_diagnostics_displays_hybrid_linear_model_and_drivers(self):
+        from app.ui import st_app
+
+        diag = {
+            "model_trained_at": datetime.datetime(2026, 10, 5, 7, 31, tzinfo=datetime.timezone.utc),
+            "vertex_version": "21",
+            "feature_count": 23,
+            "iterations": 15,
+            "mae": 0.96,
+            "r_squared": 0.415,
+            "linear_model_name": "restaurant_preference_model_linear",
+            "linear_model_trained_at": datetime.datetime(2026, 10, 5, 7, 29, tzinfo=datetime.timezone.utc),
+            "linear_feature_count": 25,
+            "linear_mae": 0.699,
+            "linear_r_squared": 0.562,
+            "linear_weights": [
+                {
+                    "feature": "match_score",
+                    "feature_type": "numeric",
+                    "standardized_weight": 0.674,
+                    "raw_weight": 0.045,
+                    "importance_magnitude": 0.674,
+                },
+                {
+                    "feature": "localauthorityname",
+                    "feature_type": "categorical",
+                    "category_count": 34,
+                    "category_spread": 0.59,
+                    "top_categories": "Redbridge (-0.30), Kensington and Chelsea (+0.29)",
+                    "importance_magnitude": 0.59,
+                },
+            ],
+        }
+        with patch.object(st_app, "st") as mock_st:
+            mock_st.button.return_value = False
+            st_app.render_sidebar_diagnostics("p", "d", "t", "m", diagnostics=diag)
+
+        captions = [c.args[0] for c in mock_st.caption.call_args_list if c.args]
+        self.assertTrue(any("restaurant_preference_model_linear" in c for c in captions))
+        self.assertTrue(any("match_score" in c and "localauthorityname" in c for c in captions))
+
     def test_batch_size_slider_allows_up_to_1000(self):
         with open("app/ui/st_app.py", "r") as f:
             content = f.read()
