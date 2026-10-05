@@ -39,5 +39,5 @@ def test_train_model_sync(mock_client_class):
     )
 
     assert job_id == "test_job_id"
-    assert mock_client.query.call_count == 2
-    assert mock_query_job.result.call_count == 2
+    assert mock_client.query.call_count == 3
+    assert mock_query_job.result.call_count == 3

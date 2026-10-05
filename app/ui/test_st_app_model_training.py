@@ -48,7 +48,8 @@ class ModelTrainingTabCase(unittest.TestCase):
 
         with patch.object(st_app, "st") as mock_st, \
              patch("scripts.train_bqml_model.train_model") as mock_train, \
-             patch("scripts.train_bqml_model.training_job_status") as mock_status:
+             patch("scripts.train_bqml_model.training_job_status") as mock_status, \
+             patch.object(st_app, "rescore_all_in_scope_predictions", return_value=9480) as mock_rescore:
             mock_st.session_state = state
             mock_st.button.side_effect = fake_button
             if train_error is not None:
@@ -64,6 +65,7 @@ class ModelTrainingTabCase(unittest.TestCase):
 
         mock_st.buttons = buttons
         mock_st.status_lookup = mock_status
+        mock_st.rescore = mock_rescore
         return mock_st, mock_train, state
 
     @staticmethod
@@ -188,6 +190,19 @@ class TestTheOutcomeIsReported(ModelTrainingTabCase):
                                 job_status={"state": "DONE", "error": None})
 
         self.assertTrue(any("job-999" in m for m in self._messages(st, "success")))
+
+    def test_a_successful_job_automatically_rescores_predictions(self):
+        st, _, state = self._render(session={"training_job_id": "job-999"},
+                                    job_status={"state": "DONE", "error": None})
+
+        st.rescore.assert_called_once_with(
+            project_id="p",
+            dataset_id="d",
+            table_id="t",
+            model_name="restaurant_preference_model",
+        )
+        self.assertEqual(state["training_last_outcome"]["rescored_rows"], 9480)
+        self.assertTrue(any("9,480" in m for m in self._messages(st, "success")))
 
     def test_a_failed_job_is_an_error_not_a_success(self):
         st, _, _ = self._render(

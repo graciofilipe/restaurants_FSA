@@ -464,6 +464,15 @@ def train_model(
 
             query_job.result()  # Wait for the job to complete
             logger.info(f"Model {full_model_name} trained successfully.")
+            from app.services.ml_prediction import rescore_all_in_scope_predictions
+            rescore_all_in_scope_predictions(
+                project_id=project_id,
+                dataset_id=dataset_id,
+                table_id=table_id,
+                model_name=model_name,
+                client=client,
+                progress_callback=progress_callback,
+            )
             return query_job.job_id
         except GoogleCloudError as e:
             logger.error(f"BigQuery execution failed: {e}")

@@ -506,7 +506,27 @@ class TestTwoStageHurdlePredictionRouting:
         assert 'lin_pred = IF(' in merge_sql
         assert 'ROUND(LEAST(10.0, GREATEST(1.0, COALESCE(S.lin_pred, S.tree_pred, 5.0))), 2)' in merge_sql
 
+    @patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
+    @patch('app.services.ml_prediction.execute_gemini_enrichment')
+    def test_rescore_all_in_scope_predictions_runs_pure_bqml_merge_without_enrichment(
+        self, mock_gemini, mock_maps
+    ):
+        from app.services.ml_prediction import rescore_all_in_scope_predictions
 
+        client = MagicMock()
+        predict_job = MagicMock()
+        predict_job.num_dml_affected_rows = 9480
+        client.query.return_value = predict_job
 
+        updated = rescore_all_in_scope_predictions('p', 'd', 't', 'm', client=client)
 
+        assert updated == 9480
+        mock_maps.assert_not_called()
+        mock_gemini.assert_not_called()
+        client.query.assert_called_once()
+        merge_sql = client.query.call_args.args[0]
+        assert 'MODEL `p.d.m`' in merge_sql
+        assert 'MODEL `p.d.m_linear`' in merge_sql
+        assert 'WHERE (m.in_scope = TRUE OR m.in_scope IS NULL)' in merge_sql
+        assert 'AND (m.predicted_user_rating IS NOT NULL OR m.gemini_insights_structured IS NOT NULL)' in merge_sql
 

@@ -36,7 +36,7 @@ def _wait_for_prediction_job(job: Any, timeout: float = PREDICTION_BQ_TIMEOUT_SE
 
 
 def build_prediction_input_select(project_id: str, dataset_id: str, table_ref: str,
-                                  id_list_str: str) -> str:
+                                  id_list_str: Optional[str] = None) -> str:
     """The `ML.PREDICT` input: the training features, plus the join key and
     Two-Stage Hurdle Stage-1 routing columns.
 
@@ -47,13 +47,21 @@ def build_prediction_input_select(project_id: str, dataset_id: str, table_ref: s
     non-candidates to their deterministic Stage-1 cap (`<= 2.0`) and plausible
     sit-down candidates to the Hybrid Ensemble prediction.
     """
+    where_clause = (
+        f"WHERE m.fhrsid IN ({id_list_str})"
+        if id_list_str
+        else (
+            "WHERE (m.in_scope = TRUE OR m.in_scope IS NULL) "
+            "AND (m.predicted_user_rating IS NOT NULL OR m.gemini_insights_structured IS NOT NULL)"
+        )
+    )
     return f'''          SELECT
             m.fhrsid,
             {is_stage1_gated_sql('m', 'b')} AS _is_stage1_gated,
             {stage1_deterministic_score_sql('m')} AS _stage1_capped_score,
 {feature_select_list()}
 {feature_source_clause(project_id, dataset_id, table_ref)}
-          WHERE m.fhrsid IN ({id_list_str})'''
+          {where_clause}'''
 
 
 def build_hybrid_merge_query(
@@ -62,7 +70,7 @@ def build_hybrid_merge_query(
     table_ref: str,
     model_ref: str,
     linear_model_ref: str,
-    id_list_str: str,
+    id_list_str: Optional[str] = None,
 ) -> str:
     """Construct the Hybrid Ensemble `MERGE` query scoring against both
     `model_ref` (Course 1b Location-Blind Stage-2 Boosted Tree) and
@@ -412,3 +420,50 @@ def generate_predictions(
     except Exception as e:
         logger.error(f"Prediction failed: {e}")
         return False, f"Prediction failed: {str(e)}"
+
+
+def rescore_all_in_scope_predictions(
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    model_name: str = "restaurant_preference_model",
+    client: Optional[bigquery.Client] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
+) -> int:
+    """Execute pure-BQML `build_hybrid_merge_query` across all already-profiled/scored
+    in-scope rows in `table_id` without making any external Places or Gemini API calls.
+
+    Returns the number of rows updated (`job.num_dml_affected_rows` or `0`).
+    """
+    bq_client = client or bigquery.Client(project=project_id)
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+    base_model_name = (
+        model_name[: -len(LINEAR_MODEL_SUFFIX)]
+        if model_name.endswith(LINEAR_MODEL_SUFFIX)
+        else model_name
+    )
+    model_ref = f"{project_id}.{dataset_id}.{base_model_name}"
+    linear_model_ref = f"{project_id}.{dataset_id}.{base_model_name}{LINEAR_MODEL_SUFFIX}"
+
+    if progress_callback:
+        progress_callback("⚡ Rescoring all profiled in-scope restaurants via Hybrid BQML ML.PREDICT...")
+
+    merge_sql = build_hybrid_merge_query(
+        project_id=project_id,
+        dataset_id=dataset_id,
+        table_ref=table_ref,
+        model_ref=model_ref,
+        linear_model_ref=linear_model_ref,
+        id_list_str=None,
+    )
+    job = bq_client.query(merge_sql)
+    _wait_for_prediction_job(job)
+    raw_affected = getattr(job, "num_dml_affected_rows", 0)
+    updated_rows = int(raw_affected) if isinstance(raw_affected, (int, float)) else 0
+    logger.info(f"Rescored {updated_rows} in-scope restaurants against {model_ref} + {linear_model_ref}.")
+    if progress_callback:
+        progress_callback(
+            f"✅ Rescored {updated_rows:,} restaurant(s) in BigQuery (`predicted_user_rating`, `tree_pred`, `lin_pred`)."
+        )
+    return updated_rows
+

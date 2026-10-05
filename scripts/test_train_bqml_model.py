@@ -409,7 +409,7 @@ class TestStrictPreFlightGateAndOrdering:
         check_job_2.result.return_value = post_rows
         train_job = MagicMock()
         train_job.job_id = 'trained-ok'
-        client.query.side_effect = [check_job_1, check_job_2, train_job]
+        client.query.side_effect = [check_job_1, check_job_2, train_job, MagicMock()]
         mock_bq.return_value = client
 
         job_id = train_model('p', 'd', 't', 'm', dry_run=False)
@@ -480,6 +480,7 @@ class TestStage2TrainingAndModelFamilies:
         submitted = [c.args[0] for c in client.query.call_args_list]
         assert any('CREATE OR REPLACE MODEL `p.d.restaurant_preference_model_linear`' in q for q in submitted)
         assert any('CREATE OR REPLACE MODEL `p.d.restaurant_preference_model`' in q for q in submitted)
+        assert any('MERGE `p.d.t` T' in q and 'ML.PREDICT(MODEL `p.d.restaurant_preference_model`' in q for q in submitted)
 
     @patch('app.services.bq_utils.execute_gemini_enrichment', return_value=True)
     @patch('scripts.train_bqml_model.bigquery.Client')
@@ -499,12 +500,13 @@ class TestStage2TrainingAndModelFamilies:
         check_1.result.return_value = [row_missing, row_present]
         check_2 = MagicMock()
         check_2.result.return_value = [post_row_10, row_present]
-        client.query.side_effect = [check_1, check_2, MagicMock()]
+        client.query.side_effect = [check_1, check_2, MagicMock(), MagicMock()]
         mock_bq.return_value = client
 
         train_model('p', 'd', 't', 'm', dry_run=False, refresh_missing_stage2_pillars=True)
 
         mock_gemini.assert_called_once()
         assert mock_gemini.call_args.kwargs['fhrsids'] == ['10']
+
 
 

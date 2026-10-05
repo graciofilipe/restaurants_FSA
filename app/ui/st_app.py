@@ -13,7 +13,10 @@ from app.services.bq_utils import (
     bulk_update_reviews,
     fetch_system_diagnostics,
 )
-from app.services.ml_prediction import generate_predictions
+from app.services.ml_prediction import (
+    generate_predictions,
+    rescore_all_in_scope_predictions,
+)
 from app.core.data_processing import (
     enhance_dataframe_with_insights,
     calculate_restaurant_priority,
@@ -415,6 +418,16 @@ def load_data_into_state(
     """
     Helper to load data into session state.
     """
+    if isinstance(getattr(st, "session_state", None), dict):
+        st.session_state["_last_loader_args"] = {
+            "project_id": project_id,
+            "dataset_id": dataset_id,
+            "table_id": table_id,
+            "in_scope_filter": in_scope_filter,
+            "outcode_filter": outcode_filter,
+            "first_seen_start_date": first_seen_start_date,
+            "local_authority_filter": local_authority_filter,
+        }
     with st.spinner("Fetching data from BigQuery..."):
         try:
             raw_data = load_filtered_data_from_bq(
@@ -1037,10 +1050,30 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str, d
             st.session_state.pop("training_job_id", None)
             status = None
         if status and status["state"] == "DONE":
-            st.session_state["training_last_outcome"] = {"job_id": tracked, "error": status["error"]}
-            st.session_state.pop("training_job_id", None)
+            rescored_rows = 0
             if not status["error"]:
+                try:
+                    with st.spinner("Rescoring all in-scope restaurants against newly trained models..."):
+                        rescored_rows = rescore_all_in_scope_predictions(
+                            project_id=project_id,
+                            dataset_id=dataset_id,
+                            table_id=table_id,
+                            model_name=TRAINING_MODEL_NAME,
+                        )
+                except Exception as rescore_err:
+                    st.warning(f"Model trained, but automatic rescore encountered an issue: {rescore_err}")
                 clear_diagnostics_cache()
+                loader_args = st.session_state.get("_last_loader_args")
+                if isinstance(loader_args, dict):
+                    load_data_into_state(**loader_args)
+                elif isinstance(df_loaded, pd.DataFrame) and not df_loaded.empty:
+                    set_enriched_frame(calculate_restaurant_priority(enhance_dataframe_with_insights(df_loaded)))
+            st.session_state["training_last_outcome"] = {
+                "job_id": tracked,
+                "error": status["error"],
+                "rescored_rows": rescored_rows,
+            }
+            st.session_state.pop("training_job_id", None)
 
     running = st.session_state.get("training_job_id")
     outcome = st.session_state.get("training_last_outcome")
@@ -1054,9 +1087,15 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str, d
         if outcome["error"]:
             st.error(f"Training job `{outcome['job_id']}` failed: {outcome['error']}")
         else:
+            rescored_count = outcome.get("rescored_rows")
+            rescored_suffix = (
+                f" Rescored {rescored_count:,} in-scope restaurant(s) (`predicted_user_rating`, `tree_pred`, `lin_pred`)."
+                if isinstance(rescored_count, int) and rescored_count > 0
+                else ""
+            )
             st.success(
                 f"✅ Training job `{outcome['job_id']}` finished. "
-                f"`restaurant_preference_model` and `restaurant_preference_model_linear` have been replaced."
+                f"`restaurant_preference_model` and `restaurant_preference_model_linear` have been replaced.{rescored_suffix}"
             )
 
     if st.button("🔍 Validate Training SQL (Dry Run)", key="btn_train_dry_run"):
