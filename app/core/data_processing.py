@@ -458,42 +458,164 @@ def _scope_score(in_scope: Any) -> float:
     return 50.0
 
 
-def compute_plausible_conflict_score(df: pd.DataFrame) -> pd.Series:
-    """Computes a signal-conflict score (0-100) for plausible active-learning triage.
+def compute_active_learning_voi_scores(df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+    """Compute decision-theoretic Active Learning Value-of-Information scores (0-100):
+    `(desk_voi_score, visit_voi_score)`.
 
-    Surfaces sit-down `RESTAURANT_DINING` candidates where signals disagree
-    (`match_score` vs `predicted_user_rating`, or `pillar_community_score` vs
-    `maps_reviews` hype) so a single human rating resolves maximum model
-    uncertainty in the plausible zone. Non-sit-down or non-RESTAURANT_DINING
-    rows receive `0.0`.
+    1. `desk_voi_score` ("Value of Desk Rating" — Pure Epistemic Disagreement x Leverage):
+       - Eligible: Unrated Stage-2 sit-down `RESTAURANT_DINING` candidates.
+       - Driven by Query-by-Committee disagreement `|tree_pred - lin_pred|` and
+         prior residual `|predicted_user_rating - prior(match_score)|`, amplified
+         by borough label scarcity and Pillar 7 feature sparsity.
+    2. `visit_voi_score` ("Value of Visiting" — 100% Statistical & Culinary, Zero Distance Decay):
+       - Sub-Pathway A (Unrated Exploratory Visits, `predicted_user_rating >= 5.5`):
+         Driven by 90th-percentile Bayesian Upper Confidence Bound (`UCB_90`) above
+         the dining threshold (`5.0`), epistemic uncertainty, and visited-borough scarcity.
+       - Sub-Pathway B (High-Rated Desk Confirmations, `rating_source != 'visited'` and `user_rating >= 6`):
+         Driven by the ground-truth promotion value (`1x/2x -> 2x Tree / 4x Linear` weight)
+         combining `(user_rating - 5.0)`, model residual `|user_rating - predicted_user_rating|`,
+         committee uncertainty, and visited-borough scarcity.
     """
     if df is None or df.empty:
-        return pd.Series([], dtype=float)
+        empty = pd.Series([], dtype=float)
+        return empty, empty.copy()
 
-    match_num = pd.to_numeric(_column_or_missing(df, 'match_score'), errors='coerce')
-    pred_num = pd.to_numeric(_column_or_missing(df, 'predicted_user_rating'), errors='coerce')
-    comm_num = pd.to_numeric(_column_or_missing(df, 'pillar_community_score'), errors='coerce').fillna(5.0)
-    rev_num = pd.to_numeric(_column_or_missing(df, 'maps_reviews'), errors='coerce').fillna(0.0).clip(lower=0.0)
-
-    match_on_10 = 1.0 + 9.0 * (match_num.fillna(50.0).clip(0.0, 100.0) / 100.0)
-    pred_filled = pred_num.fillna(match_on_10)
-
-    model_vs_gemini_gap = (match_on_10 - pred_filled).abs() * (60.0 / 9.0)
-    log_rev_scale = (np.log10(rev_num + 1.0) * 2.5).clip(1.0, 10.0)
-    enclave_vs_hype_gap = (comm_num - log_rev_scale).abs() * (40.0 / 9.0)
-
-    raw_conflict = (model_vs_gemini_gap + enclave_vs_hype_gap).clip(0.0, 100.0)
-
+    # Stage-2 Sit-Down Plausibility Gate: must be explicitly profiled as sit-down RESTAURANT_DINING
     sit_down = _column_or_missing(df, 'pillar_is_sit_down')
-    is_false_sit_down = sit_down.map(lambda v: v is False or str(v).lower() in ('false', '0')).astype(bool)
+    is_true_sit_down = sit_down.map(
+        lambda v: v is True or str(v).lower() in ('true', '1')
+    ).astype(bool)
+    pred_sit_down = pd.to_numeric(_column_or_missing(df, 'predicted_is_sit_down'), errors='coerce')
+    is_pred_non_sit_down = (pred_sit_down.notna() & (pred_sit_down < 0.5)).astype(bool)
     est_type = _column_or_missing(df, 'pillar_establishment_type')
-    is_non_dining = est_type.map(
-        lambda v: isinstance(v, str) and bool(v.strip()) and v.strip() != 'RESTAURANT_DINING'
+    is_restaurant_dining = est_type.map(
+        lambda v: isinstance(v, str) and v.strip() == 'RESTAURANT_DINING'
+    ).astype(bool)
+    in_scope_col = _column_or_missing(df, 'in_scope')
+    is_out_of_scope = in_scope_col.map(
+        lambda v: v is False or str(v).lower() in ('false', '0')
     ).astype(bool)
 
-    gated = (is_false_sit_down | is_non_dining).to_numpy()
-    scores = np.where(gated, 0.0, _round_like_python(raw_conflict.to_numpy(dtype=float), 1))
-    return pd.Series(scores, index=df.index, dtype=float)
+    tree_num = pd.to_numeric(_column_or_missing(df, 'tree_pred'), errors='coerce')
+    lin_num = pd.to_numeric(_column_or_missing(df, 'lin_pred'), errors='coerce')
+    has_both_preds = (tree_num.notna() & lin_num.notna()).to_numpy()
+    # Stage-1 gated rows in BigQuery have both tree_pred and lin_pred set to _stage1_capped_score (<= 2.0)
+    is_stage1_capped = (
+        has_both_preds
+        & (tree_num.fillna(99.0).to_numpy(dtype=float) <= 2.0)
+        & (lin_num.fillna(99.0).to_numpy(dtype=float) <= 2.0)
+        & (tree_num.fillna(-1.0).to_numpy(dtype=float) == lin_num.fillna(-2.0).to_numpy(dtype=float))
+    )
+
+    is_stage2 = (
+        is_true_sit_down.to_numpy()
+        & is_restaurant_dining.to_numpy()
+        & ~is_pred_non_sit_down.to_numpy()
+        & ~is_out_of_scope.to_numpy()
+        & ~is_stage1_capped
+    )
+
+    # Rating & source status
+    user_rating_num = pd.to_numeric(_column_or_missing(df, 'user_rating'), errors='coerce')
+    is_rated = user_rating_num.notna().to_numpy()
+    is_unrated = ~is_rated
+    rating_source_str = (
+        _column_or_missing(df, 'rating_source')
+        .fillna('')
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+    is_visited = is_rated & (rating_source_str == 'visited').to_numpy()
+    is_desk_or_null_rated = is_rated & ~is_visited
+
+    # Committee Epistemic Uncertainty (sigma_QBC)
+    match_num = pd.to_numeric(_column_or_missing(df, 'match_score'), errors='coerce').fillna(50.0).clip(0.0, 100.0)
+    prior_pred = (0.643 + 0.072 * match_num).clip(1.0, 10.0)
+    hybrid_pred = pd.to_numeric(_column_or_missing(df, 'predicted_user_rating'), errors='coerce').fillna(prior_pred)
+
+    comm_num = pd.to_numeric(_column_or_missing(df, 'pillar_community_score'), errors='coerce').fillna(5.0)
+    rev_num = pd.to_numeric(_column_or_missing(df, 'maps_reviews'), errors='coerce').fillna(0.0).clip(lower=0.0)
+    log_rev_scale = (np.log10(rev_num + 1.0) * 2.5).clip(1.0, 10.0)
+    enclave_vs_hype_gap = (comm_num - log_rev_scale).abs() * (40.0 / 9.0)
+    fallback_delta_models = 2.0 * (enclave_vs_hype_gap.to_numpy(dtype=float) / 100.0)
+
+    tree_minus_lin = (tree_num.fillna(0.0) - lin_num.fillna(0.0)).abs().to_numpy(dtype=float)
+    delta_models = np.where(has_both_preds, tree_minus_lin, fallback_delta_models)
+    delta_prior = (hybrid_pred - prior_pred).abs().to_numpy(dtype=float)
+    sigma_qbc = np.sqrt(0.60 * np.square(delta_models) + 0.40 * np.square(delta_prior))
+
+    # Borough scarcity counts
+    borough_col = _first_present_column(df, 'localauthorityname', 'LocalAuthorityName')
+    borough_key = borough_col.fillna('').astype(str).str.strip().str.lower()
+    has_borough = (borough_key != '').to_numpy()
+
+    stg2_labeled_series = pd.Series((is_stage2 & is_rated).astype(float), index=df.index)
+    visited_series = pd.Series(is_visited.astype(float), index=df.index)
+    n_stg2_borough = np.where(
+        has_borough,
+        stg2_labeled_series.groupby(borough_key).transform('sum').to_numpy(dtype=float),
+        0.0,
+    )
+    n_visited_borough = np.where(
+        has_borough,
+        visited_series.groupby(borough_key).transform('sum').to_numpy(dtype=float),
+        0.0,
+    )
+
+    # Pillar 7 feature sparsity indicator
+    dish_spec = _column_or_missing(df, 'pillar_dish_specialization')
+    missing_dish_spec = dish_spec.isna() | dish_spec.astype(str).str.strip().isin(['', 'None', 'nan', '<NA>'])
+    dish_specificity = (
+        _column_or_missing(df, 'pillar_dish_specificity')
+        .fillna('')
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+    i_sparse = (missing_dish_spec | (dish_specificity == 'HYPER_LOCAL_CITY')).to_numpy(dtype=float)
+
+    # Channel 1: desk_voi_score (0-100)
+    desk_leverage = 1.0 + (0.75 / np.sqrt(1.0 + n_stg2_borough)) + (0.25 * i_sparse)
+    raw_desk_voi = sigma_qbc * desk_leverage
+    scaled_desk_voi = np.clip((raw_desk_voi / 3.20) * 100.0, 0.0, 100.0)
+    desk_eligible = is_stage2 & is_unrated
+    desk_scores = np.where(desk_eligible, _round_like_python(scaled_desk_voi, 1), 0.0)
+
+    # Channel 2: visit_voi_score (0-100, zero distance penalty)
+    visit_leverage = 1.0 + (0.80 / np.sqrt(1.0 + n_visited_borough))
+    hybrid_arr = hybrid_pred.to_numpy(dtype=float)
+
+    # Sub-Pathway A: Unrated Exploratory Visits (hybrid >= 5.5)
+    ucb_90 = hybrid_arr + 1.28 * sigma_qbc
+    raw_visit_new = np.maximum(0.0, ucb_90 - 5.0) * (1.0 + 0.35 * sigma_qbc) * visit_leverage
+    scaled_visit_new = np.clip((raw_visit_new / 8.0) * 100.0, 0.0, 100.0)
+    unrated_visit_eligible = is_stage2 & is_unrated & (hybrid_arr >= 5.5)
+
+    # Sub-Pathway B: High-Rated Desk Confirmations (user_rating >= 6.0, not yet visited)
+    y_desk = np.nan_to_num(user_rating_num.to_numpy(dtype=float), nan=0.0)
+    delta_anchor = np.abs(y_desk - hybrid_arr) + 0.50 * sigma_qbc
+    raw_visit_confirm = np.maximum(0.0, y_desk - 5.0) * (1.0 + 0.60 * delta_anchor) * visit_leverage
+    scaled_visit_confirm = np.clip((raw_visit_confirm / 12.5) * 100.0, 0.0, 100.0)
+    confirm_visit_eligible = is_stage2 & is_desk_or_null_rated & (y_desk >= 6.0)
+
+    visit_combined = np.select(
+        [unrated_visit_eligible, confirm_visit_eligible],
+        [scaled_visit_new, scaled_visit_confirm],
+        default=0.0,
+    )
+    visit_scores = np.where(visit_combined > 0.0, _round_like_python(visit_combined, 1), 0.0)
+
+    return (
+        pd.Series(desk_scores, index=df.index, dtype=float),
+        pd.Series(visit_scores, index=df.index, dtype=float),
+    )
+
+
+def compute_plausible_conflict_score(df: pd.DataFrame) -> pd.Series:
+    """Backward-compatible wrapper returning `desk_voi_score` (0-100)."""
+    desk_voi, _ = compute_active_learning_voi_scores(df)
+    return desk_voi
 
 
 def calculate_restaurant_priority(
@@ -504,8 +626,8 @@ def calculate_restaurant_priority(
     today_date: Optional[datetime.date] = None
 ) -> pd.DataFrame:
     """
-    Computes distance, proximity score, staleness score, Google Maps prior, and composite priority score.
-    Returns the DataFrame augmented with 'distance_km', 'priority_score', and 'conflict_score'.
+    Computes distance, proximity score, staleness score, Google Maps prior, composite priority score,
+    and Active Learning VoI scores ('desk_voi_score', 'visit_voi_score', 'conflict_score').
 
     Column-at-a-time since D8. The Streamlit ML Predictions tab re-scores the
     whole frame on every rerun -- every slider drag, every checkbox -- so this
@@ -618,11 +740,15 @@ def calculate_restaurant_priority(
                                priority_scores)
     priority_scores = np.where(is_out_of_scope, 0.0, priority_scores)
 
+    desk_voi, visit_voi = compute_active_learning_voi_scores(res_df)
+
     res_df['distance_km'] = distances
     res_df['priority_score'] = priority_scores
     res_df['proximity_score'] = prox_scores
     res_df['staleness_score'] = stale_scores
     res_df['maps_prior_score'] = prior_scores
-    res_df['conflict_score'] = compute_plausible_conflict_score(res_df)
+    res_df['desk_voi_score'] = desk_voi
+    res_df['visit_voi_score'] = visit_voi
+    res_df['conflict_score'] = desk_voi
 
     return res_df

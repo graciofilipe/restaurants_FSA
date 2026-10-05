@@ -138,10 +138,15 @@ def test_missing_values_sort_last_in_both_directions(df):
 def test_rating_source_and_plausible_active_learning_filter():
     from app.ui.st_app import (
         SOURCE_DESK,
+        SOURCE_DESK_VOI,
         SOURCE_NEEDS_TRIAGE,
         SOURCE_PLAUSIBLE_AL,
         SOURCE_VISITED,
+        SOURCE_VISIT_VOI_CONFIRM,
+        SOURCE_VISIT_VOI_NEW,
         SORT_CONFLICT,
+        SORT_DESK_VOI,
+        SORT_VISIT_VOI,
     )
 
     frame = pd.DataFrame([
@@ -150,19 +155,25 @@ def test_rating_source_and_plausible_active_learning_filter():
             "in_scope": True,
             "user_rating": 8.0,
             "rating_source": "visited",
+            "predicted_user_rating": 7.8,
             "match_score": 85.0,
             "pillar_is_sit_down": True,
             "pillar_establishment_type": "RESTAURANT_DINING",
-            "conflict_score": 10.0,
+            "desk_voi_score": 0.0,
+            "visit_voi_score": 0.0,
+            "conflict_score": 0.0,
         },
         {
             "fhrsid": "2",
             "in_scope": True,
             "user_rating": 2.0,
             "rating_source": "desk",
+            "predicted_user_rating": 1.5,
             "match_score": 30.0,
             "pillar_is_sit_down": False,
             "pillar_establishment_type": "FAST_FOOD_TAKEAWAY",
+            "desk_voi_score": 0.0,
+            "visit_voi_score": 0.0,
             "conflict_score": 0.0,
         },
         {
@@ -170,26 +181,51 @@ def test_rating_source_and_plausible_active_learning_filter():
             "in_scope": True,
             "user_rating": 7.0,
             "rating_source": None,
+            "predicted_user_rating": 5.8,
             "match_score": 78.0,
             "pillar_is_sit_down": True,
             "pillar_establishment_type": "RESTAURANT_DINING",
-            "conflict_score": 15.0,
+            "desk_voi_score": 0.0,
+            "visit_voi_score": 55.0,
+            "conflict_score": 0.0,
         },
         {
             "fhrsid": "4",
             "in_scope": True,
             "user_rating": None,
             "rating_source": None,
+            "predicted_user_rating": 6.4,
             "match_score": 88.0,
             "pillar_is_sit_down": True,
             "pillar_establishment_type": "RESTAURANT_DINING",
-            "conflict_score": 62.5,
+            "desk_voi_score": 82.5,
+            "visit_voi_score": 74.0,
+            "conflict_score": 82.5,
+        },
+        {
+            "fhrsid": "5",
+            "in_scope": True,
+            "user_rating": 8.0,
+            "rating_source": "desk",
+            "predicted_user_rating": 6.1,
+            "match_score": 84.0,
+            "pillar_is_sit_down": True,
+            "pillar_establishment_type": "RESTAURANT_DINING",
+            "desk_voi_score": 0.0,
+            "visit_voi_score": 92.0,
+            "conflict_score": 0.0,
         },
     ])
 
     assert ids(filter_and_sort_restaurants(frame, rating_source_filter=SOURCE_VISITED)) == ["1"]
-    assert ids(filter_and_sort_restaurants(frame, rating_source_filter=SOURCE_DESK)) == ["2"]
+    assert ids(filter_and_sort_restaurants(frame, rating_source_filter=SOURCE_DESK)) == ["5", "2"]
     assert ids(filter_and_sort_restaurants(frame, rating_source_filter=SOURCE_NEEDS_TRIAGE)) == ["3"]
+    assert ids(filter_and_sort_restaurants(frame, rating_source_filter=SOURCE_DESK_VOI)) == ["4"]
     assert ids(filter_and_sort_restaurants(frame, rating_source_filter=SOURCE_PLAUSIBLE_AL)) == ["4"]
-    assert ids(filter_and_sort_restaurants(frame, sort_by=SORT_CONFLICT)) == ["4", "3", "1", "2"]
+    assert ids(filter_and_sort_restaurants(frame, rating_source_filter=SOURCE_VISIT_VOI_NEW)) == ["4"]
+    assert ids(filter_and_sort_restaurants(frame, rating_source_filter=SOURCE_VISIT_VOI_CONFIRM, sort_by=SORT_VISIT_VOI)) == ["5", "3"]
+    assert ids(filter_and_sort_restaurants(frame, sort_by=SORT_DESK_VOI))[0] == "4"
+    assert ids(filter_and_sort_restaurants(frame, sort_by=SORT_CONFLICT))[0] == "4"
+    assert ids(filter_and_sort_restaurants(frame, sort_by=SORT_VISIT_VOI))[:3] == ["5", "4", "3"]
+
 

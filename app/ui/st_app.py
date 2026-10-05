@@ -60,7 +60,9 @@ FRESHNESS_MODES = (
 # hand-kept copy of a fourth naming convention -- flat, numeric-prefixed names
 # that only ever existed in the DataFrame, built per row per rerun.
 DISPLAY_COLUMNS = [
-    "fhrsid", "businessname", "priority_score", "conflict_score", "distance_km", "in_scope", "rating_source", "user_rating", "predicted_user_rating", "predicted_at",
+    "fhrsid", "businessname", "priority_score", "desk_voi_score", "visit_voi_score",
+    "distance_km", "in_scope", "rating_source", "user_rating",
+    "predicted_user_rating", "tree_pred", "lin_pred", "predicted_at",
     "addressline1", "addressline2", "addressline3",
     "postcode", "localauthorityname", "first_seen",
     "price_level", "maps_rating", "maps_reviews",
@@ -92,13 +94,18 @@ SOURCE_ALL = FILTER_ALL
 SOURCE_VISITED = "Visited Only"
 SOURCE_DESK = "Desk Triage Only"
 SOURCE_NEEDS_TRIAGE = "Needs Source Triage (Rated, NULL Source)"
-SOURCE_PLAUSIBLE_AL = "🔥 Plausible Active-Learning Triage (Unrated, Match >= 65)"
+SOURCE_DESK_VOI = "🧠 Desk VoI: Unrated Disagreement"
+SOURCE_VISIT_VOI_NEW = "🍽️ Visit VoI: New Unrated Discovery"
+SOURCE_VISIT_VOI_CONFIRM = "🔬 Visit VoI: Confirm Desk Shortlist"
+SOURCE_PLAUSIBLE_AL = SOURCE_DESK_VOI
 RATING_SOURCE_OPTIONS = (
     SOURCE_ALL,
     SOURCE_VISITED,
     SOURCE_DESK,
     SOURCE_NEEDS_TRIAGE,
-    SOURCE_PLAUSIBLE_AL,
+    SOURCE_DESK_VOI,
+    SOURCE_VISIT_VOI_NEW,
+    SOURCE_VISIT_VOI_CONFIRM,
 )
 
 PRED_YES = "Has Predicted Rating"
@@ -118,7 +125,9 @@ MAPS_NEVER_LOOKED_UP = "Not Looked Up Yet"
 MAPS_OPTIONS = (MAPS_ALL, MAPS_FOUND, MAPS_NOT_FOUND, MAPS_NEVER_LOOKED_UP)
 
 SORT_PRIORITY = "Priority Score (High to Low)"
-SORT_CONFLICT = "Signal Conflict Score (High to Low)"
+SORT_DESK_VOI = "🧠 Desk VoI (Value of Desk Rating)"
+SORT_VISIT_VOI = "🍽️ Visit VoI (Value of Visiting)"
+SORT_CONFLICT = SORT_DESK_VOI
 SORT_DISTANCE = "Distance (Nearest First)"
 SORT_PREDICTED = "Predicted Rating (High to Low)"
 SORT_USER_RATING = "User Rating (High to Low)"
@@ -127,16 +136,17 @@ SORT_MATCH_SCORE = "Gemini Match Score (High to Low)"
 SORT_FIRST_SEEN = "First Seen (Newest)"
 SORT_NAME = "Business Name (A-Z)"
 SORT_NATURAL = "Natural / BQ Order"
-SORT_OPTIONS = (SORT_PRIORITY, SORT_CONFLICT, SORT_DISTANCE, SORT_PREDICTED,
-                SORT_USER_RATING, SORT_MAPS_RATING, SORT_MATCH_SCORE,
-                SORT_FIRST_SEEN, SORT_NAME, SORT_NATURAL)
+SORT_OPTIONS = (SORT_PRIORITY, SORT_DESK_VOI, SORT_VISIT_VOI, SORT_DISTANCE,
+                SORT_PREDICTED, SORT_USER_RATING, SORT_MAPS_RATING,
+                SORT_MATCH_SCORE, SORT_FIRST_SEEN, SORT_NAME, SORT_NATURAL)
 
 # Sort option -> (candidate columns, ascending). The first candidate the frame
 # actually has wins; `SORT_NATURAL` is absent on purpose, since leaving the
 # BigQuery order alone is what it means.
 SORT_BY_COLUMN = {
     SORT_PRIORITY: (("priority_score",), False),
-    SORT_CONFLICT: (("conflict_score", "priority_score"), False),
+    SORT_DESK_VOI: (("desk_voi_score", "conflict_score", "priority_score"), False),
+    SORT_VISIT_VOI: (("visit_voi_score", "priority_score"), False),
     SORT_DISTANCE: (("distance_km",), True),
     SORT_PREDICTED: (("predicted_user_rating",), False),
     SORT_USER_RATING: (("user_rating",), False),
@@ -228,7 +238,7 @@ def filter_and_sort_restaurants(
         elif user_rating_filter == RATED_NO:
             filtered = filtered[filtered["user_rating"].isna()]
 
-    # 2b. Rating Source & Plausible Active-Learning Triage Filter
+    # 2b. Rating Source & Decision-Theoretic Active Learning Presets
     if rating_source_filter == SOURCE_VISITED and "rating_source" in filtered.columns:
         filtered = filtered[filtered["rating_source"] == "visited"]
     elif rating_source_filter == SOURCE_DESK and "rating_source" in filtered.columns:
@@ -236,18 +246,51 @@ def filter_and_sort_restaurants(
     elif rating_source_filter == SOURCE_NEEDS_TRIAGE:
         if "user_rating" in filtered.columns and "rating_source" in filtered.columns:
             filtered = filtered[filtered["user_rating"].notna() & filtered["rating_source"].isna()]
-    elif rating_source_filter == SOURCE_PLAUSIBLE_AL:
+    elif rating_source_filter == SOURCE_DESK_VOI:
         mask = pd.Series(True, index=filtered.index)
         if "user_rating" in filtered.columns:
             mask &= filtered["user_rating"].isna()
-        if "in_scope" in filtered.columns:
-            mask &= filtered["in_scope"] != False  # noqa: E712
-        if "match_score" in filtered.columns:
-            mask &= pd.to_numeric(filtered["match_score"], errors="coerce").fillna(0.0) >= 65.0
-        if "pillar_is_sit_down" in filtered.columns:
-            mask &= filtered["pillar_is_sit_down"] == True  # noqa: E712
-        if "pillar_establishment_type" in filtered.columns:
-            mask &= filtered["pillar_establishment_type"] == "RESTAURANT_DINING"
+        if "desk_voi_score" in filtered.columns:
+            mask &= pd.to_numeric(filtered["desk_voi_score"], errors="coerce").fillna(0.0) > 0.0
+        else:
+            if "in_scope" in filtered.columns:
+                mask &= filtered["in_scope"] != False  # noqa: E712
+            if "pillar_is_sit_down" in filtered.columns:
+                mask &= filtered["pillar_is_sit_down"] == True  # noqa: E712
+            if "pillar_establishment_type" in filtered.columns:
+                mask &= filtered["pillar_establishment_type"] == "RESTAURANT_DINING"
+        filtered = filtered[mask]
+    elif rating_source_filter == SOURCE_VISIT_VOI_NEW:
+        mask = pd.Series(True, index=filtered.index)
+        if "user_rating" in filtered.columns:
+            mask &= filtered["user_rating"].isna()
+        if "visit_voi_score" in filtered.columns:
+            mask &= pd.to_numeric(filtered["visit_voi_score"], errors="coerce").fillna(0.0) > 0.0
+        else:
+            if "in_scope" in filtered.columns:
+                mask &= filtered["in_scope"] != False  # noqa: E712
+            if "pillar_is_sit_down" in filtered.columns:
+                mask &= filtered["pillar_is_sit_down"] == True  # noqa: E712
+            if "pillar_establishment_type" in filtered.columns:
+                mask &= filtered["pillar_establishment_type"] == "RESTAURANT_DINING"
+            if "predicted_user_rating" in filtered.columns:
+                mask &= pd.to_numeric(filtered["predicted_user_rating"], errors="coerce").fillna(0.0) >= 5.5
+        filtered = filtered[mask]
+    elif rating_source_filter == SOURCE_VISIT_VOI_CONFIRM:
+        mask = pd.Series(True, index=filtered.index)
+        if "user_rating" in filtered.columns:
+            mask &= pd.to_numeric(filtered["user_rating"], errors="coerce").fillna(0.0) >= 6.0
+        if "rating_source" in filtered.columns:
+            mask &= filtered["rating_source"].fillna("").astype(str).str.strip().str.lower() != "visited"
+        if "visit_voi_score" in filtered.columns:
+            mask &= pd.to_numeric(filtered["visit_voi_score"], errors="coerce").fillna(0.0) > 0.0
+        else:
+            if "in_scope" in filtered.columns:
+                mask &= filtered["in_scope"] != False  # noqa: E712
+            if "pillar_is_sit_down" in filtered.columns:
+                mask &= filtered["pillar_is_sit_down"] == True  # noqa: E712
+            if "pillar_establishment_type" in filtered.columns:
+                mask &= filtered["pillar_establishment_type"] == "RESTAURANT_DINING"
         filtered = filtered[mask]
 
     # 3. ML Prediction Filter

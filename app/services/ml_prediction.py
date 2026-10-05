@@ -91,6 +91,8 @@ def build_hybrid_merge_query(
         t.fhrsid,
         t._is_stage1_gated,
         t._stage1_capped_score,
+        t.tree_pred,
+        l.lin_pred,
         ({HYBRID_TREE_WEIGHT} * t.tree_pred + {HYBRID_LINEAR_WEIGHT} * l.lin_pred) AS predicted_user_rating
       FROM tree_preds AS t
       JOIN lin_preds AS l USING (fhrsid)
@@ -102,6 +104,16 @@ def build_hybrid_merge_query(
           S._is_stage1_gated,
           S._stage1_capped_score,
           ROUND(LEAST(10.0, GREATEST(1.0, S.predicted_user_rating)), 2)
+        ),
+        tree_pred = IF(
+          S._is_stage1_gated,
+          S._stage1_capped_score,
+          ROUND(LEAST(10.0, GREATEST(1.0, COALESCE(S.tree_pred, S.lin_pred, 5.0))), 2)
+        ),
+        lin_pred = IF(
+          S._is_stage1_gated,
+          S._stage1_capped_score,
+          ROUND(LEAST(10.0, GREATEST(1.0, COALESCE(S.lin_pred, S.tree_pred, 5.0))), 2)
         ),
         predicted_at = CURRENT_TIMESTAMP()
     '''

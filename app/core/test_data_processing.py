@@ -519,7 +519,7 @@ class TestPlausibleConflictScore(unittest.TestCase):
         self.assertGreater(scores.iloc[0], 40.0)
 
     def test_non_sit_down_and_non_restaurant_dining_are_zeroed(self):
-        from app.core.data_processing import compute_plausible_conflict_score
+        from app.core.data_processing import compute_active_learning_voi_scores, compute_plausible_conflict_score
 
         df = pd.DataFrame([
             {
@@ -536,7 +536,154 @@ class TestPlausibleConflictScore(unittest.TestCase):
                 'pillar_is_sit_down': True,
                 'pillar_establishment_type': 'FAST_FOOD_TAKEAWAY',
             },
+            # Unprofiled row (NULL pillar fields) must receive 0.0
+            {
+                'fhrsid': '3',
+                'match_score': None,
+                'predicted_user_rating': 1.0,
+                'tree_pred': 1.0,
+                'lin_pred': 1.0,
+                'pillar_is_sit_down': None,
+                'pillar_establishment_type': None,
+            },
+            # Stage-1 capped chain row (tree_pred == lin_pred <= 2.0) must receive 0.0
+            {
+                'fhrsid': '4',
+                'match_score': 75,
+                'predicted_user_rating': 1.75,
+                'tree_pred': 1.75,
+                'lin_pred': 1.75,
+                'pillar_is_sit_down': True,
+                'pillar_establishment_type': 'RESTAURANT_DINING',
+            },
         ])
         scores = compute_plausible_conflict_score(df)
-        self.assertEqual(list(scores), [0.0, 0.0])
+        self.assertEqual(list(scores), [0.0, 0.0, 0.0, 0.0])
+        desk_voi, visit_voi = compute_active_learning_voi_scores(df)
+        self.assertEqual(list(desk_voi), [0.0, 0.0, 0.0, 0.0])
+        self.assertEqual(list(visit_voi), [0.0, 0.0, 0.0, 0.0])
+
+    def test_active_learning_voi_scores_qbc_disagreement_and_zero_distance_decay(self):
+        from app.core.data_processing import (
+            calculate_restaurant_priority,
+            compute_active_learning_voi_scores,
+        )
+
+        df = pd.DataFrame([
+            # Row 0: Unrated Stage-2 with high QBC disagreement (tree=5.1, lin=2.3) in sparse borough
+            {
+                'fhrsid': '10',
+                'localauthorityname': 'Merton',
+                'latitude': 51.40,
+                'longitude': -0.19,
+                'user_rating': None,
+                'rating_source': None,
+                'predicted_user_rating': 3.7,
+                'tree_pred': 5.1,
+                'lin_pred': 2.3,
+                'match_score': 78,
+                'pillar_is_sit_down': True,
+                'pillar_establishment_type': 'RESTAURANT_DINING',
+                'pillar_dish_specificity': 'HYPER_LOCAL_CITY',
+            },
+            # Row 1: Unrated Stage-2 with low QBC disagreement (tree=5.8, lin=5.7)
+            {
+                'fhrsid': '11',
+                'localauthorityname': 'Merton',
+                'latitude': 51.40,
+                'longitude': -0.19,
+                'user_rating': None,
+                'rating_source': None,
+                'predicted_user_rating': 5.75,
+                'tree_pred': 5.8,
+                'lin_pred': 5.7,
+                'match_score': 72,
+                'pillar_is_sit_down': True,
+                'pillar_establishment_type': 'RESTAURANT_DINING',
+                'pillar_dish_specialization': 'Pizza',
+                'pillar_dish_specificity': 'BROAD_GENERIC',
+            },
+            # Row 2: Unrated Exploratory Visit candidate Nearby (SW16)
+            {
+                'fhrsid': '12',
+                'localauthorityname': 'Lewisham',
+                'latitude': 51.4212,
+                'longitude': -0.1292,
+                'user_rating': None,
+                'rating_source': None,
+                'predicted_user_rating': 6.8,
+                'tree_pred': 7.4,
+                'lin_pred': 6.2,
+                'match_score': 86,
+                'pillar_is_sit_down': True,
+                'pillar_establishment_type': 'RESTAURANT_DINING',
+            },
+            # Row 3: Identical Unrated Exploratory Visit candidate Far Away (North London, 20km away)
+            {
+                'fhrsid': '13',
+                'localauthorityname': 'Lewisham',
+                'latitude': 51.6000,
+                'longitude': -0.1500,
+                'user_rating': None,
+                'rating_source': None,
+                'predicted_user_rating': 6.8,
+                'tree_pred': 7.4,
+                'lin_pred': 6.2,
+                'match_score': 86,
+                'pillar_is_sit_down': True,
+                'pillar_establishment_type': 'RESTAURANT_DINING',
+            },
+            # Row 4: High-Rated Desk Confirmation candidate (desk=8.0, hybrid=6.1)
+            {
+                'fhrsid': '14',
+                'localauthorityname': 'Sutton',
+                'latitude': 51.36,
+                'longitude': -0.19,
+                'user_rating': 8.0,
+                'rating_source': 'desk',
+                'predicted_user_rating': 6.1,
+                'tree_pred': 6.5,
+                'lin_pred': 5.7,
+                'match_score': 82,
+                'pillar_is_sit_down': True,
+                'pillar_establishment_type': 'RESTAURANT_DINING',
+            },
+            # Row 5: Already visited restaurant -> both VoI scores must be 0.0
+            {
+                'fhrsid': '15',
+                'localauthorityname': 'Sutton',
+                'latitude': 51.36,
+                'longitude': -0.19,
+                'user_rating': 9.0,
+                'rating_source': 'visited',
+                'predicted_user_rating': 7.5,
+                'tree_pred': 7.8,
+                'lin_pred': 7.2,
+                'match_score': 90,
+                'pillar_is_sit_down': True,
+                'pillar_establishment_type': 'RESTAURANT_DINING',
+            },
+        ])
+
+        desk_voi, visit_voi = compute_active_learning_voi_scores(df)
+        # High QBC disagreement beats low QBC disagreement on desk_voi_score
+        self.assertGreater(desk_voi.iloc[0], desk_voi.iloc[1])
+        self.assertGreater(desk_voi.iloc[0], 60.0)
+        # Low-predicted row (3.7 < 5.5) gets 0.0 visit_voi_score
+        self.assertEqual(visit_voi.iloc[0], 0.0)
+
+        # Zero distance penalty invariant: Row 2 (0 km) and Row 3 (20 km) have identical visit_voi_score
+        scored = calculate_restaurant_priority(df)
+        self.assertNotAlmostEqual(scored['distance_km'].iloc[2], scored['distance_km'].iloc[3], places=1)
+        self.assertEqual(scored['visit_voi_score'].iloc[2], scored['visit_voi_score'].iloc[3])
+        self.assertGreater(scored['visit_voi_score'].iloc[2], 65.0)
+
+        # High-rated desk confirmation candidate gets 0.0 desk_voi_score and high visit_voi_score
+        self.assertEqual(desk_voi.iloc[4], 0.0)
+        self.assertGreater(visit_voi.iloc[4], 70.0)
+
+        # Already visited row gets 0.0 on both
+        self.assertEqual(desk_voi.iloc[5], 0.0)
+        self.assertEqual(visit_voi.iloc[5], 0.0)
+
 
