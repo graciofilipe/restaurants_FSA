@@ -544,6 +544,7 @@ def compute_active_learning_voi_scores(df: pd.DataFrame) -> Tuple[pd.Series, pd.
     delta_models = np.where(has_both_preds, tree_minus_lin, fallback_delta_models)
     delta_prior = (hybrid_pred - prior_pred).abs().to_numpy(dtype=float)
     sigma_qbc = np.sqrt(0.60 * np.square(delta_models) + 0.40 * np.square(delta_prior))
+    sigma_std = np.sqrt(0.25 * np.square(delta_models) + 0.35 * np.square(delta_prior))
 
     # Borough scarcity counts
     borough_col = _first_present_column(df, 'localauthorityname', 'LocalAuthorityName')
@@ -563,22 +564,20 @@ def compute_active_learning_voi_scores(df: pd.DataFrame) -> Tuple[pd.Series, pd.
         0.0,
     )
 
-    # Pillar 7 feature sparsity indicator
-    dish_spec = _column_or_missing(df, 'pillar_dish_specialization')
-    missing_dish_spec = dish_spec.isna() | dish_spec.astype(str).str.strip().isin(['', 'None', 'nan', '<NA>'])
-    dish_specificity = (
-        _column_or_missing(df, 'pillar_dish_specificity')
+    # Pillar 4 hyper-local specificity indicator (plus legacy fallback)
+    geo_specificity = (
+        _first_present_column(df, 'pillar_geo_specificity', 'pillar_dish_specificity')
         .fillna('')
         .astype(str)
         .str.strip()
         .str.upper()
     )
-    i_sparse = (missing_dish_spec | (dish_specificity == 'HYPER_LOCAL_CITY')).to_numpy(dtype=float)
+    i_sparse = (geo_specificity == 'HYPER_LOCAL_CITY').to_numpy(dtype=float)
 
     # Channel 1: desk_voi_score (0-100)
     desk_leverage = 1.0 + (0.75 / np.sqrt(1.0 + n_stg2_borough)) + (0.25 * i_sparse)
     raw_desk_voi = sigma_qbc * desk_leverage
-    scaled_desk_voi = np.clip((raw_desk_voi / 3.20) * 100.0, 0.0, 100.0)
+    scaled_desk_voi = np.clip((raw_desk_voi / 4.40) * 100.0, 0.0, 100.0)
     desk_eligible = is_stage2 & is_unrated
     desk_scores = np.where(desk_eligible, _round_like_python(scaled_desk_voi, 1), 0.0)
 
@@ -587,16 +586,16 @@ def compute_active_learning_voi_scores(df: pd.DataFrame) -> Tuple[pd.Series, pd.
     hybrid_arr = hybrid_pred.to_numpy(dtype=float)
 
     # Sub-Pathway A: Unrated Exploratory Visits (hybrid >= 5.5)
-    ucb_90 = hybrid_arr + 1.28 * sigma_qbc
-    raw_visit_new = np.maximum(0.0, ucb_90 - 5.0) * (1.0 + 0.35 * sigma_qbc) * visit_leverage
-    scaled_visit_new = np.clip((raw_visit_new / 8.0) * 100.0, 0.0, 100.0)
+    ucb_90 = hybrid_arr + 1.28 * sigma_std
+    raw_visit_new = np.maximum(0.0, ucb_90 - 5.0) * (1.0 + 0.35 * sigma_std) * visit_leverage
+    scaled_visit_new = np.clip((raw_visit_new / 7.50) * 100.0, 0.0, 100.0)
     unrated_visit_eligible = is_stage2 & is_unrated & (hybrid_arr >= 5.5)
 
     # Sub-Pathway B: High-Rated Desk Confirmations (user_rating >= 6.0, not yet visited)
     y_desk = np.nan_to_num(user_rating_num.to_numpy(dtype=float), nan=0.0)
-    delta_anchor = np.abs(y_desk - hybrid_arr) + 0.50 * sigma_qbc
+    delta_anchor = np.abs(y_desk - hybrid_arr) + 0.50 * sigma_std
     raw_visit_confirm = np.maximum(0.0, y_desk - 5.0) * (1.0 + 0.60 * delta_anchor) * visit_leverage
-    scaled_visit_confirm = np.clip((raw_visit_confirm / 12.5) * 100.0, 0.0, 100.0)
+    scaled_visit_confirm = np.clip((raw_visit_confirm / 16.50) * 100.0, 0.0, 100.0)
     confirm_visit_eligible = is_stage2 & is_desk_or_null_rated & (y_desk >= 6.0)
 
     visit_combined = np.select(

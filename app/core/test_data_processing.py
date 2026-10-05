@@ -581,10 +581,10 @@ class TestPlausibleConflictScore(unittest.TestCase):
                 'predicted_user_rating': 3.7,
                 'tree_pred': 5.1,
                 'lin_pred': 2.3,
-                'match_score': 78,
+                'match_score': 45,
                 'pillar_is_sit_down': True,
                 'pillar_establishment_type': 'RESTAURANT_DINING',
-                'pillar_dish_specificity': 'HYPER_LOCAL_CITY',
+                'pillar_geo_specificity': 'HYPER_LOCAL_CITY',
             },
             # Row 1: Unrated Stage-2 with low QBC disagreement (tree=5.8, lin=5.7)
             {
@@ -600,15 +600,15 @@ class TestPlausibleConflictScore(unittest.TestCase):
                 'match_score': 72,
                 'pillar_is_sit_down': True,
                 'pillar_establishment_type': 'RESTAURANT_DINING',
-                'pillar_dish_specialization': 'Pizza',
-                'pillar_dish_specificity': 'BROAD_GENERIC',
+                'pillar_geo_specificity': 'GENERIC_NATIONAL',
             },
-            # Row 2: Unrated Exploratory Visit candidate Nearby (SW16)
+            # Row 2: Unrated Exploratory Visit candidate Nearby (0.5 km)
             {
                 'fhrsid': '12',
                 'localauthorityname': 'Lewisham',
                 'latitude': 51.4212,
                 'longitude': -0.1292,
+                'distance_km': 0.5,
                 'user_rating': None,
                 'rating_source': None,
                 'predicted_user_rating': 6.8,
@@ -618,12 +618,13 @@ class TestPlausibleConflictScore(unittest.TestCase):
                 'pillar_is_sit_down': True,
                 'pillar_establishment_type': 'RESTAURANT_DINING',
             },
-            # Row 3: Identical Unrated Exploratory Visit candidate Far Away (North London, 20km away)
+            # Row 3: Identical Unrated Exploratory Visit candidate Far Away (25.0 km)
             {
                 'fhrsid': '13',
                 'localauthorityname': 'Lewisham',
-                'latitude': 51.6000,
-                'longitude': -0.1500,
+                'latitude': 51.6460,
+                'longitude': -0.1292,
+                'distance_km': 25.0,
                 'user_rating': None,
                 'rating_source': None,
                 'predicted_user_rating': 6.8,
@@ -666,21 +667,25 @@ class TestPlausibleConflictScore(unittest.TestCase):
         ])
 
         desk_voi, visit_voi = compute_active_learning_voi_scores(df)
-        # High QBC disagreement beats low QBC disagreement on desk_voi_score
+        # High QBC disagreement beats low QBC disagreement on desk_voi_score and does not saturate at 100.0
         self.assertGreater(desk_voi.iloc[0], desk_voi.iloc[1])
         self.assertGreater(desk_voi.iloc[0], 60.0)
+        self.assertLess(desk_voi.iloc[0], 100.0)
         # Low-predicted row (3.7 < 5.5) gets 0.0 visit_voi_score
         self.assertEqual(visit_voi.iloc[0], 0.0)
 
-        # Zero distance penalty invariant: Row 2 (0 km) and Row 3 (20 km) have identical visit_voi_score
+        # Zero distance penalty invariant: 0.5 km vs 25.0 km produces the exact same visit_voi_score
+        self.assertEqual(visit_voi.iloc[2], visit_voi.iloc[3])
         scored = calculate_restaurant_priority(df)
         self.assertNotAlmostEqual(scored['distance_km'].iloc[2], scored['distance_km'].iloc[3], places=1)
         self.assertEqual(scored['visit_voi_score'].iloc[2], scored['visit_voi_score'].iloc[3])
         self.assertGreater(scored['visit_voi_score'].iloc[2], 65.0)
+        self.assertLess(scored['visit_voi_score'].iloc[2], 100.0)
 
-        # High-rated desk confirmation candidate gets 0.0 desk_voi_score and high visit_voi_score
+        # High-rated desk confirmation candidate gets 0.0 desk_voi_score and high non-saturated visit_voi_score
         self.assertEqual(desk_voi.iloc[4], 0.0)
-        self.assertGreater(visit_voi.iloc[4], 70.0)
+        self.assertGreaterEqual(visit_voi.iloc[4], 65.0)
+        self.assertLess(visit_voi.iloc[4], 100.0)
 
         # Already visited row gets 0.0 on both
         self.assertEqual(desk_voi.iloc[5], 0.0)
