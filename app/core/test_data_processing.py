@@ -487,3 +487,56 @@ class TestEnhanceDataframeWithInsights(unittest.TestCase):
         df = pd.DataFrame([{'fhrsid': '1'}])
         enhance_dataframe_with_insights(df)
         self.assertEqual(list(df.columns), ['fhrsid'])
+
+
+class TestPlausibleConflictScore(unittest.TestCase):
+
+    def test_high_disagreement_sit_down_scores_higher_than_aligned_sit_down(self):
+        from app.core.data_processing import compute_plausible_conflict_score
+
+        df = pd.DataFrame([
+            {
+                'fhrsid': '1',
+                'match_score': 90,
+                'predicted_user_rating': 2.0,
+                'pillar_community_score': 9,
+                'maps_reviews': 15,
+                'pillar_is_sit_down': True,
+                'pillar_establishment_type': 'RESTAURANT_DINING',
+            },
+            {
+                'fhrsid': '2',
+                'match_score': 80,
+                'predicted_user_rating': 8.2,
+                'pillar_community_score': 6,
+                'maps_reviews': 250,
+                'pillar_is_sit_down': True,
+                'pillar_establishment_type': 'RESTAURANT_DINING',
+            },
+        ])
+        scores = compute_plausible_conflict_score(df)
+        self.assertGreater(scores.iloc[0], scores.iloc[1])
+        self.assertGreater(scores.iloc[0], 40.0)
+
+    def test_non_sit_down_and_non_restaurant_dining_are_zeroed(self):
+        from app.core.data_processing import compute_plausible_conflict_score
+
+        df = pd.DataFrame([
+            {
+                'fhrsid': '1',
+                'match_score': 95,
+                'predicted_user_rating': 1.5,
+                'pillar_is_sit_down': False,
+                'pillar_establishment_type': 'RESTAURANT_DINING',
+            },
+            {
+                'fhrsid': '2',
+                'match_score': 95,
+                'predicted_user_rating': 1.5,
+                'pillar_is_sit_down': True,
+                'pillar_establishment_type': 'FAST_FOOD_TAKEAWAY',
+            },
+        ])
+        scores = compute_plausible_conflict_score(df)
+        self.assertEqual(list(scores), [0.0, 0.0])
+

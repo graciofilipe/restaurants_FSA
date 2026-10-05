@@ -5,7 +5,12 @@ from typing import Any, Callable, Optional
 from google.cloud import bigquery
 from google.cloud.exceptions import GoogleCloudError
 
-from app.core.model_features import feature_select_list, feature_source_clause
+from app.core.model_features import (
+    feature_select_list,
+    feature_source_clause,
+    normalized_brand_key_sql,
+    stage2_training_where_clause,
+)
 from app.core.profile_freshness import (
     PreFlightEnrichmentError,
     max_allowed_enrichment_failures,
@@ -35,26 +40,71 @@ def _run_preflight_query(client: bigquery.Client, sql: str, timeout: float = PRE
 def build_training_select(
     project_id: str, dataset_id: str, source_table: str, extra_predicate: str = ""
 ) -> str:
-    """The labelled feature set the model trains on.
+    """The labelled Stage-2 feature set the model trains on.
 
     Extracted so `scripts/evaluate_model.py` measures the features production
     actually uses rather than a third hand-copy of them. `extra_predicate` is
     appended to the WHERE clause, which is how the evaluation harness carves
     out its train/holdout split without restating any of this.
 
-    The list itself comes from `app/core/model_features.py`, which the
-    `ML.PREDICT` subquery in `app/services/ml_prediction.py` also builds from.
-    They were two hand-maintained copies until Phase 6; see D3.
+    Filters exclusively to Stage-2 sit-down `RESTAURANT_DINING` candidates with
+    `< 5` branches (`stage2_training_where_clause`), and weights visited ground
+    truth (`rating_source = 'visited'`) 2x relative to desk/NULL triage labels
+    (1x) via `CROSS JOIN UNNEST(GENERATE_ARRAY(...))`.
     """
     return f"""
 SELECT
 {feature_select_list()}
 {feature_source_clause(project_id, dataset_id, source_table)}
+CROSS JOIN UNNEST(GENERATE_ARRAY(1, IF(m.rating_source = 'visited', 2, 1))) AS _rep
 WHERE
-  (m.in_scope = TRUE OR m.in_scope IS NULL)
-  AND m.user_rating IS NOT NULL
+  {stage2_training_where_clause('m', 'b')}
   {extra_predicate}
 """
+
+
+def build_create_model_sql(
+    project_id: str,
+    dataset_id: str,
+    source_table: str,
+    full_model_name: str,
+    model_family: str = "boosted_tree",
+    extra_predicate: str = "",
+    register_vertex: bool = True,
+) -> str:
+    """Construct the `CREATE OR REPLACE MODEL` DDL for Stage-2 training."""
+    registry_opt = ",\n      model_registry='vertex_ai'" if register_vertex else ""
+    if model_family == "linear_reg":
+        options = (
+            "model_type='LINEAR_REG',\n"
+            "      input_label_cols=['user_rating'],\n"
+            "      l2_reg=1.0,\n"
+            f"      data_split_method='NO_SPLIT'{registry_opt}"
+        )
+    elif model_family == "boosted_tree":
+        options = (
+            "model_type='BOOSTED_TREE_REGRESSOR',\n"
+            "      input_label_cols=['user_rating'],\n"
+            "      max_tree_depth=3,\n"
+            "      min_tree_child_weight=6,\n"
+            "      learn_rate=0.1,\n"
+            "      subsample=0.8,\n"
+            "      colsample_bytree=0.8,\n"
+            "      l2_reg=1.0,\n"
+            "      num_parallel_tree=1,\n"
+            "      max_iterations=25,\n"
+            f"      data_split_method='NO_SPLIT'{registry_opt}"
+        )
+    else:
+        raise ValueError(f"Unsupported model_family: {model_family!r}")
+
+    return f"""
+    CREATE OR REPLACE MODEL `{full_model_name}`
+    OPTIONS(
+      {options}
+    ) AS
+    {build_training_select(project_id, dataset_id, source_table, extra_predicate=extra_predicate)}
+    """
 
 
 def run_jit_preflight(
@@ -69,9 +119,10 @@ def run_jit_preflight(
     force_gemini: bool = False,
     gemini_max_age_days: Optional[int] = None,
     gemini_cutoff_date: Optional[Any] = None,
+    refresh_missing_stage2_pillars: bool = False,
     progress_callback: Optional[Callable[[str], None]] = None,
 ) -> None:
-    """Fill in or refresh labelled rows before training on them.
+    """Fill in or refresh labelled Stage-2 candidate rows before training on them.
 
     Enforces a strict pre-flight gate:
     1. Google Maps Places regeneration runs first so Gemini sees updated ratings.
@@ -84,22 +135,33 @@ def run_jit_preflight(
     source_table = f"{project_id}.{dataset_id}.{table_id}"
     started_at = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=2)
 
-    logger.info("Executing pre-flight JIT check for labeled training examples...")
+    logger.info("Executing pre-flight JIT check for labeled Stage-2 training examples...")
     if progress_callback:
-        progress_callback("🔎 Auditing freshness of labeled training set in BigQuery...")
+        progress_callback("🔎 Auditing freshness of labeled Stage-2 training set in BigQuery...")
 
     # A correlated subquery, not a join: 15 normalised postcodes are duplicated
     # in the demographics table, so joining it returns those labelled rows two
     # or three times (D-31, D-32). Only "did the postcode resolve?" is read.
+    # Scoped to Stage-2 sit-down RESTAURANT_DINING candidates (plus unprofiled
+    # labelled rows whose pillar columns are NULL until Gemini profiles them).
     check_query = f"""
         SELECT m.fhrsid, m.postcode, m.maps_lookup_at, m.gemini_profiled_at,
                m.gemini_insights_structured IS NOT NULL AS has_profile,
+               m.pillar_dining_pace IS NOT NULL AS has_stage2_pillars,
                (SELECT MIN(d.postcode)
                 FROM `{project_id}.{dataset_id}.uk_postcode_demographics` AS d
                 WHERE REPLACE(UPPER(m.postcode), ' ', '') = REPLACE(UPPER(d.postcode), ' ', '')
                ) AS d_postcode
         FROM `{source_table}` AS m
-        WHERE (m.in_scope = TRUE OR m.in_scope IS NULL) AND m.user_rating IS NOT NULL
+        WHERE (m.in_scope = TRUE OR m.in_scope IS NULL)
+          AND m.user_rating IS NOT NULL
+          AND (m.pillar_is_sit_down IS TRUE OR m.pillar_is_sit_down IS NULL)
+          AND (m.pillar_establishment_type = 'RESTAURANT_DINING' OR m.pillar_establishment_type IS NULL)
+          AND (
+            SELECT COUNT(DISTINCT b_src.fhrsid)
+            FROM `{source_table}` AS b_src
+            WHERE {normalized_brand_key_sql('b_src')} = {normalized_brand_key_sql('m')}
+          ) < 5
     """
     try:
         results = _run_preflight_query(client, check_query)
@@ -126,6 +188,9 @@ def run_jit_preflight(
             force=force_gemini,
             max_age_days=gemini_max_age_days,
             cutoff_date=gemini_cutoff_date,
+        ) or (
+            refresh_missing_stage2_pillars
+            and not getattr(row, "has_stage2_pillars", False)
         )
     ]
     postcode_missing = [
@@ -254,7 +319,7 @@ def run_jit_preflight(
                 force_maps=force_maps,
                 gemini_max_age_days=gemini_max_age_days,
                 gemini_cutoff_date=gemini_cutoff_date,
-                force_gemini=force_gemini,
+                force_gemini=force_gemini or refresh_missing_stage2_pillars,
             )
 
 
@@ -266,12 +331,14 @@ def train_model(
     dry_run: bool = False,
     run_async: bool = False,
     *,
+    model_family: str = "boosted_tree",
     force_maps: bool = False,
     maps_max_age_days: Optional[int] = None,
     maps_cutoff_date: Optional[Any] = None,
     force_gemini: bool = False,
     gemini_max_age_days: Optional[int] = None,
     gemini_cutoff_date: Optional[Any] = None,
+    refresh_missing_stage2_pillars: bool = False,
     progress_callback: Optional[Callable[[str], None]] = None,
 ):
     """
@@ -306,21 +373,19 @@ def train_model(
             force_gemini=force_gemini,
             gemini_max_age_days=gemini_max_age_days,
             gemini_cutoff_date=gemini_cutoff_date,
+            refresh_missing_stage2_pillars=refresh_missing_stage2_pillars,
             progress_callback=progress_callback,
         )
 
-    # We omit BusinessType as it is not present in the BigQuery schema for fsa_master.
-    query = f"""
-    CREATE OR REPLACE MODEL `{full_model_name}`
-    OPTIONS(
-      model_type='BOOSTED_TREE_REGRESSOR',
-      input_label_cols=['user_rating'],
-      model_registry='vertex_ai'
-    ) AS
-    {build_training_select(project_id, dataset_id, source_table)}
-    """
+    query = build_create_model_sql(
+        project_id,
+        dataset_id,
+        source_table,
+        full_model_name,
+        model_family=model_family,
+    )
 
-    logger.info(f"Preparing BQML Training Query for {full_model_name}...")
+    logger.info(f"Preparing BQML Training Query for {full_model_name} (family={model_family})...")
     if dry_run:
         logger.info("Executing DRY RUN to validate query without training.")
         job_config = bigquery.QueryJobConfig(dry_run=True, use_query_cache=False)
@@ -334,8 +399,8 @@ def train_model(
             raise
     else:
         if progress_callback:
-            progress_callback("🚀 Submitting BQML BOOSTED_TREE_REGRESSOR training job...")
-        logger.info("Executing query. This may take 10-15 minutes for BOOSTED_TREE_REGRESSOR...")
+            progress_callback(f"🚀 Submitting BQML {model_family} training job...")
+        logger.info(f"Executing query for {model_family}...")
         try:
             query_job = client.query(query)
             if run_async:
@@ -353,21 +418,7 @@ def train_model(
             raise
 
 def training_job_status(project_id: str, dataset_id: str, job_id: str) -> dict:
-    """Look up a training job started earlier by `train_model(run_async=True)`.
-
-    `run_async` hands back a job id and returns immediately; ten to fifteen
-    minutes later that job has either produced a model or failed, and nothing
-    was reading the difference (D-28). This is the read.
-
-    The job's location is the dataset's -- BigQuery runs a query where the data
-    lives, and `jobs.get` needs it for anything outside the US, which this EU
-    dataset is. Both calls are free job/dataset metadata reads, not queries.
-
-    Returns `{"state": ..., "error": ...}`, where `state` is BigQuery's own
-    ("PENDING", "RUNNING", "DONE") and `error` is the failure message or None.
-    A finished job and a *successful* job are not the same thing: a failed
-    query is `DONE` with `error_result` set.
-    """
+    """Look up a training job started earlier by `train_model(run_async=True)`."""
     client = bigquery.Client(project=project_id)
     location = client.get_dataset(f"{project_id}.{dataset_id}").location
     job = client.get_job(job_id, location=location)
@@ -381,6 +432,12 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_id", default="filipegracio_fsa_restaurants", help="BigQuery Dataset ID")
     parser.add_argument("--table_id", default="fsa_master", help="Source Table ID")
     parser.add_argument("--model_name", default="restaurant_preference_model", help="Target Model Name")
+    parser.add_argument(
+        "--model-family",
+        choices=["boosted_tree", "linear_reg"],
+        default="boosted_tree",
+        help="BQML model family to train (boosted_tree or linear_reg)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Validate query without executing training")
     parser.add_argument("--run_async", action="store_true", help="Run model training asynchronously")
     parser.add_argument("--force-maps", action="store_true", help="Force re-query Google Maps for all labeled rows")
@@ -389,8 +446,13 @@ if __name__ == "__main__":
     parser.add_argument("--force-gemini", action="store_true", help="Force regenerate Gemini profiles for all labeled rows")
     parser.add_argument("--gemini-max-age-days", type=int, default=None, help="Refresh Gemini profiles older than N days")
     parser.add_argument("--gemini-cutoff-date", type=str, default=None, help="Refresh Gemini profiles before YYYY-MM-DD")
+    parser.add_argument(
+        "--refresh-missing-stage2-pillars",
+        action="store_true",
+        help="Regenerate Gemini profiles for Stage-2 labeled rows missing Pillar 7 discriminators",
+    )
     args = parser.parse_args()
-    
+
     train_model(
         args.project_id,
         args.dataset_id,
@@ -398,10 +460,12 @@ if __name__ == "__main__":
         args.model_name,
         dry_run=args.dry_run,
         run_async=args.run_async,
+        model_family=args.model_family,
         force_maps=args.force_maps,
         maps_max_age_days=args.maps_max_age_days,
         maps_cutoff_date=args.maps_cutoff_date,
         force_gemini=args.force_gemini,
         gemini_max_age_days=args.gemini_max_age_days,
         gemini_cutoff_date=args.gemini_cutoff_date,
+        refresh_missing_stage2_pillars=args.refresh_missing_stage2_pillars,
     )

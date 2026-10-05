@@ -45,9 +45,12 @@ def test_the_split_is_deterministic_not_random():
     assert 'RAND' not in sql
 
 
-def test_split_honours_the_modulus_and_bucket():
-    assert 'MOD(ABS(FARM_FINGERPRINT(CAST(m.fhrsid AS STRING))), 7) = 3' in \
-        split_predicate(7, 3, holdout=True)
+def test_split_honours_the_modulus_and_bucket_and_groups_by_brand():
+    from app.core.model_features import normalized_brand_key_sql
+
+    pred = split_predicate(7, 3, holdout=True)
+    assert f"MOD(ABS(FARM_FINGERPRINT({normalized_brand_key_sql('m')})), 7) = 3" in pred
+    assert 'm.fhrsid' not in pred
 
 
 def test_eval_models_cannot_overwrite_the_production_model():
@@ -79,9 +82,16 @@ def test_evaluation_uses_the_same_feature_set_as_training():
 
 def test_training_uses_train_split_and_evaluation_uses_holdout():
     statements = dict((name, sql) for name, sql, _ in build_all_statements(PROJECT, DATASET, TABLE, 5))
-    for name in ('train_boosted_tree', 'train_match_score_baseline'):
+    for name in ('train_boosted_tree', 'train_linear_reg', 'train_match_score_baseline'):
         assert f'!= {HOLDOUT_BUCKET}' in statements[name], name
-    for name in ('evaluate_boosted_tree', 'evaluate_match_score', 'rank_correlation_boosted_tree'):
+    for name in (
+        'evaluate_boosted_tree',
+        'evaluate_linear_reg',
+        'evaluate_match_score',
+        'rank_correlation_boosted_tree',
+        'rank_correlation_linear_reg',
+        'two_stage_hurdle_benchmark',
+    ):
         assert f'= {HOLDOUT_BUCKET}' in statements[name]
         assert f'!= {HOLDOUT_BUCKET}' not in statements[name], name
 
@@ -90,7 +100,7 @@ def test_match_score_baseline_uses_only_match_score():
     """'No-ML baseline' means one feature. Any other column leaking in makes it
     a second model rather than a floor."""
     sql = build_match_score_model_sql(PROJECT, DATASET, SOURCE, 'm', '')
-    for leaked in ('maps_rating', 'imd_rank', 'price_level', 'localauthorityname'):
+    for leaked in ('maps_rating', 'price_level', 'localauthorityname'):
         assert leaked not in sql, leaked
     assert 'match_score' in sql
 
@@ -113,9 +123,9 @@ def test_match_score_ranking_needs_no_model():
     assert 'CORR' in sql and 'RANK() OVER' in sql
 
 
-def test_only_the_two_training_statements_write():
+def test_only_the_training_statements_write():
     writers = [name for name, _, writes in build_all_statements(PROJECT, DATASET, TABLE, 5) if writes]
-    assert writers == ['train_boosted_tree', 'train_match_score_baseline']
+    assert writers == ['train_boosted_tree', 'train_linear_reg', 'train_match_score_baseline']
 
     for name, sql, writes in build_all_statements(PROJECT, DATASET, TABLE, 5):
         if not writes:
@@ -125,7 +135,9 @@ def test_only_the_two_training_statements_write():
 def test_training_statements_precede_the_statements_that_read_them():
     order = [name for name, _, _ in build_all_statements(PROJECT, DATASET, TABLE, 5)]
     assert order.index('train_boosted_tree') < order.index('evaluate_boosted_tree')
+    assert order.index('train_linear_reg') < order.index('evaluate_linear_reg')
     assert order.index('train_match_score_baseline') < order.index('evaluate_match_score')
+    assert order.index('train_linear_reg') < order.index('two_stage_hurdle_benchmark')
 
 
 def test_default_holdout_is_a_usable_fraction():
@@ -135,7 +147,9 @@ def test_default_holdout_is_a_usable_fraction():
 
 
 @pytest.mark.parametrize("predicate", ["", "AND 1=1"])
-def test_training_select_always_filters_to_labelled_in_scope_rows(predicate):
+def test_training_select_always_filters_to_labelled_stage2_in_scope_rows(predicate):
     sql = build_training_select(PROJECT, DATASET, SOURCE, predicate)
     assert 'm.user_rating IS NOT NULL' in sql
-    assert '(m.in_scope = TRUE OR m.in_scope IS NULL)' in sql
+    assert 'm.in_scope IS TRUE' in sql
+    assert 'm.pillar_is_sit_down IS TRUE' in sql
+    assert "m.pillar_establishment_type = 'RESTAURANT_DINING'" in sql

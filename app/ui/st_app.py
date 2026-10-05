@@ -60,7 +60,7 @@ FRESHNESS_MODES = (
 # hand-kept copy of a fourth naming convention -- flat, numeric-prefixed names
 # that only ever existed in the DataFrame, built per row per rerun.
 DISPLAY_COLUMNS = [
-    "fhrsid", "businessname", "priority_score", "distance_km", "in_scope", "rating_source", "user_rating", "predicted_user_rating", "predicted_at",
+    "fhrsid", "businessname", "priority_score", "conflict_score", "distance_km", "in_scope", "rating_source", "user_rating", "predicted_user_rating", "predicted_at",
     "addressline1", "addressline2", "addressline3",
     "postcode", "localauthorityname", "first_seen",
     "price_level", "maps_rating", "maps_reviews",
@@ -88,6 +88,19 @@ RATED_YES = "Has User Rating (Rated)"
 RATED_NO = "No User Rating (Unrated)"
 RATED_OPTIONS = (FILTER_ALL, RATED_YES, RATED_NO)
 
+SOURCE_ALL = FILTER_ALL
+SOURCE_VISITED = "Visited Only"
+SOURCE_DESK = "Desk Triage Only"
+SOURCE_NEEDS_TRIAGE = "Needs Source Triage (Rated, NULL Source)"
+SOURCE_PLAUSIBLE_AL = "🔥 Plausible Active-Learning Triage (Unrated, Match >= 65)"
+RATING_SOURCE_OPTIONS = (
+    SOURCE_ALL,
+    SOURCE_VISITED,
+    SOURCE_DESK,
+    SOURCE_NEEDS_TRIAGE,
+    SOURCE_PLAUSIBLE_AL,
+)
+
 PRED_YES = "Has Predicted Rating"
 PRED_NO = "No Predicted Rating"
 PRED_OPTIONS = (FILTER_ALL, PRED_YES, PRED_NO)
@@ -105,6 +118,7 @@ MAPS_NEVER_LOOKED_UP = "Not Looked Up Yet"
 MAPS_OPTIONS = (MAPS_ALL, MAPS_FOUND, MAPS_NOT_FOUND, MAPS_NEVER_LOOKED_UP)
 
 SORT_PRIORITY = "Priority Score (High to Low)"
+SORT_CONFLICT = "Signal Conflict Score (High to Low)"
 SORT_DISTANCE = "Distance (Nearest First)"
 SORT_PREDICTED = "Predicted Rating (High to Low)"
 SORT_USER_RATING = "User Rating (High to Low)"
@@ -113,15 +127,16 @@ SORT_MATCH_SCORE = "Gemini Match Score (High to Low)"
 SORT_FIRST_SEEN = "First Seen (Newest)"
 SORT_NAME = "Business Name (A-Z)"
 SORT_NATURAL = "Natural / BQ Order"
-SORT_OPTIONS = (SORT_PRIORITY, SORT_DISTANCE, SORT_PREDICTED, SORT_USER_RATING,
-                SORT_MAPS_RATING, SORT_MATCH_SCORE, SORT_FIRST_SEEN, SORT_NAME,
-                SORT_NATURAL)
+SORT_OPTIONS = (SORT_PRIORITY, SORT_CONFLICT, SORT_DISTANCE, SORT_PREDICTED,
+                SORT_USER_RATING, SORT_MAPS_RATING, SORT_MATCH_SCORE,
+                SORT_FIRST_SEEN, SORT_NAME, SORT_NATURAL)
 
 # Sort option -> (candidate columns, ascending). The first candidate the frame
 # actually has wins; `SORT_NATURAL` is absent on purpose, since leaving the
 # BigQuery order alone is what it means.
 SORT_BY_COLUMN = {
     SORT_PRIORITY: (("priority_score",), False),
+    SORT_CONFLICT: (("conflict_score", "priority_score"), False),
     SORT_DISTANCE: (("distance_km",), True),
     SORT_PREDICTED: (("predicted_user_rating",), False),
     SORT_USER_RATING: (("user_rating",), False),
@@ -184,6 +199,7 @@ def filter_and_sort_restaurants(
     min_pred_score: float = 1.0,
     search_query: str = "",
     sort_by: str = SORT_PREDICTED,
+    rating_source_filter: str = FILTER_ALL,
 ) -> pd.DataFrame:
     """
     Applies in-memory filtering and sorting to the restaurant DataFrame.
@@ -212,6 +228,28 @@ def filter_and_sort_restaurants(
         elif user_rating_filter == RATED_NO:
             filtered = filtered[filtered["user_rating"].isna()]
 
+    # 2b. Rating Source & Plausible Active-Learning Triage Filter
+    if rating_source_filter == SOURCE_VISITED and "rating_source" in filtered.columns:
+        filtered = filtered[filtered["rating_source"] == "visited"]
+    elif rating_source_filter == SOURCE_DESK and "rating_source" in filtered.columns:
+        filtered = filtered[filtered["rating_source"] == "desk"]
+    elif rating_source_filter == SOURCE_NEEDS_TRIAGE:
+        if "user_rating" in filtered.columns and "rating_source" in filtered.columns:
+            filtered = filtered[filtered["user_rating"].notna() & filtered["rating_source"].isna()]
+    elif rating_source_filter == SOURCE_PLAUSIBLE_AL:
+        mask = pd.Series(True, index=filtered.index)
+        if "user_rating" in filtered.columns:
+            mask &= filtered["user_rating"].isna()
+        if "in_scope" in filtered.columns:
+            mask &= filtered["in_scope"] != False  # noqa: E712
+        if "match_score" in filtered.columns:
+            mask &= pd.to_numeric(filtered["match_score"], errors="coerce").fillna(0.0) >= 65.0
+        if "pillar_is_sit_down" in filtered.columns:
+            mask &= filtered["pillar_is_sit_down"] == True  # noqa: E712
+        if "pillar_establishment_type" in filtered.columns:
+            mask &= filtered["pillar_establishment_type"] == "RESTAURANT_DINING"
+        filtered = filtered[mask]
+
     # 3. ML Prediction Filter
     if "predicted_user_rating" in filtered.columns:
         if pred_rating_filter == PRED_YES:
@@ -230,9 +268,6 @@ def filter_and_sort_restaurants(
             ]
 
     # 4. Gemini Match Score Filter
-    # `insight_score` was the parser's alias for the same number; the column is
-    # real now, so the alias is gone rather than carried as a fallback. A row
-    # with raw JSON but no extracted score still counts as profiled.
     match_columns = [c for c in ("match_score", "gemini_insights_structured")
                      if c in filtered.columns]
     if match_columns and gemini_match_filter in (MATCH_YES, MATCH_NO):
@@ -242,10 +277,6 @@ def filter_and_sort_restaurants(
         filtered = filtered[has_gemini if gemini_match_filter == MATCH_YES else ~has_gemini]
 
     # 5. Google Maps Lookup Filter
-    # `maps_found` answers this, not `maps_rating`. A NULL rating means either
-    # "Places has no such restaurant" or "we have not asked yet", and those are
-    # opposite answers: the first must never be re-queried, the second is the
-    # whole enrichment backlog. A found restaurant with no rating is found.
     if "maps_found" in filtered.columns:
         if maps_filter == MAPS_FOUND:
             filtered = filtered[filtered["maps_found"] == True]  # noqa: E712 -- NULL must not match
@@ -1031,6 +1062,14 @@ def main():
             key="slicer_user_rating"
         )
 
+        rating_source_slicer = st.selectbox(
+            "Rating Source / Active Learning",
+            options=list(RATING_SOURCE_OPTIONS),
+            index=0,
+            key="slicer_rating_source",
+            help="Filter by Visited vs Desk labels, legacy NULL-source ratings needing triage, or high-disagreement plausible sit-down restaurants."
+        )
+
         pred_rating_slicer = st.selectbox(
             "ML Predicted Rating",
             options=list(PRED_OPTIONS),
@@ -1099,7 +1138,8 @@ def main():
             maps_filter=maps_slicer,
             min_pred_score=min_pred_score,
             search_query=search_query,
-            sort_by=sort_by
+            sort_by=sort_by,
+            rating_source_filter=rating_source_slicer,
         )
 
         # Top Summary Metrics

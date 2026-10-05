@@ -2,7 +2,12 @@ import logging
 from google.cloud import bigquery
 from typing import Any, Callable, List, Optional, Tuple
 from scripts.enrich_maps_data import enrich_restaurants_by_fhrsid
-from app.core.model_features import feature_select_list, feature_source_clause
+from app.core.model_features import (
+    feature_select_list,
+    feature_source_clause,
+    is_stage1_gated_sql,
+    stage1_deterministic_score_sql,
+)
 from app.core.profile_freshness import (
     GEMINI_PROFILE_MAX_AGE_DAYS,
     max_allowed_enrichment_failures,
@@ -29,18 +34,20 @@ def _wait_for_prediction_job(job: Any, timeout: float = PREDICTION_BQ_TIMEOUT_SE
 
 def build_prediction_input_select(project_id: str, dataset_id: str, table_ref: str,
                                   id_list_str: str) -> str:
-    """The `ML.PREDICT` input: the training features, plus the join key.
+    """The `ML.PREDICT` input: the training features, plus the join key and
+    Two-Stage Hurdle Stage-1 routing columns.
 
     Byte-identical to `build_training_select`'s feature list by construction --
-    both call `feature_select_list()`. The only addition is `m.fhrsid`, which
-    ML.PREDICT passes through so the MERGE has something to match on; it is not
-    a feature and the model never saw it.
-
-    Train/serve skew here is silent: BigQuery would happily predict from a
-    differently-computed column and write a plausible-looking number.
+    both call `feature_select_list()`. The only additions are `m.fhrsid`,
+    `_is_stage1_gated`, and `_stage1_capped_score`, which `ML.PREDICT` passes
+    through so the MERGE can route structural non-candidates to their
+    deterministic Stage-1 cap (`<= 2.0`) and plausible sit-down candidates to
+    the Stage-2 model's prediction.
     """
     return f'''          SELECT
             m.fhrsid,
+            {is_stage1_gated_sql('m', 'b')} AS _is_stage1_gated,
+            {stage1_deterministic_score_sql('m')} AS _stage1_capped_score,
 {feature_select_list()}
 {feature_source_clause(project_id, dataset_id, table_ref)}
           WHERE m.fhrsid IN ({id_list_str})'''
@@ -317,7 +324,12 @@ def generate_predictions(
     predict_query = f'''
     MERGE `{table_ref}` T
     USING (
-      SELECT fhrsid, predicted_user_rating FROM ML.PREDICT(MODEL `{model_ref}`,
+      SELECT
+        fhrsid,
+        _is_stage1_gated,
+        _stage1_capped_score,
+        predicted_user_rating
+      FROM ML.PREDICT(MODEL `{model_ref}`,
         (
 {build_prediction_input_select(project_id, dataset_id, table_ref, id_list_str)}
         )
@@ -326,7 +338,11 @@ def generate_predictions(
     ON T.fhrsid = S.fhrsid
     WHEN MATCHED THEN
       UPDATE SET
-        predicted_user_rating = S.predicted_user_rating,
+        predicted_user_rating = IF(
+          S._is_stage1_gated,
+          S._stage1_capped_score,
+          ROUND(LEAST(10.0, GREATEST(1.0, S.predicted_user_rating)), 2)
+        ),
         predicted_at = CURRENT_TIMESTAMP()
     '''
 

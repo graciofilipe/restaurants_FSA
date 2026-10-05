@@ -458,6 +458,44 @@ def _scope_score(in_scope: Any) -> float:
     return 50.0
 
 
+def compute_plausible_conflict_score(df: pd.DataFrame) -> pd.Series:
+    """Computes a signal-conflict score (0-100) for plausible active-learning triage.
+
+    Surfaces sit-down `RESTAURANT_DINING` candidates where signals disagree
+    (`match_score` vs `predicted_user_rating`, or `pillar_community_score` vs
+    `maps_reviews` hype) so a single human rating resolves maximum model
+    uncertainty in the plausible zone. Non-sit-down or non-RESTAURANT_DINING
+    rows receive `0.0`.
+    """
+    if df is None or df.empty:
+        return pd.Series([], dtype=float)
+
+    match_num = pd.to_numeric(_column_or_missing(df, 'match_score'), errors='coerce')
+    pred_num = pd.to_numeric(_column_or_missing(df, 'predicted_user_rating'), errors='coerce')
+    comm_num = pd.to_numeric(_column_or_missing(df, 'pillar_community_score'), errors='coerce').fillna(5.0)
+    rev_num = pd.to_numeric(_column_or_missing(df, 'maps_reviews'), errors='coerce').fillna(0.0).clip(lower=0.0)
+
+    match_on_10 = 1.0 + 9.0 * (match_num.fillna(50.0).clip(0.0, 100.0) / 100.0)
+    pred_filled = pred_num.fillna(match_on_10)
+
+    model_vs_gemini_gap = (match_on_10 - pred_filled).abs() * (60.0 / 9.0)
+    log_rev_scale = (np.log10(rev_num + 1.0) * 2.5).clip(1.0, 10.0)
+    enclave_vs_hype_gap = (comm_num - log_rev_scale).abs() * (40.0 / 9.0)
+
+    raw_conflict = (model_vs_gemini_gap + enclave_vs_hype_gap).clip(0.0, 100.0)
+
+    sit_down = _column_or_missing(df, 'pillar_is_sit_down')
+    is_false_sit_down = sit_down.map(lambda v: v is False or str(v).lower() in ('false', '0')).astype(bool)
+    est_type = _column_or_missing(df, 'pillar_establishment_type')
+    is_non_dining = est_type.map(
+        lambda v: isinstance(v, str) and bool(v.strip()) and v.strip() != 'RESTAURANT_DINING'
+    ).astype(bool)
+
+    gated = (is_false_sit_down | is_non_dining).to_numpy()
+    scores = np.where(gated, 0.0, _round_like_python(raw_conflict.to_numpy(dtype=float), 1))
+    return pd.Series(scores, index=df.index, dtype=float)
+
+
 def calculate_restaurant_priority(
     df: pd.DataFrame,
     anchor_lat: Optional[float] = None,
@@ -467,7 +505,7 @@ def calculate_restaurant_priority(
 ) -> pd.DataFrame:
     """
     Computes distance, proximity score, staleness score, Google Maps prior, and composite priority score.
-    Returns the DataFrame augmented with 'distance_km' and 'priority_score'.
+    Returns the DataFrame augmented with 'distance_km', 'priority_score', and 'conflict_score'.
 
     Column-at-a-time since D8. The Streamlit ML Predictions tab re-scores the
     whole frame on every rerun -- every slider drag, every checkbox -- so this
@@ -531,14 +569,6 @@ def calculate_restaurant_priority(
 
     # 2. Staleness & Re-scoring (100 for unscored, 80 for >=60d, 60 for >=30d, 40 for >=14d, 15 for recent)
     predicted = _column_or_missing(res_df, 'predicted_user_rating')
-    # "Has this been profiled?" is the timestamp the V2 merge writes.
-    # `gemini_insights or gemini_insights_structured` was two wrong answers
-    # at once (D-18): the `or` returned NaN for the 10,152 rows with no V1
-    # text, so 1,020 profiled *and* predicted rows read as never scored and
-    # kept the maximum staleness; and the 1,116 rows that hold only V1 text
-    # read as profiled when no V2 profile exists. The stamp is exactly
-    # co-extensive with `gemini_insights_structured` (2,767 rows, 0
-    # disagreement either way) and survives the Phase 10 column drop.
     profiled = _column_or_missing(res_df, 'gemini_profiled_at')
     unscored = (predicted.isna() | profiled.isna()).to_numpy()
 
@@ -562,10 +592,6 @@ def calculate_restaurant_priority(
     maps_reviews = _column_or_missing(res_df, 'maps_reviews')
     rating_num = pd.to_numeric(maps_rating, errors='coerce')
     reviews_num = pd.to_numeric(maps_reviews, errors='coerce')
-    # The loop wrapped both conversions in one `try`, so an unreadable review
-    # count discarded a perfectly good rating and fell back to 50. Preserved
-    # deliberately: this is a behaviour-neutral refactor, and a review count
-    # that will not parse is a reason to distrust the row, not half of it.
     unreadable = (rating_num.isna() | (maps_reviews.notna() & reviews_num.isna())).to_numpy()
     usable = maps_rating.notna().to_numpy() & ~unreadable
     base = np.maximum(0.0, (np.nan_to_num(rating_num.to_numpy(dtype=float)) - 3.0) * 50.0)
@@ -597,5 +623,6 @@ def calculate_restaurant_priority(
     res_df['proximity_score'] = prox_scores
     res_df['staleness_score'] = stale_scores
     res_df['maps_prior_score'] = prior_scores
+    res_df['conflict_score'] = compute_plausible_conflict_score(res_df)
 
     return res_df

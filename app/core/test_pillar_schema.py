@@ -52,7 +52,9 @@ def test_every_real_payload_conforms(fixture):
 def test_extraction_yields_every_column_from_real_payloads(fixture):
     values = extract(unwrap_json(fixture.read_text()))
     assert set(values) == set(ALL_COLUMNS)
-    assert all(v is not None for v in values.values())
+    for field in PILLAR_FIELDS:
+        if field.required:
+            assert values[field.column] is not None, field.column
 
 
 @pytest.mark.parametrize("fixture", GOOD_FIXTURES, ids=lambda p: p.stem)
@@ -62,12 +64,30 @@ def test_scores_are_numbers_and_the_sit_down_flag_is_boolean(fixture):
     values = extract(unwrap_json(fixture.read_text()))
     for field in PILLAR_FIELDS:
         value = values[field.column]
+        if value is None and not field.required:
+            continue
         if field.bq_type == 'INT64':
             assert isinstance(value, int) and not isinstance(value, bool), field.column
         elif field.bq_type == 'BOOL':
             assert isinstance(value, bool), field.column
         else:
             assert isinstance(value, str), field.column
+
+
+def test_stage2_plausible_discriminator_fields_extract_when_present():
+    """Additive Stage-2 discriminators under `7_plausible_discriminators` extract
+    to their typed columns when present and leave legacy payloads conforming when absent."""
+    payload = json.loads(GOOD_FIXTURES[0].read_text())
+    payload['7_plausible_discriminators'] = {
+        'dining_pace_score': 4,
+        'cooking_quality_score': 5,
+        'anti_hype_score': 5,
+    }
+    values = extract(payload)
+    assert values['pillar_dining_pace'] == 4
+    assert values['pillar_cooking_quality'] == 5
+    assert values['pillar_anti_hype'] == 5
+    assert missing_paths(payload) == []
 
 
 def test_markdown_fenced_payloads_still_parse():
@@ -83,7 +103,7 @@ def test_a_leaked_reasoning_trace_is_missing_everything_not_zero():
     the backfill writes NULL. Reading it as 0 is the D2 failure mode exactly."""
     payload = unwrap_json(UNPARSEABLE.read_text())
     assert payload is None
-    assert missing_paths(payload) == [f.json_path for f in PILLAR_FIELDS]
+    assert missing_paths(payload) == [f.json_path for f in PILLAR_FIELDS if f.required]
     assert set(extract(payload).values()) == {None}
 
 
@@ -117,6 +137,7 @@ def test_the_feature_list_is_what_the_spec_says():
         'match_score', 'pillar_value_rating', 'pillar_community_score',
         'pillar_linguistic_score', 'pillar_culinary_score',
         'pillar_geo_specificity', 'pillar_is_sit_down', 'pillar_establishment_type',
+        'pillar_dining_pace', 'pillar_cooking_quality', 'pillar_anti_hype',
     }
 
 

@@ -475,4 +475,28 @@ class TestPredictionPreFlightGateAndTimeout:
         assert any('Scored and updated' in m for m in progress_messages)
 
 
+class TestTwoStageHurdlePredictionRouting:
+    """Predictions must route Stage-1 gated rows (takeaways, counters, chains >= 5,
+    non-RESTAURANT_DINING) to `_stage1_capped_score` (<= 2.0) and plausible
+    sit-down candidates to `ML.PREDICT` clamped to `[1.0, 10.0]`."""
+
+    @patch('app.services.ml_prediction.bigquery.Client')
+    @patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
+    @patch('app.services.ml_prediction.execute_gemini_enrichment')
+    def test_merge_statement_routes_stage1_gated_rows_to_deterministic_cap(
+        self, mock_gemini, mock_maps, mock_bq
+    ):
+        client = _mock_client([DummyRow('123', gemini_insights_structured='{"match_score": 80}')])
+        mock_bq.return_value = client
+
+        ok, _ = generate_predictions('p', 'd', 't', 'm', target_fhrsids=['123'])
+
+        assert ok is True
+        merge_sql = client.query.call_args_list[1].args[0]
+        assert 'AS _is_stage1_gated' in merge_sql
+        assert 'AS _stage1_capped_score' in merge_sql
+        assert 'IF(\n          S._is_stage1_gated,\n          S._stage1_capped_score,' in merge_sql
+        assert 'ROUND(LEAST(10.0, GREATEST(1.0, S.predicted_user_rating)), 2)' in merge_sql
+
+
 

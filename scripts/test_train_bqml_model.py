@@ -418,3 +418,65 @@ class TestStrictPreFlightGateAndOrdering:
         submitted = [c.args[0] for c in client.query.call_args_list]
         assert any('CREATE OR REPLACE MODEL' in q for q in submitted)
 
+
+class TestStage2TrainingAndModelFamilies:
+    """Tests for the Two-Stage Hurdle Stage-2 filter, 2x visited weighting,
+    and regularized model options."""
+
+    def test_training_select_filters_to_stage2_and_weights_visited_2x(self):
+        from scripts.train_bqml_model import build_training_select
+
+        sql = build_training_select('p', 'd', 'p.d.t')
+        assert 'm.pillar_is_sit_down IS TRUE' in sql
+        assert "m.pillar_establishment_type = 'RESTAURANT_DINING'" in sql
+        assert 'COALESCE(b.branch_count_in_fsa, 1) < 5' in sql
+        assert "GENERATE_ARRAY(1, IF(m.rating_source = 'visited', 2, 1))" in sql
+
+    def test_boosted_tree_options_use_shallow_regularized_hyperparameters(self):
+        from scripts.train_bqml_model import build_create_model_sql
+
+        sql = build_create_model_sql('p', 'd', 'p.d.t', 'p.d.m', model_family='boosted_tree')
+        assert "model_type='BOOSTED_TREE_REGRESSOR'" in sql
+        assert 'max_tree_depth=3' in sql
+        assert 'min_tree_child_weight=6' in sql
+        assert 'learn_rate=0.1' in sql
+        assert 'subsample=0.8' in sql
+        assert 'colsample_bytree=0.8' in sql
+        assert 'l2_reg=1.0' in sql
+        assert 'max_iterations=25' in sql
+
+    def test_linear_reg_options_use_ridge_regularization(self):
+        from scripts.train_bqml_model import build_create_model_sql
+
+        sql = build_create_model_sql('p', 'd', 'p.d.t', 'p.d.m_lin', model_family='linear_reg')
+        assert "model_type='LINEAR_REG'" in sql
+        assert 'l2_reg=1.0' in sql
+        assert "data_split_method='NO_SPLIT'" in sql
+
+    @patch('app.services.bq_utils.execute_gemini_enrichment', return_value=True)
+    @patch('scripts.train_bqml_model.bigquery.Client')
+    def test_refresh_missing_stage2_pillars_triggers_gemini_for_unpopulated_rows(
+        self, mock_bq, mock_gemini
+    ):
+        row_missing = DummyRow('10', gemini_profiled_at='2026-01-01 00:00:00+00:00')
+        row_missing.has_stage2_pillars = False
+        row_present = DummyRow('11', gemini_profiled_at='2026-01-01 00:00:00+00:00')
+        row_present.has_stage2_pillars = True
+
+        post_row_10 = DummyRow('10', gemini_profiled_at='2099-01-01 00:00:00+00:00')
+        post_row_10.has_stage2_pillars = True
+
+        client = MagicMock()
+        check_1 = MagicMock()
+        check_1.result.return_value = [row_missing, row_present]
+        check_2 = MagicMock()
+        check_2.result.return_value = [post_row_10, row_present]
+        client.query.side_effect = [check_1, check_2, MagicMock()]
+        mock_bq.return_value = client
+
+        train_model('p', 'd', 't', 'm', dry_run=False, refresh_missing_stage2_pillars=True)
+
+        mock_gemini.assert_called_once()
+        assert mock_gemini.call_args.kwargs['fhrsids'] == ['10']
+
+

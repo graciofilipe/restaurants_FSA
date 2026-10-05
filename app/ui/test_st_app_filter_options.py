@@ -133,3 +133,63 @@ def test_missing_values_sort_last_in_both_directions(df):
     nearest = filter_and_sort_restaurants(
         df.assign(distance_km=[None, 9.9, 4.0]), sort_by="Distance (Nearest First)")
     assert ids(nearest) == ["103", "102", "101"]
+
+
+def test_rating_source_and_plausible_active_learning_filter():
+    from app.ui.st_app import (
+        SOURCE_DESK,
+        SOURCE_NEEDS_TRIAGE,
+        SOURCE_PLAUSIBLE_AL,
+        SOURCE_VISITED,
+        SORT_CONFLICT,
+    )
+
+    frame = pd.DataFrame([
+        {
+            "fhrsid": "1",
+            "in_scope": True,
+            "user_rating": 8.0,
+            "rating_source": "visited",
+            "match_score": 85.0,
+            "pillar_is_sit_down": True,
+            "pillar_establishment_type": "RESTAURANT_DINING",
+            "conflict_score": 10.0,
+        },
+        {
+            "fhrsid": "2",
+            "in_scope": True,
+            "user_rating": 2.0,
+            "rating_source": "desk",
+            "match_score": 30.0,
+            "pillar_is_sit_down": False,
+            "pillar_establishment_type": "FAST_FOOD_TAKEAWAY",
+            "conflict_score": 0.0,
+        },
+        {
+            "fhrsid": "3",
+            "in_scope": True,
+            "user_rating": 7.0,
+            "rating_source": None,
+            "match_score": 78.0,
+            "pillar_is_sit_down": True,
+            "pillar_establishment_type": "RESTAURANT_DINING",
+            "conflict_score": 15.0,
+        },
+        {
+            "fhrsid": "4",
+            "in_scope": True,
+            "user_rating": None,
+            "rating_source": None,
+            "match_score": 88.0,
+            "pillar_is_sit_down": True,
+            "pillar_establishment_type": "RESTAURANT_DINING",
+            "conflict_score": 62.5,
+        },
+    ])
+
+    assert ids(filter_and_sort_restaurants(frame, rating_source_filter=SOURCE_VISITED)) == ["1"]
+    assert ids(filter_and_sort_restaurants(frame, rating_source_filter=SOURCE_DESK)) == ["2"]
+    assert ids(filter_and_sort_restaurants(frame, rating_source_filter=SOURCE_NEEDS_TRIAGE)) == ["3"]
+    assert ids(filter_and_sort_restaurants(frame, rating_source_filter=SOURCE_PLAUSIBLE_AL)) == ["4"]
+    assert ids(filter_and_sort_restaurants(frame, sort_by=SORT_CONFLICT)) == ["4", "3", "1", "2"]
+

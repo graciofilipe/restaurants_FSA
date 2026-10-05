@@ -30,7 +30,15 @@ import logging
 
 from google.cloud import bigquery
 
-from scripts.train_bqml_model import build_training_select
+from app.core.model_features import (
+    feature_select_list,
+    feature_source_clause,
+    is_stage1_gated_sql,
+    normalized_brand_key_sql,
+    stage1_deterministic_score_sql,
+    stage2_training_where_clause,
+)
+from scripts.train_bqml_model import build_create_model_sql, build_training_select
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -39,8 +47,7 @@ DEFAULT_PROJECT_ID = "filipegracio-ai-learning"
 DEFAULT_DATASET_ID = "filipegracio_fsa_restaurants"
 DEFAULT_TABLE_ID = "fsa_master"
 
-# 1 bucket in 5 held out, so ~20% of 404 labelled rows -- around 80. Smaller and
-# the MAE is noise; larger and the training split gets thin.
+# 1 bucket in 5 held out, so ~20% of labelled brands.
 DEFAULT_HOLDOUT_MODULUS = 5
 HOLDOUT_BUCKET = 0
 
@@ -50,40 +57,54 @@ MODEL_PREFIX = "eval_holdout"
 
 
 def split_predicate(modulus: int, bucket: int, holdout: bool, alias: str = "m") -> str:
-    """Deterministic train/holdout carve, appended to the training WHERE clause.
+    """Deterministic brand-grouped train/holdout carve, appended to the WHERE clause.
 
-    FARM_FINGERPRINT over the ID rather than RAND(), so the same row lands in
-    the same split on every run and in every phase -- which is the only reason
-    the Phase 9 comparison means anything.
+    Hashes the normalised `businessname` (`normalized_brand_key_sql(alias)`)
+    rather than `fhrsid` so multi-branch chains never span both train and
+    holdout splits.
     """
     operator = "=" if holdout else "!="
+    brand_expr = normalized_brand_key_sql(alias)
     return (
-        f"AND MOD(ABS(FARM_FINGERPRINT(CAST({alias}.fhrsid AS STRING))), {modulus}) "
+        f"AND MOD(ABS(FARM_FINGERPRINT({brand_expr})), {modulus}) "
         f"{operator} {bucket}"
     )
 
 
 def build_boosted_tree_model_sql(project_id, dataset_id, source_table, model_name, predicate) -> str:
-    """The current architecture and the current features, on the training split.
+    """Stage-2 regularized boosted tree on the training split.
 
-    `model_registry='vertex_ai'` is deliberately omitted: these are throwaway
-    measurement artefacts and do not belong in the registry beside the real one.
+    `register_vertex=False` omits `model_registry='vertex_ai'` because these are
+    evaluation models rather than production registry artefacts.
     """
-    return f"""CREATE OR REPLACE MODEL `{project_id}.{dataset_id}.{model_name}`
-OPTIONS(
-  model_type='BOOSTED_TREE_REGRESSOR',
-  input_label_cols=['user_rating']
-) AS
-{build_training_select(project_id, dataset_id, source_table, predicate)}"""
+    full_model_name = f"{project_id}.{dataset_id}.{model_name}"
+    return build_create_model_sql(
+        project_id,
+        dataset_id,
+        source_table,
+        full_model_name,
+        model_family="boosted_tree",
+        extra_predicate=predicate,
+        register_vertex=False,
+    ).strip()
+
+
+def build_linear_reg_model_sql(project_id, dataset_id, source_table, model_name, predicate) -> str:
+    """Stage-2 regularized linear regression (`l2_reg=1.0`) on the training split."""
+    full_model_name = f"{project_id}.{dataset_id}.{model_name}"
+    return build_create_model_sql(
+        project_id,
+        dataset_id,
+        source_table,
+        full_model_name,
+        model_family="linear_reg",
+        extra_predicate=predicate,
+        register_vertex=False,
+    ).strip()
 
 
 def build_match_score_model_sql(project_id, dataset_id, source_table, model_name, predicate) -> str:
-    """The no-ML baseline: `match_score` fitted to the label, nothing else.
-
-    Reads the same nested-path-free flat `$.match_score` the production SQL
-    reads. That one path is the only Gemini feature that currently resolves, so
-    this baseline is, in effect, the whole Gemini contribution to the model.
-    """
+    """The no-ML baseline: `match_score` fitted to the label, nothing else."""
     return f"""CREATE OR REPLACE MODEL `{project_id}.{dataset_id}.{model_name}`
 OPTIONS(
   model_type='LINEAR_REG',
@@ -92,10 +113,9 @@ OPTIONS(
 SELECT
   m.user_rating,
   IFNULL(CAST(JSON_EXTRACT_SCALAR(REGEXP_EXTRACT(m.gemini_insights_structured, r'(?s)[{{].*[}}]'), '$.match_score') AS INT64), 0) AS match_score
-FROM `{source_table}` AS m
+{feature_source_clause(project_id, dataset_id, source_table)}
 WHERE
-  (m.in_scope = TRUE OR m.in_scope IS NULL)
-  AND m.user_rating IS NOT NULL
+  {stage2_training_where_clause('m', 'b')}
   {predicate}"""
 
 
@@ -108,12 +128,7 @@ def build_evaluate_sql(project_id, dataset_id, source_table, model_name, predica
 
 
 def build_mean_baseline_sql(project_id, dataset_id, source_table, train_predicate, holdout_predicate) -> str:
-    """Predict the training mean for every holdout row.
-
-    No model, no features. A boosted tree that cannot beat this is not learning
-    anything from the features it was given -- which, with five of them pinned
-    to zero, is a live possibility worth measuring rather than assuming.
-    """
+    """Predict the training mean for every holdout row."""
     return f"""WITH train_mean AS (
   SELECT AVG(user_rating) AS mu
   FROM `{source_table}` AS m
@@ -131,11 +146,7 @@ WHERE (m.in_scope = TRUE OR m.in_scope IS NULL) AND m.user_rating IS NOT NULL
 
 
 def build_rank_correlation_sql(project_id, dataset_id, source_table, model_name, predicate) -> str:
-    """Spearman correlation between predicted and actual on the holdout.
-
-    MAE answers "how close is the number"; this answers "is the queue in the
-    right order", which is what the app actually uses the prediction for.
-    """
+    """Spearman correlation between predicted and actual on the holdout."""
     return f"""WITH scored AS (
   SELECT predicted_user_rating, user_rating
   FROM ML.PREDICT(
@@ -153,12 +164,7 @@ SELECT CORR(rank_pred, rank_actual) AS spearman FROM ranked"""
 
 
 def build_match_score_rank_sql(source_table, holdout_predicate) -> str:
-    """Spearman of raw `match_score` against the label -- no model at all.
-
-    This is the plan's "rank the held-out rows by match_score alone". It is
-    also the ranking number for the LINEAR_REG baseline: a one-feature linear
-    fit is monotonic in its input, so it cannot reorder anything.
-    """
+    """Spearman of raw `match_score` against the label -- no model at all."""
     return f"""WITH scored AS (
   SELECT
     m.user_rating,
@@ -176,16 +182,116 @@ ranked AS (
 SELECT CORR(rank_pred, rank_actual) AS spearman FROM ranked"""
 
 
-def build_split_sizes_sql(source_table, train_predicate, holdout_predicate) -> str:
-    """How the split actually landed, and whether the holdout is representative.
+def build_two_stage_hurdle_benchmark_sql(
+    project_id: str,
+    dataset_id: str,
+    source_table: str,
+    tree_model: str,
+    linear_reg_model: str,
+    holdout_predicate: str,
+) -> str:
+    """Evaluate `boosted_tree`, `linear_reg`, and their 50/50 ensemble on both
+    the Plausible Holdout slice (`NOT _is_stage1_gated`) and the All Holdout
+    slice (with Stage-1 deterministic capping)."""
+    return f"""WITH holdout_features AS (
+  SELECT
+    m.fhrsid,
+    COALESCE(m.match_score, 0.0) AS raw_match_score,
+    {is_stage1_gated_sql('m', 'b')} AS _is_stage1_gated,
+    {stage1_deterministic_score_sql('m')} AS _stage1_capped_score,
+{feature_select_list()}
+{feature_source_clause(project_id, dataset_id, source_table)}
+  WHERE (m.in_scope = TRUE OR m.in_scope IS NULL)
+    AND m.user_rating IS NOT NULL
+    {holdout_predicate}
+),
+tree_preds AS (
+  SELECT fhrsid, user_rating, raw_match_score, _is_stage1_gated, _stage1_capped_score,
+         predicted_user_rating AS tree_pred
+  FROM ML.PREDICT(MODEL `{project_id}.{dataset_id}.{tree_model}`, TABLE holdout_features)
+),
+lin_preds AS (
+  SELECT fhrsid, predicted_user_rating AS lin_pred
+  FROM ML.PREDICT(MODEL `{project_id}.{dataset_id}.{linear_reg_model}`, TABLE holdout_features)
+),
+combined AS (
+  SELECT
+    t.fhrsid,
+    t.user_rating,
+    t.raw_match_score,
+    t._is_stage1_gated,
+    IF(t._is_stage1_gated, t._stage1_capped_score, ROUND(LEAST(10.0, GREATEST(1.0, t.tree_pred)), 2)) AS pred_tree,
+    IF(t._is_stage1_gated, t._stage1_capped_score, ROUND(LEAST(10.0, GREATEST(1.0, l.lin_pred)), 2)) AS pred_lin,
+    IF(t._is_stage1_gated, t._stage1_capped_score, ROUND(LEAST(10.0, GREATEST(1.0, 0.5 * t.tree_pred + 0.5 * l.lin_pred)), 2)) AS pred_ens
+  FROM tree_preds AS t
+  JOIN lin_preds AS l USING (fhrsid)
+),
+plausible_ranked AS (
+  SELECT
+    user_rating,
+    pred_tree,
+    pred_lin,
+    pred_ens,
+    raw_match_score,
+    RANK() OVER (ORDER BY user_rating) AS r_actual,
+    RANK() OVER (ORDER BY pred_tree) AS r_tree,
+    RANK() OVER (ORDER BY pred_lin) AS r_lin,
+    RANK() OVER (ORDER BY pred_ens) AS r_ens,
+    RANK() OVER (ORDER BY raw_match_score) AS r_match
+  FROM combined
+  WHERE NOT _is_stage1_gated
+),
+all_ranked AS (
+  SELECT
+    user_rating,
+    pred_tree,
+    pred_lin,
+    pred_ens,
+    raw_match_score,
+    RANK() OVER (ORDER BY user_rating) AS r_actual,
+    RANK() OVER (ORDER BY pred_tree) AS r_tree,
+    RANK() OVER (ORDER BY pred_lin) AS r_lin,
+    RANK() OVER (ORDER BY pred_ens) AS r_ens,
+    RANK() OVER (ORDER BY raw_match_score) AS r_match
+  FROM combined
+)
+SELECT
+  'plausible_holdout' AS slice,
+  COUNT(*) AS n,
+  ROUND(AVG(ABS(user_rating - pred_tree)), 4) AS tree_mae,
+  ROUND(CORR(r_tree, r_actual), 4) AS tree_spearman,
+  ROUND(AVG(ABS(user_rating - pred_lin)), 4) AS lin_mae,
+  ROUND(CORR(r_lin, r_actual), 4) AS lin_spearman,
+  ROUND(AVG(ABS(user_rating - pred_ens)), 4) AS ens_mae,
+  ROUND(CORR(r_ens, r_actual), 4) AS ens_spearman,
+  ROUND(CORR(r_match, r_actual), 4) AS match_score_spearman
+FROM plausible_ranked
+UNION ALL
+SELECT
+  'all_holdout' AS slice,
+  COUNT(*) AS n,
+  ROUND(AVG(ABS(user_rating - pred_tree)), 4) AS tree_mae,
+  ROUND(CORR(r_tree, r_actual), 4) AS tree_spearman,
+  ROUND(AVG(ABS(user_rating - pred_lin)), 4) AS lin_mae,
+  ROUND(CORR(r_lin, r_actual), 4) AS lin_spearman,
+  ROUND(AVG(ABS(user_rating - pred_ens)), 4) AS ens_mae,
+  ROUND(CORR(r_ens, r_actual), 4) AS ens_spearman,
+  ROUND(CORR(r_match, r_actual), 4) AS match_score_spearman
+FROM all_ranked"""
 
-    A hash split over 404 skewed labels can drift; if the two means are far
-    apart the MAE comparison is measuring the split, not the model.
-    """
+
+def build_split_sizes_sql(source_table, train_predicate, holdout_predicate) -> str:
+    """How the split actually landed, and whether the holdout is representative."""
     base = "(m.in_scope = TRUE OR m.in_scope IS NULL) AND m.user_rating IS NOT NULL"
+    plausible = (
+        f"{base} AND m.pillar_is_sit_down IS TRUE "
+        "AND m.pillar_establishment_type = 'RESTAURANT_DINING'"
+    )
     return f"""SELECT
   (SELECT COUNT(*) FROM `{source_table}` AS m WHERE {base} {train_predicate}) AS train_rows,
   (SELECT COUNT(*) FROM `{source_table}` AS m WHERE {base} {holdout_predicate}) AS holdout_rows,
+  (SELECT COUNT(*) FROM `{source_table}` AS m WHERE {plausible} {train_predicate}) AS plausible_train_rows,
+  (SELECT COUNT(*) FROM `{source_table}` AS m WHERE {plausible} {holdout_predicate}) AS plausible_holdout_rows,
   (SELECT ROUND(AVG(m.user_rating), 3) FROM `{source_table}` AS m WHERE {base} {train_predicate}) AS train_mean_rating,
   (SELECT ROUND(AVG(m.user_rating), 3) FROM `{source_table}` AS m WHERE {base} {holdout_predicate}) AS holdout_mean_rating,
   (SELECT COUNT(*) FROM `{source_table}` AS m WHERE m.user_rating IS NOT NULL) AS labelled_rows_total"""
@@ -197,25 +303,36 @@ def build_all_statements(project_id, dataset_id, table_id, modulus) -> list:
     train = split_predicate(modulus, HOLDOUT_BUCKET, holdout=False)
     holdout = split_predicate(modulus, HOLDOUT_BUCKET, holdout=True)
     tree_model = f"{MODEL_PREFIX}_boosted_tree"
-    linear_model = f"{MODEL_PREFIX}_match_score"
+    linear_reg_model = f"{MODEL_PREFIX}_linear_reg"
+    match_model = f"{MODEL_PREFIX}_match_score"
 
     return [
         ("split_sizes",
          build_split_sizes_sql(source_table, train, holdout), False),
         ("train_boosted_tree",
          build_boosted_tree_model_sql(project_id, dataset_id, source_table, tree_model, train), True),
+        ("train_linear_reg",
+         build_linear_reg_model_sql(project_id, dataset_id, source_table, linear_reg_model, train), True),
         ("train_match_score_baseline",
-         build_match_score_model_sql(project_id, dataset_id, source_table, linear_model, train), True),
+         build_match_score_model_sql(project_id, dataset_id, source_table, match_model, train), True),
         ("evaluate_boosted_tree",
          build_evaluate_sql(project_id, dataset_id, source_table, tree_model, holdout), False),
+        ("evaluate_linear_reg",
+         build_evaluate_sql(project_id, dataset_id, source_table, linear_reg_model, holdout), False),
         ("evaluate_match_score",
-         build_evaluate_sql(project_id, dataset_id, source_table, linear_model, holdout), False),
+         build_evaluate_sql(project_id, dataset_id, source_table, match_model, holdout), False),
         ("mean_baseline",
          build_mean_baseline_sql(project_id, dataset_id, source_table, train, holdout), False),
         ("rank_correlation_boosted_tree",
          build_rank_correlation_sql(project_id, dataset_id, source_table, tree_model, holdout), False),
+        ("rank_correlation_linear_reg",
+         build_rank_correlation_sql(project_id, dataset_id, source_table, linear_reg_model, holdout), False),
         ("rank_correlation_match_score",
          build_match_score_rank_sql(source_table, holdout), False),
+        ("two_stage_hurdle_benchmark",
+         build_two_stage_hurdle_benchmark_sql(
+             project_id, dataset_id, source_table, tree_model, linear_reg_model, holdout
+         ), False),
     ]
 
 

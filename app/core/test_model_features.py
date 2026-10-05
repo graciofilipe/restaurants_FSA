@@ -10,10 +10,16 @@ import unittest
 
 from app.core.model_features import (
     DEMOGRAPHIC_COLUMNS,
+    DEMOGRAPHIC_FEATURE_COLUMNS,
+    ENGINEERED_FEATURE_ALIASES,
     FEATURE_ALIASES,
     PILLAR_FEATURE_ALIASES,
     feature_select_list,
     feature_source_clause,
+    is_stage1_gated_sql,
+    normalized_brand_key_sql,
+    stage1_deterministic_score_sql,
+    stage2_training_where_clause,
 )
 from app.core.pillar_schema import FEATURE_COLUMNS, PILLAR_FIELDS
 
@@ -34,25 +40,54 @@ class TestFeatureList(unittest.TestCase):
                 self.assertNotIn(f"AS {field.column}", sql, field.column)
 
     def test_the_non_pillar_features_are_still_there(self):
-        """The Gemini pillars are an addition, not a replacement."""
-        for alias in ('postcode', 'maps_rating', 'maps_reviews', 'latitude', 'longitude',
-                      'price_level', 'ratingvalue', 'business_status', 'localauthorityname',
-                      'maps_types_array', 'lsoa', 'msoa', 'imd_rank'):
+        """Low-cardinality structural and numeric features remain in the model."""
+        for alias in ('maps_rating', 'maps_reviews', 'price_level', 'ratingvalue',
+                      'business_status', 'localauthorityname', 'imd_rank'):
             self.assertIn(alias, FEATURE_ALIASES, alias)
+
+    def test_high_cardinality_memorization_features_are_pruned(self):
+        """`postcode`, `lsoa`, `msoa`, `latitude`, `longitude`, and
+        `maps_types_array` allowed trees to memorize postcodes/coordinates
+        rather than learning culinary quality."""
+        sql = feature_select_list()
+        for pruned in ('postcode', 'lsoa', 'msoa', 'latitude', 'longitude', 'maps_types_array'):
+            self.assertNotIn(pruned, FEATURE_ALIASES, pruned)
+            self.assertNotIn(f"m.{pruned}", sql)
+            self.assertNotIn(f"d.{pruned}", sql)
+
+    def test_engineered_interaction_features_are_present(self):
+        """Engineered continuous/interaction features are present in both
+        `FEATURE_ALIASES` and `feature_select_list()`."""
+        sql = feature_select_list()
+        for alias in ENGINEERED_FEATURE_ALIASES:
+            self.assertIn(alias, FEATURE_ALIASES, alias)
+            self.assertIn(f"AS {alias}", sql, alias)
 
     def test_the_label_is_selected(self):
         """BQML reads `user_rating` as input_label_cols; without it, training
         fails outright."""
         self.assertIn('user_rating', FEATURE_ALIASES)
 
-    def test_missing_stays_missing(self):
-        """No IFNULL(..., 0). Defaulting a missing score to zero is what made
-        D2 invisible: five features read as constant 0 and nothing complained.
-        BQML handles NULL natively, so the default bought nothing and hid
-        everything."""
+    def test_missing_stays_missing_for_required_core_pillars(self):
+        """No IFNULL(..., 0) anywhere, and required core V2 pillars are never
+        wrapped in COALESCE. Optional Stage-2 pillars (`required=False`) use
+        neutral COALESCE(..., 3) fallback on rows profiled before Stage-2."""
         sql = feature_select_list()
         self.assertNotIn('IFNULL', sql)
-        self.assertNotIn('COALESCE', sql)
+        lines_by_alias = {
+            line.strip().rstrip(',').rsplit(' AS ', 1)[-1]: line
+            for line in sql.splitlines()
+            if ' AS ' in line
+        }
+        for field in PILLAR_FIELDS:
+            if not field.is_feature:
+                continue
+            line = lines_by_alias[field.column]
+            if field.required:
+                self.assertNotIn('COALESCE', line, field.column)
+            else:
+                self.assertIn('COALESCE(', line, field.column)
+                self.assertIn(', 3)', line, field.column)
 
     def test_it_reads_the_nested_paths(self):
         """D2 itself: the old SQL read `$.1_value_and_volume_rating`, which
@@ -60,6 +95,9 @@ class TestFeatureList(unittest.TestCase):
         sql = feature_select_list()
         self.assertIn('$.1_value_and_volume.rating', sql)
         self.assertNotIn('1_value_and_volume_rating', sql)
+        self.assertIn('$.7_plausible_discriminators.dining_pace_score', sql)
+        self.assertIn('$.7_plausible_discriminators.cooking_quality_score', sql)
+        self.assertIn('$.7_plausible_discriminators.anti_hype_score', sql)
 
     def test_the_enum_pillars_are_not_cast_to_int(self):
         """`CAST('GENERIC_NATIONAL' AS INT64)` is NULL, and with the old IFNULL
@@ -81,9 +119,38 @@ class TestFeatureList(unittest.TestCase):
         self.assertEqual(len(FEATURE_ALIASES), len(set(FEATURE_ALIASES)))
 
     def test_the_table_aliases_are_configurable_but_default_to_m_and_d(self):
-        self.assertIn('m.postcode', feature_select_list())
+        self.assertIn('m.localauthorityname', feature_select_list())
         self.assertIn('d.imd_rank', feature_select_list())
-        self.assertIn('x.postcode', feature_select_list(master='x'))
+        self.assertIn('b.branch_count_in_fsa', feature_select_list())
+        self.assertIn('x.localauthorityname', feature_select_list(master='x'))
+
+
+class TestStage1AndStage2SqlHelpers(unittest.TestCase):
+
+    def test_normalized_brand_key_strips_non_alphanumeric(self):
+        sql = normalized_brand_key_sql('m')
+        self.assertIn('REGEXP_REPLACE(LOWER(TRIM(COALESCE(m.businessname', sql)
+        self.assertIn("r'[^a-z0-9]'", sql)
+
+    def test_stage1_gate_checks_scope_sit_down_type_and_branches(self):
+        sql = is_stage1_gated_sql('m', 'b')
+        self.assertIn('m.in_scope', sql)
+        self.assertIn('m.pillar_is_sit_down', sql)
+        self.assertIn("!= 'RESTAURANT_DINING'", sql)
+        self.assertIn('b.branch_count_in_fsa, 1) >= 5', sql)
+
+    def test_stage1_deterministic_score_is_bounded_between_1_and_2(self):
+        sql = stage1_deterministic_score_sql('m')
+        self.assertIn('LEAST(2.0, GREATEST(1.0', sql)
+        self.assertIn('m.match_score', sql)
+
+    def test_stage2_training_where_clause_filters_to_plausible_sit_down(self):
+        sql = stage2_training_where_clause('m', 'b')
+        self.assertIn('m.user_rating IS NOT NULL', sql)
+        self.assertIn('m.in_scope IS TRUE', sql)
+        self.assertIn('m.pillar_is_sit_down IS TRUE', sql)
+        self.assertIn("m.pillar_establishment_type = 'RESTAURANT_DINING'", sql)
+        self.assertIn('COALESCE(b.branch_count_in_fsa, 1) < 5', sql)
 
 
 class TestFormatTemplateEscaping(unittest.TestCase):
@@ -136,23 +203,6 @@ class TestTheDemographicsJoinCannotFanOut(unittest.TestCase):
     `uk_postcode_demographics` holds 15 normalised postcodes more than once,
     one of them three times, because the enrichment inserts one row per *raw*
     spelling. 103 rows of `fsa_master` carry one of them.
-
-    Joining the table raw therefore returns those restaurants two or three
-    times, and `ML.PREDICT` carries the duplicates into the MERGE's source,
-    where BigQuery rejects the whole statement:
-
-        UPDATE/MERGE must match at most one source row for each target row
-
-    Which is the serious part. It is not a skewed number, it is a batch that
-    dies -- *after* the Places and `AI.GENERATE` pre-flight has been paid for.
-    Observed twice in production on 2026-09-24, at 14:45:58 and 16:10:33.
-
-    Training reads the same clause, so those 103 rows were also duplicated in
-    the training set. Only one of them is labelled, so the model skew is one
-    double-weighted example out of 411 -- real, but not why this is a fix.
-
-    The dedupe is in the query rather than only in the table because this join
-    must be safe against a reference table it does not own.
     """
 
     def test_the_demographics_table_is_not_joined_raw(self):
@@ -190,18 +240,26 @@ class TestTheDemographicsJoinCannotFanOut(unittest.TestCase):
         self.assertEqual(clause.count('NULLS LAST'), len(DEMOGRAPHIC_COLUMNS))
 
     def test_the_demographic_columns_are_still_reachable_as_d(self):
-        """The feature list is unchanged and still says `d.lsoa`; the subquery
-        has to keep answering to that alias or every demographic goes NULL."""
+        """The deduplicating subquery still selects all DEMOGRAPHIC_COLUMNS,
+        while the feature list selects only DEMOGRAPHIC_FEATURE_COLUMNS (`imd_rank`)."""
         clause = feature_source_clause('p', 'd', 'p.d.t')
 
         for column in DEMOGRAPHIC_COLUMNS:
-            self.assertIn(f'd.{column}', feature_select_list())
             self.assertIn(column, clause)
+        for column in DEMOGRAPHIC_FEATURE_COLUMNS:
+            self.assertIn(f'd.{column}', feature_select_list())
 
     def test_the_join_still_matches_on_the_normalised_postcode(self):
         clause = feature_source_clause('p', 'd', 'p.d.t')
 
         self.assertIn("REPLACE(UPPER(m.postcode), ' ', '')", clause)
+
+    def test_branch_count_subquery_groups_by_brand_key_and_cannot_fan_out(self):
+        clause = feature_source_clause('p', 'd', 'p.d.t')
+
+        self.assertIn('COUNT(DISTINCT b_src.fhrsid) AS branch_count_in_fsa', clause)
+        self.assertIn('GROUP BY brand_key', clause)
+        self.assertIn(f"ON {normalized_brand_key_sql('m')} = b.brand_key", clause)
 
     def test_avoids_qualify_for_bqml_create_model_compatibility(self):
         """BigQuery ML's `CREATE MODEL ... AS SELECT` validator rejects `QUALIFY`
@@ -213,10 +271,7 @@ class TestTheDemographicsJoinCannotFanOut(unittest.TestCase):
         self.assertIn('WHERE _rn = 1', clause)
 
     def test_it_changes_row_counts_and_not_the_feature_schema(self):
-        """Deduplicating rows is not a feature change, so `ML.PREDICT` against
-        the already-trained model keeps working and no retrain is forced. The
-        selected aliases are what the model's input schema is made of, so
-        pinning them here is what makes that claim checkable."""
+        """The selected aliases are what the model's input schema is made of."""
         aliases = []
         for line in feature_select_list().splitlines():
             expression = line.strip().rstrip(',')

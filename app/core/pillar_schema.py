@@ -40,6 +40,7 @@ class PillarField:
     keys: Tuple[str, ...]
     is_feature: bool
     description: str
+    required: bool = True
 
     @property
     def json_path(self) -> str:
@@ -47,9 +48,10 @@ class PillarField:
 
 
 # Ordered as the prompt emits them. `is_feature` marks what the model trains
-# on: the four integer pillar scores, the two categorical pillars, and
-# match_score. The free-text fields are for the UI and must stay out of the
-# feature list -- they are unbounded model prose, not signal.
+# on: the four integer pillar scores, the two categorical pillars, the three
+# additive Stage-2 plausible discriminators, and match_score. The free-text
+# fields are for the UI and must stay out of the feature list -- they are
+# unbounded model prose, not signal.
 PILLAR_FIELDS: Tuple[PillarField, ...] = (
     PillarField('match_score', 'INT64', ('match_score',), True,
                 'Overall 0-100 fit against the taste profile.'),
@@ -78,6 +80,18 @@ PILLAR_FIELDS: Tuple[PillarField, ...] = (
                 'Pillar 6: the in_scope gate. Mis-derived in production -- see D13.'),
     PillarField('pillar_establishment_type', 'STRING', ('6_establishment_integrity', 'type'), True,
                 'Pillar 6 enum, e.g. FAST_FOOD_JOINT.'),
+    PillarField('pillar_dining_pace', 'INT64',
+                ('7_plausible_discriminators', 'dining_pace_score'), True,
+                'Pillar 7A (1-5): Dining pace & linger hospitality vs counter/rush format.',
+                required=False),
+    PillarField('pillar_cooking_quality', 'INT64',
+                ('7_plausible_discriminators', 'cooking_quality_score'), True,
+                'Pillar 7B (1-5): Scratch-cooking craft & fresh aromatics vs central-kitchen assembly.',
+                required=False),
+    PillarField('pillar_anti_hype', 'INT64',
+                ('7_plausible_discriminators', 'anti_hype_score'), True,
+                'Pillar 7C (1-5): Low-PR neighbourhood substance vs TikTok/PR hype inflation.',
+                required=False),
     PillarField('summary_reasoning', 'STRING', ('summary_reasoning',), False,
                 'One-paragraph overall verdict, shown in the UI.'),
 )
@@ -138,11 +152,15 @@ def missing_paths(payload: Optional[Dict[str, Any]]) -> List[str]:
 
     The conformance check. An empty list means the profile is usable as-is; a
     non-empty one is the signal that generation has drifted, which is the thing
-    nothing in the repo could previously detect.
+    nothing in the repo could previously detect. Additive Stage-2 fields marked
+    `required=False` are omitted so legacy 6-pillar profiles still conform.
     """
     if not payload:
-        return [field.json_path for field in PILLAR_FIELDS]
-    return [f.json_path for f in PILLAR_FIELDS if _walk(payload, f.keys) is None]
+        return [field.json_path for field in PILLAR_FIELDS if field.required]
+    return [
+        f.json_path for f in PILLAR_FIELDS
+        if f.required and _walk(payload, f.keys) is None
+    ]
 
 
 def sql_json_object_regex(for_format_template: bool = False) -> str:
