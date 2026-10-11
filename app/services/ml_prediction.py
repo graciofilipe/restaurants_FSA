@@ -111,17 +111,17 @@ def build_hybrid_merge_query(
         predicted_user_rating = IF(
           S._is_stage1_gated,
           S._stage1_capped_score,
-          ROUND(LEAST(10.0, GREATEST(1.0, S.predicted_user_rating)), 2)
+          ROUND(LEAST(6.0, GREATEST(1.0, S.predicted_user_rating)), 2)
         ),
         tree_pred = IF(
           S._is_stage1_gated,
           S._stage1_capped_score,
-          ROUND(LEAST(10.0, GREATEST(1.0, COALESCE(S.tree_pred, S.lin_pred, 5.0))), 2)
+          ROUND(LEAST(6.0, GREATEST(1.0, COALESCE(S.tree_pred, S.lin_pred, 3.5))), 2)
         ),
         lin_pred = IF(
           S._is_stage1_gated,
           S._stage1_capped_score,
-          ROUND(LEAST(10.0, GREATEST(1.0, COALESCE(S.lin_pred, S.tree_pred, 5.0))), 2)
+          ROUND(LEAST(6.0, GREATEST(1.0, COALESCE(S.lin_pred, S.tree_pred, 3.5))), 2)
         ),
         predicted_at = CURRENT_TIMESTAMP()
     '''

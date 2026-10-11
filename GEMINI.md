@@ -26,11 +26,14 @@ This project is a Streamlit-based web application designed to fetch, analyze, an
 *   **`scripts/bq_scripts.py`**: SQL templates for Gemini enrichment (`gemini-3.8-flash`) and table merge workflows.
 *   **`scripts/enrich_maps_data.py`**: Streamlined Google Places API batch enrichment.
 *   **`scripts/train_bqml_model.py`**: BQML Boosted Tree Regressor model training with pre-flight JIT enrichment checks.
-*   **`scripts/migrate_*.py`**: Concise BigQuery column migration scripts (`migrate_user_rating.py`, `migrate_predicted_rating.py`, `migrate_maps_columns.py`, `migrate_more_maps_columns.py`).
+*   **`scripts/migrate_*.py`**: Concise BigQuery column migration scripts (`migrate_user_rating.py`, `migrate_predicted_rating.py`, `migrate_maps_columns.py`, `migrate_more_maps_columns.py`, `migrate_rating_scale_6pt.py`).
 
 ### Testing & Quality Flywheel (`tests/` & `app/**/test_*.py`)
 *   **`app/` Test Suite:** 58 unit and module tests covering UI components, core processing, API clients, and BigQuery utilities (pruned tests for dead modules and obsolete UI tabs).
 *   **`tests/` Test Suite:** 16 integration, evaluation, and BQML regression tests (`test_restaurant_eval.py`, `test_server_e2e.py`, `test_bqml_training.py`, etc.).
+
+### Agent Skills (`_agents/skills/` & `~/.gemini/config/skills/`)
+*   **`_agents/skills/restaurant-uniqueness-explorer/SKILL.md`** (also mirrored globally at `~/.gemini/config/skills/restaurant-uniqueness-explorer/SKILL.md`): Parallel multi-agent workflow (1 subagent per shortlisted restaurant) that performs a 30% 6-pillar sanity check and a 70% deep menu & native-language dish archaeology sweep (with concise telegraph-style output) to answer *"Is it worth going?"* and *"What unique regional dishes should I order?"*. Includes `scripts/fetch_bq_shortlist.py` and `references/subagent_prompt_template.md`.
 
 ## Setup and Usage
 
@@ -80,6 +83,7 @@ The application is deployed to Google Cloud Run via Cloud Build.
 > A Cloud Build trigger is configured to automatically build and deploy the application with every commit and push to the repository. **You must commit and push your changes to the remote repository (`main` branch) to see them reflected in the live application.**
 
 ## Recent Updates
+*   **1-to-6 Rating Scale Migration:** Migrated `user_rating` and `predicted_user_rating` (along with `tree_pred`, `lin_pred`, Active Learning VoI thresholds, and UI sliders/inputs) to a 1-to-6 scale (`scripts/migrate_rating_scale_6pt.py`), backed up historical ratings (`user_rating_10pt_backup` and `user_rating_7pt_backup`), and retrained/rescored the BQML hybrid ensemble (`restaurant_preference_model` + `restaurant_preference_model_linear`).
 *   **Gemini Model Upgrade to `gemini-3.8-flash`:** Upgraded all ADK restaurant agents, Google Maps grounding profiler, BigQuery `AI.GENERATE` utilities, and evaluation configs to `gemini-3.8-flash`. Added comprehensive test coverage in `tests/test_model_upgrades.py`.
 *   **Deep Codebase Refactoring & Bloat Elimination:** Executed an aggressive codebase cleanup across backend modules and root files. Removed the orphaned boilerplate directory `reference_auth/`, scratch scripts (`find_file.sh`, `gemini_config.sh`, `example_results.json`), obsolete ADK wrapper `my_app.py`, and dead service module `agent_orchestrator.py`. Pruned unused BigQuery helper functions (`update_rows_in_bigquery`, `execute_merge_query`, `upsert_agent_insight`, `load_specific_agent_insights`) and their associated dead tests, eliminating ~900+ lines of unused code while maintaining 100% test pass rates across all 74 active tests.
 *   **Previous Codebase Simplification:** Streamlined `app/services/bq_utils.py` (-50%), `app/core/data_processing.py` (-40%), and `scripts/enrich_maps_data.py` (-52%).

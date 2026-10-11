@@ -233,6 +233,33 @@ class TestADryRunSpendsNothing:
         submitted = [c.args[0] for c in client.query.call_args_list]
         assert any('CREATE OR REPLACE MODEL' in q for q in submitted)
 
+    @patch('scripts.enrich_postcode_demographics.enrich_postcodes')
+    @patch('app.services.bq_utils.execute_gemini_enrichment')
+    @patch('scripts.enrich_maps_data.enrich_restaurants_by_fhrsid')
+    @patch('scripts.train_bqml_model.bigquery.Client')
+    def test_skip_preflight_bypasses_all_enrichment_and_trains_directly(
+        self, mock_bq, mock_maps, mock_gemini, mock_postcodes
+    ):
+        """When `skip_preflight=True`, even a real training run (`dry_run=False`)
+        must not query or regenerate Maps, Gemini, or Postcode profiles."""
+        client = MagicMock()
+        train_job = MagicMock()
+        train_job.job_id = 'trained-zero-api'
+        rescore_job = MagicMock()
+        rescore_job.num_dml_affected_rows = 500
+        client.query.side_effect = [train_job, rescore_job]
+        mock_bq.return_value = client
+
+        job_id = train_model('p', 'd', 't', 'm', dry_run=False, skip_preflight=True)
+
+        assert job_id == 'trained-zero-api'
+        mock_maps.assert_not_called()
+        mock_gemini.assert_not_called()
+        mock_postcodes.assert_not_called()
+        assert client.query.call_count == 2
+        assert 'CREATE OR REPLACE MODEL' in client.query.call_args_list[0].args[0]
+        assert 'MERGE `p.d.t` T' in client.query.call_args_list[1].args[0]
+
 
 class TestTheDryRunHandsBackItsAnswer:
     """`--dry-run`'s result is the byte estimate, and until D-28 it was logged

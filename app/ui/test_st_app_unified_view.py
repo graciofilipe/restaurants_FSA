@@ -11,8 +11,8 @@ def sample_restaurants_df():
             "postcode": "EC1A 1BB",
             "localauthorityname": "Islington",
             "in_scope": True,
-            "user_rating": 8.0,
-            "predicted_user_rating": 8.5,
+            "user_rating": 6.0,
+            "predicted_user_rating": 6.0,
             "maps_rating": 4.5,
             "maps_found": True,
             "match_score": 92.0,
@@ -25,7 +25,7 @@ def sample_restaurants_df():
             "localauthorityname": "Westminster",
             "in_scope": True,
             "user_rating": None,
-            "predicted_user_rating": 7.2,
+            "predicted_user_rating": 5.2,
             "maps_rating": 4.1,
             "maps_found": True,
             "match_score": None,
@@ -51,7 +51,7 @@ def sample_restaurants_df():
             "localauthorityname": "Islington",
             "in_scope": None,
             "user_rating": None,
-            "predicted_user_rating": 6.0,
+            "predicted_user_rating": 4.3,
             "maps_rating": None,
             "maps_found": None,
             "match_score": 75.0,
@@ -87,7 +87,7 @@ def test_filter_user_rating_status(sample_restaurants_df):
     assert rated.iloc[0]["fhrsid"] == "101"
 
 def test_filter_ml_predictions(sample_restaurants_df):
-    pred_only = filter_and_sort_restaurants(sample_restaurants_df, pred_rating_filter="Has Predicted Rating", min_pred_score=7.0)
+    pred_only = filter_and_sort_restaurants(sample_restaurants_df, pred_rating_filter="Has Predicted Rating", min_pred_score=5.0)
     assert len(pred_only) == 2
     assert set(pred_only["fhrsid"]) == {"101", "102"}
 

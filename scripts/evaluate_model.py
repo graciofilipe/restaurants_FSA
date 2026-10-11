@@ -12,7 +12,7 @@ Three numbers come out, all on the same held-out rows:
 2. `match_score`    -- the no-ML baseline. A one-feature LINEAR_REG on
                        `match_score` alone. It has to be *fitted* rather than
                        compared raw: `match_score` runs 0-100 and `user_rating`
-                       runs 1-10, so an unfitted MAE would measure the scale
+                       runs 1-6, so an unfitted MAE would measure the scale
                        difference, not the signal.
 3. `mean`           -- predict the training mean for everything. The floor any
                        model must clear to have earned its existence.
@@ -221,7 +221,7 @@ def build_two_stage_hurdle_benchmark_sql(
 ),
 tree_preds AS (
   SELECT fhrsid, user_rating, raw_match_score, _is_stage1_gated, _stage1_capped_score,
-         predicted_user_rating AS tree_pred
+          predicted_user_rating AS tree_pred
   FROM ML.PREDICT(MODEL `{project_id}.{dataset_id}.{tree_model}`, TABLE holdout_features)
 ),
 lin_preds AS (
@@ -234,9 +234,9 @@ combined AS (
     t.user_rating,
     t.raw_match_score,
     t._is_stage1_gated,
-    IF(t._is_stage1_gated, t._stage1_capped_score, ROUND(LEAST(10.0, GREATEST(1.0, t.tree_pred)), 2)) AS pred_tree,
-    IF(t._is_stage1_gated, t._stage1_capped_score, ROUND(LEAST(10.0, GREATEST(1.0, l.lin_pred)), 2)) AS pred_lin,
-    IF(t._is_stage1_gated, t._stage1_capped_score, ROUND(LEAST(10.0, GREATEST(1.0, 0.5 * t.tree_pred + 0.5 * l.lin_pred)), 2)) AS pred_ens
+    IF(t._is_stage1_gated, t._stage1_capped_score, ROUND(LEAST(6.0, GREATEST(1.0, t.tree_pred)), 2)) AS pred_tree,
+    IF(t._is_stage1_gated, t._stage1_capped_score, ROUND(LEAST(6.0, GREATEST(1.0, l.lin_pred)), 2)) AS pred_lin,
+    IF(t._is_stage1_gated, t._stage1_capped_score, ROUND(LEAST(6.0, GREATEST(1.0, 0.5 * t.tree_pred + 0.5 * l.lin_pred)), 2)) AS pred_ens
   FROM tree_preds AS t
   JOIN lin_preds AS l USING (fhrsid)
 ),

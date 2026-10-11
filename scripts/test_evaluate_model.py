@@ -115,7 +115,7 @@ def test_match_score_baseline_uses_only_match_score():
 
 
 def test_match_score_baseline_is_fitted_not_compared_raw():
-    """`match_score` is 0-100 and `user_rating` is 1-10; an unfitted comparison
+    """`match_score` is 0-100 and `user_rating` is 1-6; an unfitted comparison
     would measure the scale gap. LINEAR_REG puts it on the label's scale."""
     sql = build_match_score_model_sql(PROJECT, DATASET, SOURCE, 'm', '')
     assert "model_type='LINEAR_REG'" in sql

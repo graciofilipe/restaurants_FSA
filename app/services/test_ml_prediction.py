@@ -479,7 +479,7 @@ class TestTwoStageHurdlePredictionRouting:
     """Predictions must route Stage-1 gated rows (takeaways, counters, chains >= 5,
     non-RESTAURANT_DINING) to `_stage1_capped_score` (<= 2.0) and plausible
     sit-down candidates to the Hybrid Ensemble (`0.5 * tree_pred + 0.5 * lin_pred`)
-    plus persist `tree_pred` and `lin_pred` clamped to `[1.0, 10.0]`."""
+    plus persist `tree_pred` and `lin_pred` clamped to `[1.0, 6.0]`."""
 
     @patch('app.services.ml_prediction.bigquery.Client')
     @patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
@@ -500,11 +500,11 @@ class TestTwoStageHurdlePredictionRouting:
         assert 'MODEL `p.d.m_linear`' in merge_sql
         assert '(0.5 * t.tree_pred + 0.5 * l.lin_pred) AS predicted_user_rating' in merge_sql
         assert 'IF(\n          S._is_stage1_gated,\n          S._stage1_capped_score,' in merge_sql
-        assert 'ROUND(LEAST(10.0, GREATEST(1.0, S.predicted_user_rating)), 2)' in merge_sql
+        assert 'ROUND(LEAST(6.0, GREATEST(1.0, S.predicted_user_rating)), 2)' in merge_sql
         assert 'tree_pred = IF(' in merge_sql
-        assert 'ROUND(LEAST(10.0, GREATEST(1.0, COALESCE(S.tree_pred, S.lin_pred, 5.0))), 2)' in merge_sql
+        assert 'ROUND(LEAST(6.0, GREATEST(1.0, COALESCE(S.tree_pred, S.lin_pred, 3.5))), 2)' in merge_sql
         assert 'lin_pred = IF(' in merge_sql
-        assert 'ROUND(LEAST(10.0, GREATEST(1.0, COALESCE(S.lin_pred, S.tree_pred, 5.0))), 2)' in merge_sql
+        assert 'ROUND(LEAST(6.0, GREATEST(1.0, COALESCE(S.lin_pred, S.tree_pred, 3.5))), 2)' in merge_sql
 
     @patch('app.services.ml_prediction.enrich_restaurants_by_fhrsid')
     @patch('app.services.ml_prediction.execute_gemini_enrichment')

@@ -18,7 +18,7 @@ def test_backfill_where_clause_targets_only_null_source_obvious_negatives():
     assert "COALESCE(in_scope, TRUE) IS FALSE" in clause
     assert "COALESCE(pillar_is_sit_down, TRUE) IS FALSE" in clause
     assert "COALESCE(pillar_establishment_type, 'RESTAURANT_DINING') != 'RESTAURANT_DINING'" in clause
-    assert "user_rating <= 3" in clause
+    assert "user_rating <= 2" in clause
 
 
 def test_update_sql_sets_rating_source_to_desk_only():

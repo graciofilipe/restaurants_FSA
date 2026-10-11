@@ -277,12 +277,12 @@ def filter_and_sort_restaurants(
             if "pillar_establishment_type" in filtered.columns:
                 mask &= filtered["pillar_establishment_type"] == "RESTAURANT_DINING"
             if "predicted_user_rating" in filtered.columns:
-                mask &= pd.to_numeric(filtered["predicted_user_rating"], errors="coerce").fillna(0.0) >= 5.5
+                mask &= pd.to_numeric(filtered["predicted_user_rating"], errors="coerce").fillna(0.0) >= 3.5
         filtered = filtered[mask]
     elif rating_source_filter == SOURCE_VISIT_VOI_CONFIRM:
         mask = pd.Series(True, index=filtered.index)
         if "user_rating" in filtered.columns:
-            mask &= pd.to_numeric(filtered["user_rating"], errors="coerce").fillna(0.0) >= 6.0
+            mask &= pd.to_numeric(filtered["user_rating"], errors="coerce").fillna(0.0) >= 4.0
         if "rating_source" in filtered.columns:
             mask &= filtered["rating_source"].fillna("").astype(str).str.strip().str.lower() != "visited"
         if "visit_voi_score" in filtered.columns:
@@ -1021,7 +1021,7 @@ def render_model_training_tab(project_id: str, dataset_id: str, table_id: str, d
     st.caption(
         "Trains both the **Course 1b Location-Blind Stage-2 Boosted Tree** (`restaurant_preference_model`, 70% blend) "
         "and the **Course 2b 4:2:1 Counter-Weighted All-Scope Linear Regressor** (`restaurant_preference_model_linear`, "
-        "30% blend) using in-scope rated restaurants (`user_rating` 1-10)."
+        "30% blend) using in-scope rated restaurants (`user_rating` 1-6)."
     )
 
     freshness_opts = render_freshness_controls(
@@ -1245,7 +1245,7 @@ def main():
             min_pred_score = st.slider(
                 "Min Predicted Score",
                 min_value=1.0,
-                max_value=10.0,
+                max_value=6.0,
                 value=1.0,
                 step=0.5,
                 key="slicer_min_pred_score"
@@ -1400,8 +1400,8 @@ def main():
         # SUB-TAB 2: MANUAL RATING HUB
         # -------------------------------------------------------------
         with tab_rating:
-            st.subheader("Manual Rating Hub (1 to 10 Scale)")
-            st.caption("Assign user scores (1-10) and rating sources (desk evaluation or post-visit ground truth).")
+            st.subheader("Manual Rating Hub (1 to 6 Scale)")
+            st.caption("Assign user scores (1-6) and rating sources (desk evaluation or post-visit ground truth).")
 
             if num_selected > 0:
                 col_map = {c.lower(): c for c in selected_rows.columns}
@@ -1412,10 +1412,10 @@ def main():
                 qb_col1, qb_col2, qb_col3 = st.columns([1, 1, 2])
                 with qb_col1:
                     batch_score = st.number_input(
-                        "User Score (1-10)",
+                        "User Score (1-6)",
                         min_value=1,
-                        max_value=10,
-                        value=7,
+                        max_value=6,
+                        value=4,
                         step=1,
                         key="quick_score_input"
                     )
@@ -1470,12 +1470,12 @@ def main():
                     disabled=['fhrsid', 'businessname', 'postcode', 'localauthorityname'],
                     column_config={
                         "user_rating": st.column_config.NumberColumn(
-                            "User Score (1-10)",
+                            "User Score (1-6)",
                             min_value=1,
-                            max_value=10,
+                            max_value=6,
                             step=1,
                             required=True,
-                            help="Rate from 1 to 10"
+                            help="Rate from 1 to 6"
                         ),
                         "rating_source": st.column_config.SelectboxColumn(
                             "Rating Source",
@@ -1497,7 +1497,7 @@ def main():
                     if ed_id_col and ed_score_col and ed_source_col:
                         valid_rows = edited_df[edited_df[ed_score_col].notna()].copy()
                         if valid_rows.empty:
-                            st.warning("Please enter a User Score (1-10) for at least one selected restaurant.")
+                            st.warning("Please enter a User Score (1-6) for at least one selected restaurant.")
                         else:
                             ids = valid_rows[ed_id_col].astype(str).tolist()
                             df_up = pd.DataFrame({

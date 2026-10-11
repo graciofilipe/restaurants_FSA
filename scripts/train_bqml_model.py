@@ -378,6 +378,7 @@ def train_model(
     gemini_max_age_days: Optional[int] = None,
     gemini_cutoff_date: Optional[Any] = None,
     refresh_missing_stage2_pillars: bool = False,
+    skip_preflight: bool = False,
     progress_callback: Optional[Callable[[str], None]] = None,
 ):
     """
@@ -393,13 +394,15 @@ def train_model(
     full_model_name = f"{project_id}.{dataset_id}.{model_name}"
     source_table = f"{project_id}.{dataset_id}.{table_id}"
 
-    # The pre-flight is skipped on a dry run, not merely made cheaper. It is
-    # the half of this function that spends money, and `--dry-run` is the flag
-    # someone reaches for when they are unsure what a run will do (D15).
+    # The pre-flight is skipped on a dry run or when skip_preflight=True (zero-API
+    # re-training against existing Maps/Gemini profiles).
     if dry_run:
         logger.info("Dry run: skipping the JIT enrichment pre-flight. No Places "
                     "or Gemini calls will be made, and the training SQL will be "
                     "validated against whatever the table already holds.")
+    elif skip_preflight:
+        logger.info("skip_preflight=True: skipping the JIT enrichment pre-flight. "
+                    "Training directly on existing Maps and Gemini profiles.")
     else:
         run_jit_preflight(
             client,
@@ -515,6 +518,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Regenerate Gemini profiles for Stage-2 labeled rows missing Pillar 7 discriminators",
     )
+    parser.add_argument(
+        "--skip-preflight",
+        action="store_true",
+        help="Skip JIT Maps/Gemini preflight checks and train directly on existing profiles",
+    )
     args = parser.parse_args()
 
     train_model(
@@ -532,4 +540,5 @@ if __name__ == "__main__":
         gemini_max_age_days=args.gemini_max_age_days,
         gemini_cutoff_date=args.gemini_cutoff_date,
         refresh_missing_stage2_pillars=args.refresh_missing_stage2_pillars,
+        skip_preflight=args.skip_preflight,
     )

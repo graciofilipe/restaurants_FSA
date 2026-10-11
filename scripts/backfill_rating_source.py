@@ -2,8 +2,8 @@
 
 Before `rating_source` was introduced (`'visited'` vs. `'desk'`), 377 historical
 `user_rating` labels were entered with `rating_source IS NULL`. Most of those
-are fast-food chains, takeaways, non-restaurant businesses, or explicit `1-3`
-desk rejections, while a small subset (`~20` sit-down restaurants rated `>= 4`)
+are fast-food chains, takeaways, non-restaurant businesses, or explicit `1-2`
+desk rejections (on the 1-6 scale), while a small subset (`~20` sit-down restaurants rated `>= 3`)
 are ambiguous and must remain `NULL` for manual UI triage.
 
     python -m scripts.backfill_rating_source             # dry-run validation
@@ -30,7 +30,7 @@ def build_backfill_where_clause() -> str:
         "COALESCE(in_scope, TRUE) IS FALSE "
         "OR COALESCE(pillar_is_sit_down, TRUE) IS FALSE "
         "OR COALESCE(pillar_establishment_type, 'RESTAURANT_DINING') != 'RESTAURANT_DINING' "
-        "OR user_rating <= 3"
+        "OR user_rating <= 2"
         ")"
     )
 

@@ -114,7 +114,7 @@ a one-day expiry as a backstop).
    Calls" calls the same predicate, so the estimate cannot drift from the spend; the training
    pre-flight calls it with `max_age_days=None`, because it is scheduled and must never refresh a
    profile it already has.
-6. **Label** — the Streamlit UI writes `user_rating` (1–10), `in_scope`, and `rating_source`
+6. **Label** — the Streamlit UI writes `user_rating` (1–6), `in_scope`, and `rating_source`
    ("desk"/"visited") back via `bulk_update_reviews`, which is what
    `scripts/train_bqml_model.py` trains on. The loop closes here.
 

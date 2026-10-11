@@ -468,12 +468,12 @@ def compute_active_learning_voi_scores(df: pd.DataFrame) -> Tuple[pd.Series, pd.
          prior residual `|predicted_user_rating - prior(match_score)|`, amplified
          by borough label scarcity and Pillar 7 feature sparsity.
     2. `visit_voi_score` ("Value of Visiting" — 100% Statistical & Culinary, Zero Distance Decay):
-       - Sub-Pathway A (Unrated Exploratory Visits, `predicted_user_rating >= 5.5`):
+       - Sub-Pathway A (Unrated Exploratory Visits, `predicted_user_rating >= 3.5` on 1-6 scale):
          Driven by 90th-percentile Bayesian Upper Confidence Bound (`UCB_90`) above
-         the dining threshold (`5.0`), epistemic uncertainty, and visited-borough scarcity.
-       - Sub-Pathway B (High-Rated Desk Confirmations, `rating_source != 'visited'` and `user_rating >= 6`):
+         the dining threshold (`29/9 ≈ 3.22`), epistemic uncertainty, and visited-borough scarcity.
+       - Sub-Pathway B (High-Rated Desk Confirmations, `rating_source != 'visited'` and `user_rating >= 4` on 1-6 scale):
          Driven by the ground-truth promotion value (`1x/2x -> 2x Tree / 4x Linear` weight)
-         combining `(user_rating - 5.0)`, model residual `|user_rating - predicted_user_rating|`,
+         combining `(user_rating - 29/9)`, model residual `|user_rating - predicted_user_rating|`,
          committee uncertainty, and visited-borough scarcity.
     """
     if df is None or df.empty:
@@ -529,16 +529,16 @@ def compute_active_learning_voi_scores(df: pd.DataFrame) -> Tuple[pd.Series, pd.
     is_visited = is_rated & (rating_source_str == 'visited').to_numpy()
     is_desk_or_null_rated = is_rated & ~is_visited
 
-    # Committee Epistemic Uncertainty (sigma_QBC)
+    # Committee Epistemic Uncertainty (sigma_QBC) on 1-6 scale (5/9 span of 1-10)
     match_num = pd.to_numeric(_column_or_missing(df, 'match_score'), errors='coerce').fillna(50.0).clip(0.0, 100.0)
-    prior_pred = (0.643 + 0.072 * match_num).clip(1.0, 10.0)
+    prior_pred = (0.802 + 0.040 * match_num).clip(1.0, 6.0)
     hybrid_pred = pd.to_numeric(_column_or_missing(df, 'predicted_user_rating'), errors='coerce').fillna(prior_pred)
 
     comm_num = pd.to_numeric(_column_or_missing(df, 'pillar_community_score'), errors='coerce').fillna(5.0)
     rev_num = pd.to_numeric(_column_or_missing(df, 'maps_reviews'), errors='coerce').fillna(0.0).clip(lower=0.0)
     log_rev_scale = (np.log10(rev_num + 1.0) * 2.5).clip(1.0, 10.0)
     enclave_vs_hype_gap = (comm_num - log_rev_scale).abs() * (40.0 / 9.0)
-    fallback_delta_models = 2.0 * (enclave_vs_hype_gap.to_numpy(dtype=float) / 100.0)
+    fallback_delta_models = (10.0 / 9.0) * (enclave_vs_hype_gap.to_numpy(dtype=float) / 100.0)
 
     tree_minus_lin = (tree_num.fillna(0.0) - lin_num.fillna(0.0)).abs().to_numpy(dtype=float)
     delta_models = np.where(has_both_preds, tree_minus_lin, fallback_delta_models)
@@ -577,26 +577,27 @@ def compute_active_learning_voi_scores(df: pd.DataFrame) -> Tuple[pd.Series, pd.
     # Channel 1: desk_voi_score (0-100)
     desk_leverage = 1.0 + (0.75 / np.sqrt(1.0 + n_stg2_borough)) + (0.25 * i_sparse)
     raw_desk_voi = sigma_qbc * desk_leverage
-    scaled_desk_voi = np.clip((raw_desk_voi / 4.40) * 100.0, 0.0, 100.0)
+    scaled_desk_voi = np.clip((raw_desk_voi / (4.40 * (5.0 / 9.0))) * 100.0, 0.0, 100.0)
     desk_eligible = is_stage2 & is_unrated
     desk_scores = np.where(desk_eligible, _round_like_python(scaled_desk_voi, 1), 0.0)
 
     # Channel 2: visit_voi_score (0-100, zero distance penalty)
     visit_leverage = 1.0 + (0.80 / np.sqrt(1.0 + n_visited_borough))
     hybrid_arr = hybrid_pred.to_numpy(dtype=float)
+    dining_threshold = 29.0 / 9.0
 
-    # Sub-Pathway A: Unrated Exploratory Visits (hybrid >= 5.5)
+    # Sub-Pathway A: Unrated Exploratory Visits (hybrid >= 3.5 on 1-6 scale)
     ucb_90 = hybrid_arr + 1.28 * sigma_std
-    raw_visit_new = np.maximum(0.0, ucb_90 - 5.0) * (1.0 + 0.35 * sigma_std) * visit_leverage
-    scaled_visit_new = np.clip((raw_visit_new / 7.50) * 100.0, 0.0, 100.0)
-    unrated_visit_eligible = is_stage2 & is_unrated & (hybrid_arr >= 5.5)
+    raw_visit_new = np.maximum(0.0, ucb_90 - dining_threshold) * (1.0 + 0.35 * (1.8 * sigma_std)) * visit_leverage
+    scaled_visit_new = np.clip((raw_visit_new / (7.50 * (5.0 / 9.0))) * 100.0, 0.0, 100.0)
+    unrated_visit_eligible = is_stage2 & is_unrated & (hybrid_arr >= 3.5)
 
-    # Sub-Pathway B: High-Rated Desk Confirmations (user_rating >= 6.0, not yet visited)
+    # Sub-Pathway B: High-Rated Desk Confirmations (user_rating >= 4.0 on 1-6 scale, not yet visited)
     y_desk = np.nan_to_num(user_rating_num.to_numpy(dtype=float), nan=0.0)
     delta_anchor = np.abs(y_desk - hybrid_arr) + 0.50 * sigma_std
-    raw_visit_confirm = np.maximum(0.0, y_desk - 5.0) * (1.0 + 0.60 * delta_anchor) * visit_leverage
-    scaled_visit_confirm = np.clip((raw_visit_confirm / 16.50) * 100.0, 0.0, 100.0)
-    confirm_visit_eligible = is_stage2 & is_desk_or_null_rated & (y_desk >= 6.0)
+    raw_visit_confirm = np.maximum(0.0, y_desk - dining_threshold) * (1.0 + 0.60 * (1.8 * delta_anchor)) * visit_leverage
+    scaled_visit_confirm = np.clip((raw_visit_confirm / (16.50 * (5.0 / 9.0))) * 100.0, 0.0, 100.0)
+    confirm_visit_eligible = is_stage2 & is_desk_or_null_rated & (y_desk >= 4.0)
 
     visit_combined = np.select(
         [unrated_visit_eligible, confirm_visit_eligible],

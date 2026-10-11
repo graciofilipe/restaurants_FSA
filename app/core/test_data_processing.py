@@ -498,7 +498,7 @@ class TestPlausibleConflictScore(unittest.TestCase):
             {
                 'fhrsid': '1',
                 'match_score': 90,
-                'predicted_user_rating': 2.0,
+                'predicted_user_rating': 1.56,
                 'pillar_community_score': 9,
                 'maps_reviews': 15,
                 'pillar_is_sit_down': True,
@@ -507,7 +507,7 @@ class TestPlausibleConflictScore(unittest.TestCase):
             {
                 'fhrsid': '2',
                 'match_score': 80,
-                'predicted_user_rating': 8.2,
+                'predicted_user_rating': 5.0,
                 'pillar_community_score': 6,
                 'maps_reviews': 250,
                 'pillar_is_sit_down': True,
@@ -570,7 +570,7 @@ class TestPlausibleConflictScore(unittest.TestCase):
         )
 
         df = pd.DataFrame([
-            # Row 0: Unrated Stage-2 with high QBC disagreement (tree=5.1, lin=2.3) in sparse borough
+            # Row 0: Unrated Stage-2 with high QBC disagreement (tree=3.28, lin=1.72) in sparse borough
             {
                 'fhrsid': '10',
                 'localauthorityname': 'Merton',
@@ -578,15 +578,15 @@ class TestPlausibleConflictScore(unittest.TestCase):
                 'longitude': -0.19,
                 'user_rating': None,
                 'rating_source': None,
-                'predicted_user_rating': 3.7,
-                'tree_pred': 5.1,
-                'lin_pred': 2.3,
+                'predicted_user_rating': 2.5,
+                'tree_pred': 3.28,
+                'lin_pred': 1.72,
                 'match_score': 45,
                 'pillar_is_sit_down': True,
                 'pillar_establishment_type': 'RESTAURANT_DINING',
                 'pillar_geo_specificity': 'HYPER_LOCAL_CITY',
             },
-            # Row 1: Unrated Stage-2 with low QBC disagreement (tree=5.8, lin=5.7)
+            # Row 1: Unrated Stage-2 with low QBC disagreement (tree=3.67, lin=3.61)
             {
                 'fhrsid': '11',
                 'localauthorityname': 'Merton',
@@ -594,9 +594,9 @@ class TestPlausibleConflictScore(unittest.TestCase):
                 'longitude': -0.19,
                 'user_rating': None,
                 'rating_source': None,
-                'predicted_user_rating': 5.75,
-                'tree_pred': 5.8,
-                'lin_pred': 5.7,
+                'predicted_user_rating': 3.64,
+                'tree_pred': 3.67,
+                'lin_pred': 3.61,
                 'match_score': 72,
                 'pillar_is_sit_down': True,
                 'pillar_establishment_type': 'RESTAURANT_DINING',
@@ -611,9 +611,9 @@ class TestPlausibleConflictScore(unittest.TestCase):
                 'distance_km': 0.5,
                 'user_rating': None,
                 'rating_source': None,
-                'predicted_user_rating': 6.8,
-                'tree_pred': 7.4,
-                'lin_pred': 6.2,
+                'predicted_user_rating': 4.22,
+                'tree_pred': 4.56,
+                'lin_pred': 3.89,
                 'match_score': 86,
                 'pillar_is_sit_down': True,
                 'pillar_establishment_type': 'RESTAURANT_DINING',
@@ -627,24 +627,24 @@ class TestPlausibleConflictScore(unittest.TestCase):
                 'distance_km': 25.0,
                 'user_rating': None,
                 'rating_source': None,
-                'predicted_user_rating': 6.8,
-                'tree_pred': 7.4,
-                'lin_pred': 6.2,
+                'predicted_user_rating': 4.22,
+                'tree_pred': 4.56,
+                'lin_pred': 3.89,
                 'match_score': 86,
                 'pillar_is_sit_down': True,
                 'pillar_establishment_type': 'RESTAURANT_DINING',
             },
-            # Row 4: High-Rated Desk Confirmation candidate (desk=8.0, hybrid=6.1)
+            # Row 4: High-Rated Desk Confirmation candidate (desk=5.0, hybrid=3.83)
             {
                 'fhrsid': '14',
                 'localauthorityname': 'Sutton',
                 'latitude': 51.36,
                 'longitude': -0.19,
-                'user_rating': 8.0,
+                'user_rating': 5.0,
                 'rating_source': 'desk',
-                'predicted_user_rating': 6.1,
-                'tree_pred': 6.5,
-                'lin_pred': 5.7,
+                'predicted_user_rating': 3.83,
+                'tree_pred': 4.06,
+                'lin_pred': 3.61,
                 'match_score': 82,
                 'pillar_is_sit_down': True,
                 'pillar_establishment_type': 'RESTAURANT_DINING',
@@ -655,11 +655,11 @@ class TestPlausibleConflictScore(unittest.TestCase):
                 'localauthorityname': 'Sutton',
                 'latitude': 51.36,
                 'longitude': -0.19,
-                'user_rating': 9.0,
+                'user_rating': 5.0,
                 'rating_source': 'visited',
-                'predicted_user_rating': 7.5,
-                'tree_pred': 7.8,
-                'lin_pred': 7.2,
+                'predicted_user_rating': 4.61,
+                'tree_pred': 4.78,
+                'lin_pred': 4.44,
                 'match_score': 90,
                 'pillar_is_sit_down': True,
                 'pillar_establishment_type': 'RESTAURANT_DINING',
@@ -671,7 +671,7 @@ class TestPlausibleConflictScore(unittest.TestCase):
         self.assertGreater(desk_voi.iloc[0], desk_voi.iloc[1])
         self.assertGreater(desk_voi.iloc[0], 60.0)
         self.assertLess(desk_voi.iloc[0], 100.0)
-        # Low-predicted row (3.7 < 5.5) gets 0.0 visit_voi_score
+        # Low-predicted row (2.5 < 3.5) gets 0.0 visit_voi_score
         self.assertEqual(visit_voi.iloc[0], 0.0)
 
         # Zero distance penalty invariant: 0.5 km vs 25.0 km produces the exact same visit_voi_score
