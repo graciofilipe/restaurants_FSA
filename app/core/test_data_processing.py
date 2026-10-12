@@ -691,4 +691,30 @@ class TestPlausibleConflictScore(unittest.TestCase):
         self.assertEqual(desk_voi.iloc[5], 0.0)
         self.assertEqual(visit_voi.iloc[5], 0.0)
 
+    def test_process_and_update_master_data_returns_seen_ids(self):
+        master_data = {"100"}
+        api_data = {
+            "FHRSEstablishment": {
+                "EstablishmentCollection": {
+                    "EstablishmentDetail": [
+                        {"FHRSID": "100", "BusinessName": "Existing", "PostCode": "SW16 1AA"},
+                        {"FHRSID": "200", "BusinessName": "New Place", "PostCode": "SW16 1BB"},
+                    ]
+                }
+            }
+        }
+        res_default = process_and_update_master_data(master_data, api_data, today_date="2026-10-12")
+        new_recs, msg = res_default
+        self.assertEqual(len(new_recs), 1)
+        self.assertEqual(new_recs[0]["FHRSID"], "200")
+        self.assertEqual(res_default.seen_ids, {"100", "200"})
+
+        new_recs_3, seen_3, msg_3 = process_and_update_master_data(
+            master_data, api_data, today_date="2026-10-12", return_seen_ids=True
+        )
+        self.assertEqual(len(new_recs_3), 1)
+        self.assertEqual(seen_3, {"100", "200"})
+        self.assertIn("Identified 1 unique new restaurant", msg_3)
+
+
 

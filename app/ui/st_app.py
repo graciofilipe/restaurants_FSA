@@ -63,11 +63,12 @@ FRESHNESS_MODES = (
 # hand-kept copy of a fourth naming convention -- flat, numeric-prefixed names
 # that only ever existed in the DataFrame, built per row per rerun.
 DISPLAY_COLUMNS = [
-    "fhrsid", "businessname", "priority_score", "desk_voi_score", "visit_voi_score",
+    "fhrsid", "businessname", "fsa_status_badge", "priority_score", "desk_voi_score", "visit_voi_score",
     "distance_km", "in_scope", "rating_source", "user_rating",
     "predicted_user_rating", "tree_pred", "lin_pred", "predicted_at",
     "addressline1", "addressline2", "addressline3",
-    "postcode", "localauthorityname", "first_seen",
+    "postcode", "localauthorityname", "first_seen", "last_seen",
+    "fsa_status", "superseded_by", "delisted_at",
     "price_level", "maps_rating", "maps_reviews",
     "latitude", "longitude", "maps_url", "business_status", "website_url", "maps_types",
     "maps_found", "maps_lookup_at",
@@ -75,6 +76,36 @@ DISPLAY_COLUMNS = [
     "gemini_profiled_at",
     "gemini_insights_structured",
 ]
+
+
+def format_fsa_status_badge(row) -> str:
+    """Format a compact status badge for the restaurant table."""
+    if isinstance(row, dict):
+        status = row.get("fsa_status")
+        superseded_by = row.get("superseded_by")
+    else:
+        status = getattr(row, "fsa_status", None) if not hasattr(row, "get") else row.get("fsa_status")
+        superseded_by = getattr(row, "superseded_by", None) if not hasattr(row, "get") else row.get("superseded_by")
+
+    status_str = "" if status is None or pd.isna(status) else str(status).strip().lower()
+    sup_str = "" if superseded_by is None or pd.isna(superseded_by) else str(superseded_by).strip()
+    if status_str == "delisted":
+        if sup_str:
+            return f"🔁 superseded by {sup_str}"
+        return "🚫 closed"
+    return "✅ active"
+
+
+def ensure_fsa_status_badge_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure `fsa_status_badge` is populated on `df`."""
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    if "fsa_status" not in out.columns and "superseded_by" not in out.columns:
+        out["fsa_status_badge"] = "✅ active"
+        return out
+    out["fsa_status_badge"] = out.apply(format_fsa_status_badge, axis=1)
+    return out
 
 # The slicer vocabularies. Each sidebar selectbox is built from the same tuple
 # `filter_and_sort_restaurants` compares against, so a renamed option cannot
@@ -213,6 +244,7 @@ def filter_and_sort_restaurants(
     search_query: str = "",
     sort_by: str = SORT_PREDICTED,
     rating_source_filter: str = FILTER_ALL,
+    include_delisted: bool = False,
 ) -> pd.DataFrame:
     """
     Applies in-memory filtering and sorting to the restaurant DataFrame.
@@ -224,6 +256,12 @@ def filter_and_sort_restaurants(
         return df.copy()
 
     filtered = df.copy()
+
+    # 0. FSA Liveness Filter (hide delisted by default unless toggled)
+    if not include_delisted and "fsa_status" in filtered.columns:
+        filtered = filtered[
+            filtered["fsa_status"].fillna("active").astype(str).str.strip().str.lower() != "delisted"
+        ]
 
     # 1. Scope Filter
     if "in_scope" in filtered.columns:
@@ -413,7 +451,8 @@ def load_data_into_state(
     in_scope_filter, 
     outcode_filter, 
     first_seen_start_date=None,
-    local_authority_filter=None
+    local_authority_filter=None,
+    include_delisted=False,
 ):
     """
     Helper to load data into session state.
@@ -427,6 +466,7 @@ def load_data_into_state(
             "outcode_filter": outcode_filter,
             "first_seen_start_date": first_seen_start_date,
             "local_authority_filter": local_authority_filter,
+            "include_delisted": include_delisted,
         }
     with st.spinner("Fetching data from BigQuery..."):
         try:
@@ -437,7 +477,8 @@ def load_data_into_state(
                 in_scope_filter=in_scope_filter,
                 postcode_areas=outcode_filter,
                 first_seen_start_date=first_seen_start_date,
-                local_authority_filter=local_authority_filter
+                local_authority_filter=local_authority_filter,
+                include_delisted=include_delisted,
             )
             
             df_master = pd.DataFrame(raw_data)
@@ -453,6 +494,7 @@ def load_data_into_state(
                 if 'in_scope' not in df_enriched.columns:
                     df_enriched['in_scope'] = None
 
+                df_enriched = ensure_fsa_status_badge_column(df_enriched)
                 df_enriched = calculate_restaurant_priority(df_enriched)
 
                 set_enriched_frame(df_enriched)
@@ -1203,6 +1245,13 @@ def main():
             help="Load restaurants first seen ON or AFTER this date."
         )
 
+        include_delisted = st.checkbox(
+            "Show closed / re-listed restaurants",
+            value=False,
+            key="slicer_show_delisted",
+            help="Include establishments delisted on the UK FSA API or superseded by a newer FHRSID.",
+        )
+
         if st.button("Load Data from BigQuery", type="primary", use_container_width=True):
             load_data_into_state(
                 project_id, 
@@ -1211,7 +1260,8 @@ def main():
                 in_scope_filter_values, 
                 outcode_filter,
                 first_seen_start_date=first_seen_date,
-                local_authority_filter=local_authority_filter
+                local_authority_filter=local_authority_filter,
+                include_delisted=include_delisted,
             )
 
         st.divider()
@@ -1289,7 +1339,7 @@ def main():
 
     # --- Main Interface ---
     if st.session_state.data_loaded and not st.session_state.df_enriched.empty:
-        df_master = st.session_state.df_enriched.copy()
+        df_master = ensure_fsa_status_badge_column(st.session_state.df_enriched.copy())
         
         # Filter & Sort Data using Left-Panel Slicers
         df_filtered = filter_and_sort_restaurants(
@@ -1303,6 +1353,7 @@ def main():
             search_query=search_query,
             sort_by=sort_by,
             rating_source_filter=rating_source_slicer,
+            include_delisted=include_delisted,
         )
 
         # Top Summary Metrics
@@ -1363,7 +1414,7 @@ def main():
                             success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_up)
                             if success:
                                 st.success(msg)
-                                load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
+                                load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter, include_delisted=include_delisted)
                                 st.rerun()
                             else:
                                 st.error(msg)
@@ -1376,7 +1427,7 @@ def main():
                             success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_up)
                             if success:
                                 st.success(msg)
-                                load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
+                                load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter, include_delisted=include_delisted)
                                 st.rerun()
                             else:
                                 st.error(msg)
@@ -1389,7 +1440,7 @@ def main():
                             success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_up)
                             if success:
                                 st.success(msg)
-                                load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
+                                load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter, include_delisted=include_delisted)
                                 st.rerun()
                             else:
                                 st.error(msg)
@@ -1442,7 +1493,7 @@ def main():
                                 success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_up)
                                 if success:
                                     st.success(f"Saved: {msg}")
-                                    load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
+                                    load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter, include_delisted=include_delisted)
                                     st.rerun()
                                 else:
                                     st.error(msg)
@@ -1510,7 +1561,7 @@ def main():
                                 success, msg = bulk_update_reviews(project_id, dataset_id, table_id, df_up)
                                 if success:
                                     st.success(f"Saved: {msg}")
-                                    load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
+                                    load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter, include_delisted=include_delisted)
                                     st.rerun()
                                 else:
                                     st.error(msg)
@@ -1555,7 +1606,7 @@ def main():
                         if success:
                             clear_diagnostics_cache()
                             st.success(msg)
-                            load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
+                            load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter, include_delisted=include_delisted)
                             st.rerun()
                         else:
                             st.error(msg)
@@ -1597,6 +1648,12 @@ def main():
 
                 # Recompute priorities based on current anchor & weights
                 df_candidates = priority_for_current_frame(df_master, c_lat, c_lon, active_weights)
+
+                # Exclude delisted rows from scoring candidate queue
+                if "fsa_status" in df_candidates.columns:
+                    df_candidates = df_candidates[
+                        df_candidates["fsa_status"].fillna("active").astype(str).str.strip().str.lower() != "delisted"
+                    ]
 
                 # Filter candidate pool based on target_mode and scope (exclude confirmed out_of_scope)
                 if "in_scope" in df_candidates.columns:
@@ -1656,7 +1713,7 @@ def main():
                             if success:
                                 clear_diagnostics_cache()
                                 st.success(msg)
-                                load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter)
+                                load_data_into_state(project_id, dataset_id, table_id, in_scope_filter_values, outcode_filter, first_seen_start_date=first_seen_date, local_authority_filter=local_authority_filter, include_delisted=include_delisted)
                                 st.rerun()
                             else:
                                 st.error(msg)

@@ -1,8 +1,9 @@
+import datetime
 import logging
 import re
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery, exceptions as google_cloud_exceptions
 import pandas as pd
@@ -151,7 +152,10 @@ def execute_gemini_enrichment(
                         f"({len(batch_ids)} restaurant(s), rows {start_row}–{end_row} of {total_target})..."
                     )
                 escaped = [_sql_quote(f) for f in batch_ids]
-                filter_condition = f"CAST(fhrsid AS STRING) IN ({', '.join(escaped)})"
+                filter_condition = (
+                    f"CAST(fhrsid AS STRING) IN ({', '.join(escaped)}) "
+                    f"AND fsa_status IS DISTINCT FROM 'delisted'"
+                )
             else:
                 if progress_callback:
                     progress_callback("✨ Running Gemini enrichment for recent restaurants...")
@@ -167,7 +171,11 @@ def execute_gemini_enrichment(
                 # pay to profile again. It replaces `manual_review IN (...)`, a
                 # free-text column whose dominant value is 'rejected' on 9,348 rows
                 # that are in scope.
-                filter_condition = f"DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent} AND in_scope IS NOT FALSE {excl_clause}"
+                filter_condition = (
+                    f"DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_recent} "
+                    f"AND in_scope IS NOT FALSE "
+                    f"AND fsa_status IS DISTINCT FROM 'delisted' {excl_clause}"
+                )
 
             q_recents = SCRIPT_IDENTIFY_RECENTS.format(
                 project_id=project_id, dataset_id=dataset_id, source_table=master_table_id,
@@ -253,11 +261,14 @@ def load_filtered_data_from_bq(
     first_seen_start_date: Optional[str] = None,
     local_authority_filter: Optional[List[str]] = None,
     in_scope_filter: Optional[List[str]] = None,
+    include_delisted: bool = False,
 ) -> List[Dict[str, Any]]:
     """Loads filtered restaurant data from BigQuery."""
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
     query = f"SELECT * FROM `{table_ref}` WHERE 1=1"
 
+    if not include_delisted:
+        query += " AND fsa_status IS DISTINCT FROM 'delisted'"
     if days_filter is not None:
         query += f" AND DATE_DIFF(CURRENT_DATE(), first_seen, DAY) < {days_filter}"
     if first_seen_start_date:
@@ -290,6 +301,10 @@ def load_filtered_data_from_bq(
             rec = dict(row)
             if rec.get('first_seen') is not None:
                 rec['first_seen'] = str(rec['first_seen'])
+            if rec.get('last_seen') is not None:
+                rec['last_seen'] = str(rec['last_seen'])
+            if rec.get('delisted_at') is not None:
+                rec['delisted_at'] = str(rec['delisted_at'])
             if rec.get('predicted_at') is not None:
                 rec['predicted_at'] = str(rec['predicted_at'])
             records.append(rec)
@@ -416,6 +431,14 @@ def append_to_bigquery(
         df_sub['newratingpending'] = df_sub['newratingpending'].astype(str).str.lower().map({'true': True, 'false': False}).astype('boolean')
     if 'first_seen' in df_sub.columns:
         df_sub['first_seen'] = pd.to_datetime(df_sub['first_seen'], errors='coerce').dt.date
+    if 'last_seen' in df_sub.columns:
+        if 'first_seen' in df_sub.columns:
+            df_sub['last_seen'] = df_sub['last_seen'].where(df_sub['last_seen'].notna(), df_sub['first_seen'])
+        df_sub['last_seen'] = pd.to_datetime(df_sub['last_seen'], errors='coerce').dt.date
+    if 'delisted_at' in df_sub.columns:
+        df_sub['delisted_at'] = pd.to_datetime(df_sub['delisted_at'], errors='coerce').dt.date
+    if 'fsa_status' in df_sub.columns:
+        df_sub['fsa_status'] = df_sub['fsa_status'].where(df_sub['fsa_status'].notna(), 'active')
 
     if 'fhrsid' in df_sub.columns:
         ftype = next((f.field_type for f in bq_schema if f.name == 'fhrsid'), None)
@@ -812,6 +835,7 @@ def fetch_system_diagnostics(
       MIN(IF(in_scope IS TRUE, maps_lookup_at, NULL)) AS oldest_maps_at,
       MAX(IF(in_scope IS TRUE, maps_lookup_at, NULL)) AS newest_maps_at
     FROM `{table_ref}`
+    WHERE fsa_status IS DISTINCT FROM 'delisted'
     """
     try:
         rows = list(_wait_for_job(client.query(summary_sql), timeout=30.0))
@@ -844,6 +868,138 @@ def fetch_system_diagnostics(
     return diag
 
 
+def touch_seen_fhrsids(
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    ids: Iterable[str],
+    today: Optional[str] = None,
+) -> int:
+    """Single parameterized MERGE updating `last_seen = @today, fsa_status = 'active', delisted_at = NULL`."""
+    clean_ids = sorted({str(fid).strip() for fid in ids if fid is not None and str(fid).strip()})
+    if not clean_ids:
+        return 0
+    today_str = today or datetime.date.today().strftime("%Y-%m-%d")
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+    sql = f"""
+    MERGE `{table_ref}` AS T
+    USING (SELECT id AS fhrsid FROM UNNEST(@ids) AS id) AS S
+    ON T.fhrsid = S.fhrsid
+    WHEN MATCHED THEN
+      UPDATE SET
+        last_seen = @today,
+        fsa_status = 'active',
+        delisted_at = NULL
+    """
+    client = bigquery.Client(project=project_id)
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("ids", "STRING", clean_ids),
+            bigquery.ScalarQueryParameter("today", "DATE", today_str),
+        ]
+    )
+    job = client.query(sql, job_config=job_config)
+    _wait_for_job(job, timeout=GEMINI_BQ_TIMEOUT_SECONDS)
+    affected = getattr(job, "num_dml_affected_rows", None)
+    return int(affected) if isinstance(affected, int) else len(clean_ids)
+
+
+def candidates_for_liveness_check(
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    area_bbox: Tuple[float, float, float, float],
+    today: Optional[str] = None,
+) -> List[str]:
+    """Return active FHRSIDs inside `area_bbox = (min_lat, max_lat, min_lon, max_lon)` not seen on `@today`."""
+    min_lat, max_lat, min_lon, max_lon = (float(x) for x in area_bbox)
+    today_str = today or datetime.date.today().strftime("%Y-%m-%d")
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+    sql = f"""
+    SELECT fhrsid
+    FROM `{table_ref}`
+    WHERE fsa_status IS DISTINCT FROM 'delisted'
+      AND (last_seen IS NULL OR last_seen < @today)
+      AND latitude IS NOT NULL
+      AND longitude IS NOT NULL
+      AND latitude BETWEEN @min_lat AND @max_lat
+      AND longitude BETWEEN @min_lon AND @max_lon
+    ORDER BY fhrsid
+    """
+    client = bigquery.Client(project=project_id)
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("today", "DATE", today_str),
+            bigquery.ScalarQueryParameter("min_lat", "FLOAT64", min_lat),
+            bigquery.ScalarQueryParameter("max_lat", "FLOAT64", max_lat),
+            bigquery.ScalarQueryParameter("min_lon", "FLOAT64", min_lon),
+            bigquery.ScalarQueryParameter("max_lon", "FLOAT64", max_lon),
+        ]
+    )
+    rows = list(_wait_for_job(client.query(sql, job_config=job_config), timeout=60.0))
+    return [str(r.fhrsid) for r in rows if getattr(r, "fhrsid", None) is not None]
+
+
+def mark_fhrsids_delisted(
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    ids: Iterable[str],
+    today: Optional[str] = None,
+) -> int:
+    """Mark 404'd FHRSIDs as `fsa_status = 'delisted', delisted_at = COALESCE(delisted_at, @today)`."""
+    clean_ids = sorted({str(fid).strip() for fid in ids if fid is not None and str(fid).strip()})
+    if not clean_ids:
+        return 0
+    today_str = today or datetime.date.today().strftime("%Y-%m-%d")
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+    sql = f"""
+    MERGE `{table_ref}` AS T
+    USING (SELECT id AS fhrsid FROM UNNEST(@ids) AS id) AS S
+    ON T.fhrsid = S.fhrsid
+    WHEN MATCHED THEN
+      UPDATE SET
+        fsa_status = 'delisted',
+        delisted_at = COALESCE(T.delisted_at, @today)
+    """
+    client = bigquery.Client(project=project_id)
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("ids", "STRING", clean_ids),
+            bigquery.ScalarQueryParameter("today", "DATE", today_str),
+        ]
+    )
+    job = client.query(sql, job_config=job_config)
+    _wait_for_job(job, timeout=GEMINI_BQ_TIMEOUT_SECONDS)
+    affected = getattr(job, "num_dml_affected_rows", None)
+    return int(affected) if isinstance(affected, int) else len(clean_ids)
+
+
+def link_superseded(
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    new_ids: Optional[Sequence[str]] = None,
+) -> int:
+    """Link `delisted` rows to matching `active` successors (same name+postcode and <=100 m)
+    and carry over ratings/triage/profile columns when missing on the active row."""
+    from scripts.reconcile_fsa_liveness import (
+        build_carry_over_sql,
+        build_link_superseded_sql,
+    )
+
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+    client = bigquery.Client(project=project_id)
+    link_job = client.query(build_link_superseded_sql(table_ref, new_ids=new_ids))
+    _wait_for_job(link_job, timeout=GEMINI_BQ_TIMEOUT_SECONDS)
+    linked = getattr(link_job, "num_dml_affected_rows", 0) or 0
+
+    carry_job = client.query(build_carry_over_sql(table_ref))
+    _wait_for_job(carry_job, timeout=GEMINI_BQ_TIMEOUT_SECONDS)
+    return int(linked) if isinstance(linked, int) else 0
+
+
+
 MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('fhrsid', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('businessname', 'STRING', mode='NULLABLE'),
@@ -874,6 +1030,10 @@ MASTER_BQ_SCHEMA = [
     bigquery.SchemaField('maps_types', 'STRING', mode='NULLABLE'),
     bigquery.SchemaField('in_scope', 'BOOLEAN', mode='NULLABLE'),
     bigquery.SchemaField('rating_source', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('last_seen', 'DATE', mode='NULLABLE'),
+    bigquery.SchemaField('fsa_status', 'STRING', mode='NULLABLE'),
+    bigquery.SchemaField('delisted_at', 'DATE', mode='NULLABLE'),
+    bigquery.SchemaField('superseded_by', 'STRING', mode='NULLABLE'),
 ]
 
 # The pillar columns are appended from the canonical schema rather than retyped,

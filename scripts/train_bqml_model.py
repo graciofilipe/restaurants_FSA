@@ -193,6 +193,7 @@ def run_jit_preflight(
         FROM `{source_table}` AS m
         WHERE (m.in_scope = TRUE OR m.in_scope IS NULL)
           AND m.user_rating IS NOT NULL
+          AND m.fsa_status IS DISTINCT FROM 'delisted'
           AND (m.pillar_is_sit_down IS TRUE OR m.pillar_is_sit_down IS NULL)
           AND (m.pillar_establishment_type = 'RESTAURANT_DINING' OR m.pillar_establishment_type IS NULL)
           AND (

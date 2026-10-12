@@ -236,5 +236,72 @@ class TestTheJobReportsItsOwnFailure(unittest.TestCase):
 
         mock_append.assert_not_called()
 
+
+class TestLivenessInWeeklyCron(unittest.TestCase):
+    """Weekly cron updates `last_seen`, probes unseen candidates via
+    `probe_establishments`, marks `404`s `delisted`, and calls
+    `link_superseded` when either new rows were inserted or old rows were
+    retired."""
+
+    @patch('app.cron.fetch_weekly.link_superseded', return_value=1)
+    @patch('app.cron.fetch_weekly.mark_fhrsids_delisted', return_value=1)
+    @patch('app.cron.fetch_weekly.probe_establishments')
+    @patch('app.cron.fetch_weekly.candidates_for_liveness_check')
+    @patch('app.cron.fetch_weekly.touch_seen_fhrsids', return_value=2)
+    @patch('app.cron.fetch_weekly.append_to_bigquery', return_value=True)
+    @patch('app.cron.fetch_weekly.process_and_update_master_data')
+    @patch('app.cron.fetch_weekly.load_fhrsids_from_bq')
+    @patch('app.cron.fetch_weekly.fetch_data_for_all_coordinates')
+    def test_weekly_cron_touches_seen_probes_404_and_links_superseded(
+        self,
+        mock_fetch,
+        mock_load,
+        mock_process,
+        mock_append,
+        mock_touch,
+        mock_candidates,
+        mock_probe,
+        mock_mark_delisted,
+        mock_link,
+    ):
+        mock_fetch.return_value = [
+            {'FHRSID': '1906200', 'BusinessName': 'Costa Coffee', 'PostCode': 'SE6 4SP'}
+        ]
+        mock_load.return_value = {'1599285'}
+        mock_process.return_value = (
+            [{'FHRSID': '1906200', 'BusinessName': 'Costa Coffee', 'PostCode': 'SE6 4SP', 'first_seen': '2026-10-12'}],
+            {'1599285', '1906200'},
+            'Summary',
+        )
+        mock_candidates.return_value = ['1599285', '1012419']
+        mock_probe.return_value = {
+            '1599285': {'http_status': 404, 'payload': None},
+            '1012419': {'http_status': 200, 'payload': {'FHRSID': 1012419}},
+        }
+
+        fetch_weekly.run_sync_for_config({
+            'latitude': 51.5074,
+            'longitude': -0.1278,
+            'max_results': 5000,
+            'target_bq_table': 'p.d.t',
+            'radius': 5,
+        })
+
+        self.assertEqual(mock_touch.call_count, 2)
+        mock_candidates.assert_called_once()
+        mock_mark_delisted.assert_called_once()
+        self.assertEqual(mock_mark_delisted.call_args.args[:4], ('p', 'd', 't', ['1599285']))
+        mock_link.assert_called_once_with('p', 'd', 't', new_ids=['1906200'])
+
+    def test_compute_area_bbox_returns_lat_lon_bounds(self):
+        bbox = fetch_weekly.compute_area_bbox(51.5074, -0.1278, radius_km=5.0)
+        self.assertIsNotNone(bbox)
+        min_lat, max_lat, min_lon, max_lon = bbox
+        self.assertLess(min_lat, 51.5074)
+        self.assertGreater(max_lat, 51.5074)
+        self.assertLess(min_lon, -0.1278)
+        self.assertGreater(max_lon, -0.1278)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -535,5 +535,20 @@ class TestStage2TrainingAndModelFamilies:
         mock_gemini.assert_called_once()
         assert mock_gemini.call_args.kwargs['fhrsids'] == ['10']
 
+    @patch('scripts.train_bqml_model.bigquery.Client')
+    def test_training_select_keeps_delisted_ratings_while_preflight_excludes_delisted(self, mock_bq):
+        from scripts.train_bqml_model import build_training_select, run_jit_preflight
+
+        tree_sql = build_training_select('p', 'd', 'p.d.t', model_family='boosted_tree')
+        lin_sql = build_training_select('p', 'd', 'p.d.t', model_family='linear_reg')
+        assert "fsa_status" not in tree_sql
+        assert "fsa_status" not in lin_sql
+
+        client = _mock_client([])
+        run_jit_preflight(client, 'p', 'd', 't')
+        preflight_sql = client.query.call_args_list[0].args[0]
+        assert "m.fsa_status IS DISTINCT FROM 'delisted'" in preflight_sql
+
+
 
 

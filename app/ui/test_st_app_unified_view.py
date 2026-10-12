@@ -181,3 +181,27 @@ def test_sorting_priority_and_distance():
     assert list(sorted_d["fhrsid"]) == ["2", "3", "1"]
 
 
+def test_filter_delisted_hidden_by_default_and_shown_when_toggled():
+    from app.ui.st_app import ensure_fsa_status_badge_column, format_fsa_status_badge
+
+    df = pd.DataFrame([
+        {"fhrsid": "1906200", "businessname": "Costa Coffee", "fsa_status": "active", "superseded_by": None},
+        {"fhrsid": "1599285", "businessname": "Costa Coffee", "fsa_status": "delisted", "superseded_by": "1906200"},
+        {"fhrsid": "9999999", "businessname": "Old Bistro", "fsa_status": "delisted", "superseded_by": None},
+    ])
+    df_badged = ensure_fsa_status_badge_column(df)
+    assert list(df_badged["fsa_status_badge"]) == [
+        "✅ active",
+        "🔁 superseded by 1906200",
+        "🚫 closed",
+    ]
+    assert format_fsa_status_badge({"fsa_status": "delisted", "superseded_by": "1871661"}) == "🔁 superseded by 1871661"
+
+    active_only = filter_and_sort_restaurants(df_badged, include_delisted=False)
+    assert list(active_only["fhrsid"]) == ["1906200"]
+
+    all_rows = filter_and_sort_restaurants(df_badged, include_delisted=True)
+    assert set(all_rows["fhrsid"]) == {"1906200", "1599285", "9999999"}
+
+
+

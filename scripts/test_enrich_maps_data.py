@@ -247,3 +247,15 @@ def test_progress_callback_emits_every_10_rows_and_flushes_every_50_rows(mock_bq
     assert "(100/120 complete)" in merge_msgs[1]
     assert "(120/120 complete)" in merge_msgs[2]
 
+
+@patch('scripts.enrich_maps_data.bigquery.Client')
+def test_select_query_excludes_delisted_rows(mock_bq):
+    client = _mock_client([])
+    mock_bq.return_value = client
+
+    enrich_restaurants_by_fhrsid(fhrsids=['1599285'], force_regen=True)
+
+    select_sql = client.query.call_args_list[0].args[0]
+    assert "fsa_status IS DISTINCT FROM 'delisted'" in select_sql
+
+

@@ -529,4 +529,19 @@ class TestTwoStageHurdlePredictionRouting:
         assert 'MODEL `p.d.m_linear`' in merge_sql
         assert 'WHERE (m.in_scope = TRUE OR m.in_scope IS NULL)' in merge_sql
         assert 'AND (m.predicted_user_rating IS NOT NULL OR m.gemini_insights_structured IS NOT NULL)' in merge_sql
+        assert "AND m.fsa_status IS DISTINCT FROM 'delisted'" in merge_sql
+
+    def test_build_find_query_excludes_delisted_in_both_targeted_and_untargeted_modes(self):
+        from app.services.ml_prediction import build_find_query, build_prediction_input_select
+
+        targeted_find = build_find_query('p', 'd', 't', target_fhrsids=['1599285'])
+        untargeted_find = build_find_query('p', 'd', 't', target_fhrsids=None, limit=25)
+        targeted_pred = build_prediction_input_select('p', 'd', 'p.d.t', id_list_str="'1599285'")
+        untargeted_pred = build_prediction_input_select('p', 'd', 'p.d.t', id_list_str=None)
+
+        assert "m.fsa_status IS DISTINCT FROM 'delisted'" in targeted_find
+        assert "m.fsa_status IS DISTINCT FROM 'delisted'" in untargeted_find
+        assert "m.fsa_status IS DISTINCT FROM 'delisted'" in targeted_pred
+        assert "m.fsa_status IS DISTINCT FROM 'delisted'" in untargeted_pred
+
 

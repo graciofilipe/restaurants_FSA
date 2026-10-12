@@ -99,7 +99,7 @@ def enrich_restaurants_by_fhrsid(
     # and Phase 5 retired it in favour of a timestamp that says what it means.
     null_filter = "" if force_regen else "AND maps_lookup_at IS NULL"
 
-    query = f"SELECT fhrsid, BusinessName, PostCode, AddressLine1 FROM `{table_ref}` WHERE BusinessName IS NOT NULL {null_filter} {fhrsid_filter} LIMIT {limit}"
+    query = f"SELECT fhrsid, BusinessName, PostCode, AddressLine1 FROM `{table_ref}` WHERE BusinessName IS NOT NULL AND fsa_status IS DISTINCT FROM 'delisted' {null_filter} {fhrsid_filter} LIMIT {limit}"
     try:
         rows_to_update = list(_run_bq_query(client, query, timeout=bq_timeout))
     except Exception as e:

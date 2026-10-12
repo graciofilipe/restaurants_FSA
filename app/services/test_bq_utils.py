@@ -1295,3 +1295,114 @@ class TestSystemDiagnosticsAndFeatureImportance(unittest.TestCase):
         self.assertEqual(diag["linear_weights"][0]["feature"], "match_score")
 
 
+class TestFsaLivenessBqUtils(unittest.TestCase):
+    """Tests for `touch_seen_fhrsids`, `candidates_for_liveness_check`,
+    `mark_fhrsids_delisted`, `link_superseded`, and `include_delisted` in
+    `load_filtered_data_from_bq` / `execute_gemini_enrichment`."""
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_touch_seen_fhrsids_updates_last_seen_and_reactivates_delisted(self, mock_client_cls):
+        from app.services.bq_utils import touch_seen_fhrsids
+
+        mock_client = mock_client_cls.return_value
+        job = MagicMock()
+        job.num_dml_affected_rows = 2
+        mock_client.query.return_value = job
+
+        updated = touch_seen_fhrsids("p", "d", "t", ["101", "102"], today="2026-10-12")
+        self.assertEqual(updated, 2)
+        sql = mock_client.query.call_args.args[0]
+        self.assertIn("last_seen = @today", sql)
+        self.assertIn("fsa_status = 'active'", sql)
+        self.assertIn("delisted_at = NULL", sql)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_mark_fhrsids_delisted_sets_delisted_status_and_timestamp(self, mock_client_cls):
+        from app.services.bq_utils import mark_fhrsids_delisted
+
+        mock_client = mock_client_cls.return_value
+        job = MagicMock()
+        job.num_dml_affected_rows = 1
+        mock_client.query.return_value = job
+
+        updated = mark_fhrsids_delisted("p", "d", "t", ["1599285"], today="2026-10-12")
+        self.assertEqual(updated, 1)
+        sql = mock_client.query.call_args.args[0]
+        self.assertIn("fsa_status = 'delisted'", sql)
+        self.assertIn("delisted_at = COALESCE(T.delisted_at, @today)", sql)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_candidates_for_liveness_check_queries_unseen_active_rows_in_bbox(self, mock_client_cls):
+        from app.services.bq_utils import candidates_for_liveness_check
+
+        mock_client = mock_client_cls.return_value
+        job = MagicMock()
+        row1 = MagicMock()
+        row1.fhrsid = "1599285"
+        job.result.return_value = [row1]
+        mock_client.query.return_value = job
+
+        ids = candidates_for_liveness_check(
+            "p", "d", "t",
+            area_bbox=(51.4, 51.6, -0.2, 0.0),
+            today="2026-10-12",
+        )
+        self.assertEqual(ids, ["1599285"])
+        sql = mock_client.query.call_args.args[0]
+        self.assertIn("fsa_status IS DISTINCT FROM 'delisted'", sql)
+        self.assertIn("latitude BETWEEN @min_lat AND @max_lat", sql)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_link_superseded_enforces_delisted_to_active_100m_and_newest_rating_wins(self, mock_client_cls):
+        from app.services.bq_utils import link_superseded
+
+        mock_client = mock_client_cls.return_value
+        job_link = MagicMock()
+        job_link.num_dml_affected_rows = 3
+        job_carry = MagicMock()
+        job_carry.num_dml_affected_rows = 2
+        mock_client.query.side_effect = [job_link, job_carry]
+
+        linked = link_superseded("p", "d", "t", new_ids=["1906200", "1871661"])
+        self.assertEqual(linked, 3)
+        self.assertEqual(mock_client.query.call_count, 2)
+
+        link_sql = mock_client.query.call_args_list[0].args[0]
+        carry_sql = mock_client.query.call_args_list[1].args[0]
+
+        self.assertIn("D.fsa_status = 'delisted'", link_sql)
+        self.assertIn("A.fsa_status = 'active'", link_sql)
+        self.assertIn("ST_DISTANCE", link_sql)
+        self.assertIn("<= 100.0", link_sql)
+        self.assertIn("user_rating = CASE", carry_sql)
+        self.assertIn("S.d_rated_first_seen > T.first_seen", carry_sql)
+        self.assertIn("COALESCE(T.in_scope, S.d_in_scope)", carry_sql)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_load_filtered_data_from_bq_excludes_delisted_by_default_and_includes_when_requested(self, mock_client_cls):
+        from app.services.bq_utils import load_filtered_data_from_bq
+
+        mock_client = mock_client_cls.return_value
+        mock_job = MagicMock()
+        mock_job.result.return_value = []
+        mock_client.query.return_value = mock_job
+
+        load_filtered_data_from_bq("p", "d", "t", include_delisted=False)
+        sql_default = mock_client.query.call_args_list[0].args[0]
+        self.assertIn("fsa_status IS DISTINCT FROM 'delisted'", sql_default)
+
+        load_filtered_data_from_bq("p", "d", "t", include_delisted=True)
+        sql_included = mock_client.query.call_args_list[1].args[0]
+        self.assertNotIn("fsa_status IS DISTINCT FROM 'delisted'", sql_included)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_execute_gemini_enrichment_excludes_delisted_rows(self, mock_client_cls):
+        from app.services.bq_utils import execute_gemini_enrichment
+
+        mock_client = mock_client_cls.return_value
+        execute_gemini_enrichment("p", "d", "t", fhrsids=["123"])
+        sql_targeted = mock_client.query.call_args_list[0].args[0]
+        self.assertIn("fsa_status IS DISTINCT FROM 'delisted'", sql_targeted)
+
+
+

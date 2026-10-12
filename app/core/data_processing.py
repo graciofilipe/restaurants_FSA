@@ -90,13 +90,25 @@ def extract_fsa_coordinates(est: Dict[str, Any]) -> Tuple[Optional[float], Optio
     return _as_float('Latitude', 'latitude'), _as_float('Longitude', 'longitude')
 
 
+class _ProcessMasterResult(tuple):
+    """2-tuple `(new_records, summary_msg)` that also exposes `.seen_ids`."""
+
+    seen_ids: set
+
+
 def process_and_update_master_data(
-    master_data: Iterable[Any], api_data: Dict[str, Any], today_date: Optional[str] = None
-) -> Tuple[List[Dict[str, Any]], str]:
-    """Processes API data to identify newly added establishments.
+    master_data: Iterable[Any],
+    api_data: Dict[str, Any],
+    today_date: Optional[str] = None,
+    *,
+    return_seen_ids: bool = False,
+) -> Any:
+    """Processes API data to identify newly added establishments and seen FHRSIDs.
 
     `master_data` is whatever we already hold: either full rows or, from the
-    weekly cron, just the FHRSIDs.
+    weekly cron, just the FHRSIDs. By default returns `(new_records, summary_msg)`
+    as a `_ProcessMasterResult` with `.seen_ids` attached; when `return_seen_ids=True`,
+    returns `(new_records, seen_ids, summary_msg)`.
     """
     today_date = today_date or datetime.datetime.now().strftime("%Y-%m-%d")
     raw_ests = api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
@@ -119,10 +131,12 @@ def process_and_update_master_data(
 
     new_records = []
     processed_ids = set()
+    seen_ids = set()
     for est in api_ests:
         if isinstance(est, dict) and est.get('FHRSID') is not None:
             cid = normalize_fhrsid(est['FHRSID'])
             est['FHRSID'] = cid
+            seen_ids.add(cid)
             if cid not in existing_ids and cid not in processed_ids:
                 est['first_seen'] = today_date
                 est['latitude'], est['longitude'] = extract_fsa_coordinates(est)
@@ -136,7 +150,11 @@ def process_and_update_master_data(
         summary_msg = " ".join(messages)
     else:
         summary_msg = "Processed API response. No new restaurant records identified (or all were duplicates within the batch or already in BigQuery)."
-    return new_records, summary_msg
+    if return_seen_ids:
+        return new_records, seen_ids, summary_msg
+    res = _ProcessMasterResult((new_records, summary_msg))
+    res.seen_ids = seen_ids
+    return res
 
 def parse_bq_path(bq_path: str) -> Tuple[str, str, str]:
     """Parses 'project.dataset.table' format."""
