@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import requests
 
 from scripts.reconcile_fsa_liveness import (
+    build_candidates_query,
     build_carry_over_sql,
     build_link_superseded_sql,
     build_liveness_merge_sql,
@@ -282,3 +283,7 @@ def test_sql_builders_enforce_liveness_and_100m_rules():
     carry_sql = build_carry_over_sql("proj.ds.fsa_master", new_ids=["1956432"])
     assert "S.d_rated_first_seen > T.first_seen" in carry_sql
     assert "COALESCE(T.user_rating_10pt_backup, S.d_user_rating_10pt_backup)" in carry_sql
+
+    non_std_sql = build_candidates_query("proj.ds.fsa_master", only_non_standard_ratings=True)
+    assert "fsa_status IS DISTINCT FROM 'delisted'" in non_std_sql
+    assert "ratingvalue NOT IN ('1', '2', '3', '4', '5')" in non_std_sql

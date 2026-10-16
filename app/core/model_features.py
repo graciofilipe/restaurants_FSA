@@ -59,6 +59,7 @@ ENGINEERED_FEATURE_ALIASES: Tuple[str, ...] = (
     'branch_count_in_fsa',
     'enclave_vs_hype_ratio',
     'dine_in_table_service_score',
+    'is_awaiting_inspection',
 )
 
 # Generated, not listed: `is_feature` on a `PillarField` is what decides this.
@@ -174,12 +175,20 @@ def feature_select_list(master: str = 'm', demo: str = 'd', branch: str = 'b',
         if include_location
         else tuple(c for c in MASTER_COLUMNS if c not in LOCATION_FEATURE_ALIASES)
     )
-    lines = [f"{_INDENT}{master}.{column}" for column in master_cols]
+    lines = [
+        (
+            f"{_INDENT}SAFE_CAST({master}.ratingvalue AS INT64) AS ratingvalue"
+            if column == 'ratingvalue'
+            else f"{_INDENT}{master}.{column}"
+        )
+        for column in master_cols
+    ]
     lines.extend([
         f"{_INDENT}LOG10(GREATEST(COALESCE(SAFE_CAST({master}.maps_reviews AS FLOAT64), 0.0), 0.0) + 1.0) AS log_maps_reviews",
         f"{_INDENT}COALESCE({branch}.branch_count_in_fsa, 1) AS branch_count_in_fsa",
         f"{_INDENT}SAFE_DIVIDE(CAST(COALESCE({master}.pillar_community_score, 5) AS FLOAT64), LOG10(GREATEST(COALESCE(SAFE_CAST({master}.maps_reviews AS FLOAT64), 0.0), 0.0) + 10.0)) AS enclave_vs_hype_ratio",
         f"{_INDENT}(COALESCE(SAFE_CAST({master}.pillar_dining_pace AS FLOAT64), 3.0) * IF(COALESCE({master}.pillar_is_sit_down, FALSE), 1.0, 0.0)) AS dine_in_table_service_score",
+        f"{_INDENT}COALESCE({master}.ratingvalue = 'AwaitingInspection', FALSE) AS is_awaiting_inspection",
     ])
     profile_ref = f"{master}.{PROFILE_COLUMN}"
     for field in PILLAR_FIELDS:

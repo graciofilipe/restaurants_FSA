@@ -49,6 +49,22 @@ class TestFeatureList(unittest.TestCase):
                       'business_status', 'localauthorityname', 'imd_rank'):
             self.assertIn(alias, FEATURE_ALIASES, alias)
 
+    def test_ratingvalue_is_numeric_int64_plus_awaiting_inspection_boolean(self):
+        """`ratingvalue` in `fsa_master` is a STRING ('0'..'5', 'AwaitingInspection',
+        'Exempt'). Casting `ratingvalue` to INT64 gives BQML linear & tree models a
+        monotonic 0..5 hygiene scale (instead of independent one-hot string buckets
+        where 3 noisy rows gave `ratingvalue='0'` a +0.86 linear bonus), while
+        `is_awaiting_inspection` preserves the pre-inspection signal."""
+        sql = feature_select_list()
+        self.assertIn('SAFE_CAST(m.ratingvalue AS INT64) AS ratingvalue', sql)
+        self.assertIn(
+            "COALESCE(m.ratingvalue = 'AwaitingInspection', FALSE) AS is_awaiting_inspection",
+            sql,
+        )
+        self.assertIn('is_awaiting_inspection', ENGINEERED_FEATURE_ALIASES)
+        self.assertIn('is_awaiting_inspection', FEATURE_ALIASES)
+        self.assertIn('is_awaiting_inspection', TREE_FEATURE_ALIASES)
+
     def test_location_blind_feature_list_omits_borough_and_imd_rank(self):
         """Course 1b location-blind Boosted Tree omits `localauthorityname` and
         `imd_rank` while keeping all other 21 features."""

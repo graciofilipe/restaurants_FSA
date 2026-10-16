@@ -168,7 +168,21 @@ def run_sync_for_config(config: dict):
 
     # 6. Liveness reconciliation for this search area when API returned establishments
     if seen_ids:
-        touched = touch_seen_fhrsids(project_id, dataset_id, table_id, seen_ids, today=today_str)
+        api_rating_updates = {}
+        for est in all_api_establishments or []:
+            if isinstance(est, dict) and est.get("FHRSID") is not None:
+                fid_norm = normalize_fhrsid(est["FHRSID"])
+                rv = est.get("RatingValue")
+                nrp = est.get("NewRatingPending")
+                if rv is not None or nrp is not None:
+                    api_rating_updates[fid_norm] = {
+                        "ratingvalue": rv,
+                        "newratingpending": nrp,
+                    }
+        touch_kwargs = {"today": today_str}
+        if api_rating_updates:
+            touch_kwargs["rating_updates"] = api_rating_updates
+        touched = touch_seen_fhrsids(project_id, dataset_id, table_id, seen_ids, **touch_kwargs)
         logger.info(f"Touched last_seen={today_str} on {touched} active establishments.")
 
         radius_km = float(config.get("radius") or 5.0)
@@ -178,17 +192,28 @@ def run_sync_for_config(config: dict):
         )
         newly_delisted: List[str] = []
         still_live: List[str] = []
+        probe_rating_updates = {}
         if unseen_candidates:
             logger.info(f"Probing {len(unseen_candidates)} unseen active candidate(s) in search bbox...")
             probes = probe_establishments(unseen_candidates)
             for fid, info in probes.items():
-                status = info.get("http_status")
+                status = info.get("status_code") or info.get("http_status")
                 if status == 404:
                     newly_delisted.append(fid)
                 elif status == 200:
                     still_live.append(fid)
+                    rv = info.get("ratingvalue")
+                    nrp = info.get("newratingpending")
+                    if rv is not None or nrp is not None:
+                        probe_rating_updates[fid] = {
+                            "ratingvalue": rv,
+                            "newratingpending": nrp,
+                        }
             if still_live:
-                touch_seen_fhrsids(project_id, dataset_id, table_id, still_live, today=today_str)
+                live_kwargs = {"today": today_str}
+                if probe_rating_updates:
+                    live_kwargs["rating_updates"] = probe_rating_updates
+                touch_seen_fhrsids(project_id, dataset_id, table_id, still_live, **live_kwargs)
             if newly_delisted:
                 delisted_cnt = mark_fhrsids_delisted(
                     project_id, dataset_id, table_id, newly_delisted, today=today_str

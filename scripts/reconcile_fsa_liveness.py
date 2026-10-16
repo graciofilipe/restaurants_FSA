@@ -34,6 +34,7 @@ import datetime
 import math
 import subprocess
 import sys
+import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -261,16 +262,24 @@ def probe_establishments(
                 sess.close()
         return results
 
+    tls = threading.local()
+
+    def _worker_probe(fid: str) -> Dict[str, Any]:
+        sess = getattr(tls, "session", None)
+        if sess is None:
+            sess = requests.Session()
+            tls.session = sess
+        return probe_establishment(
+            fid,
+            session=sess,
+            retries=retries,
+            backoff=backoff,
+            timeout=timeout,
+        )
+
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         future_to_id = {
-            pool.submit(
-                probe_establishment,
-                fid,
-                None,
-                retries,
-                backoff,
-                timeout,
-            ): fid
+            pool.submit(_worker_probe, fid): fid
             for fid in unique_ids
         }
         for fut in as_completed(future_to_id):
@@ -462,6 +471,7 @@ def reconcile_in_memory(
 def build_candidates_query(
     bq_path: str,
     only_duplicates: bool = False,
+    only_non_standard_ratings: bool = False,
     fhrsids: Optional[Sequence[str]] = None,
 ) -> str:
     """Build SQL to select rows to probe for liveness."""
@@ -477,6 +487,11 @@ def build_candidates_query(
           HAVING COUNT(*) > 1
         )
         """
+    elif only_non_standard_ratings:
+        where_clause = """
+        WHERE fsa_status IS DISTINCT FROM 'delisted'
+          AND (ratingvalue IS NULL OR ratingvalue NOT IN ('1', '2', '3', '4', '5'))
+        """
     else:
         where_clause = ""
 
@@ -486,6 +501,32 @@ def build_candidates_query(
     {where_clause}
     ORDER BY businessname, postcode, first_seen, fhrsid
     """
+
+
+def _probe_structs_sql(
+    valid: Sequence[Dict[str, Any]],
+    today_str: str,
+) -> str:
+    structs: List[str] = []
+    for p in valid:
+        structs.append(
+            "STRUCT("
+            f"{_sql_literal(str(p['fhrsid']))} AS fhrsid, "
+            f"CAST({_sql_literal(p.get('status_code'))} AS INT64) AS status_code, "
+            f"{_sql_literal(p.get('fsa_status'))} AS fsa_status, "
+            f"CAST({_sql_literal(p.get('businessname'))} AS STRING) AS businessname, "
+            f"CAST({_sql_literal(p.get('addressline1'))} AS STRING) AS addressline1, "
+            f"CAST({_sql_literal(p.get('addressline2'))} AS STRING) AS addressline2, "
+            f"CAST({_sql_literal(p.get('addressline3'))} AS STRING) AS addressline3, "
+            f"CAST({_sql_literal(p.get('postcode'))} AS STRING) AS postcode, "
+            f"CAST({_sql_literal(p.get('ratingvalue'))} AS STRING) AS ratingvalue, "
+            f"CAST({_sql_literal(p.get('newratingpending'))} AS BOOL) AS newratingpending, "
+            f"CAST({_sql_literal(p.get('latitude'))} AS FLOAT64) AS latitude, "
+            f"CAST({_sql_literal(p.get('longitude'))} AS FLOAT64) AS longitude, "
+            f"DATE('{today_str}') AS checked_at"
+            ")"
+        )
+    return ",\n      ".join(structs)
 
 
 def build_staging_table_sql(
@@ -515,28 +556,25 @@ def build_staging_table_sql(
         FROM (SELECT 1) WHERE FALSE
         """
 
-    structs: List[str] = []
-    for p in valid:
-        structs.append(
-            "STRUCT("
-            f"{_sql_literal(str(p['fhrsid']))} AS fhrsid, "
-            f"CAST({_sql_literal(p.get('status_code'))} AS INT64) AS status_code, "
-            f"{_sql_literal(p.get('fsa_status'))} AS fsa_status, "
-            f"CAST({_sql_literal(p.get('businessname'))} AS STRING) AS businessname, "
-            f"CAST({_sql_literal(p.get('addressline1'))} AS STRING) AS addressline1, "
-            f"CAST({_sql_literal(p.get('addressline2'))} AS STRING) AS addressline2, "
-            f"CAST({_sql_literal(p.get('addressline3'))} AS STRING) AS addressline3, "
-            f"CAST({_sql_literal(p.get('postcode'))} AS STRING) AS postcode, "
-            f"CAST({_sql_literal(p.get('ratingvalue'))} AS STRING) AS ratingvalue, "
-            f"CAST({_sql_literal(p.get('newratingpending'))} AS BOOL) AS newratingpending, "
-            f"CAST({_sql_literal(p.get('latitude'))} AS FLOAT64) AS latitude, "
-            f"CAST({_sql_literal(p.get('longitude'))} AS FLOAT64) AS longitude, "
-            f"DATE('{today_str}') AS checked_at"
-            ")"
-        )
-    unnest_body = ",\n      ".join(structs)
+    unnest_body = _probe_structs_sql(valid, today_str)
     return f"""
     CREATE OR REPLACE TABLE `{staging_path}` AS
+    SELECT * FROM UNNEST([
+      {unnest_body}
+    ])
+    """
+
+
+def build_staging_insert_sql(
+    staging_path: str,
+    probe_results: Sequence[Dict[str, Any]],
+    today_str: str,
+) -> str:
+    """Build `INSERT INTO` SQL for subsequent staging chunks when >500 rows are probed."""
+    valid = [p for p in probe_results if p.get("fsa_status") in ("active", "delisted")]
+    unnest_body = _probe_structs_sql(valid, today_str)
+    return f"""
+    INSERT INTO `{staging_path}`
     SELECT * FROM UNNEST([
       {unnest_body}
     ])
@@ -830,7 +868,10 @@ def reconcile_fsa_liveness(
     bq_path: str = DEFAULT_BQ_PATH,
     execute: bool = False,
     only_duplicates: bool = False,
+    only_non_standard_ratings: bool = False,
     fhrsids: Optional[Sequence[str]] = None,
+    max_workers: int = 1,
+    sleep_seconds: float = 0.2,
 ) -> Dict[str, Any]:
     """Run liveness probing and (when `execute=True`) BigQuery MERGE + supersession."""
     parts = bq_path.split(".")
@@ -848,13 +889,18 @@ def reconcile_fsa_liveness(
     cand_sql = build_candidates_query(
         bq_path=bq_path,
         only_duplicates=only_duplicates,
+        only_non_standard_ratings=only_non_standard_ratings,
         fhrsids=fhrsids,
     )
     before_rows = [dict(r) for r in _run_query(client, project_id, cand_sql)]
     target_ids = [str(r["fhrsid"]) for r in before_rows if r.get("fhrsid") is not None]
-    print(f"Probing {len(target_ids)} FHRSID(s) on the FSA API...")
+    print(f"Probing {len(target_ids)} FHRSID(s) on the FSA API (max_workers={max_workers})...")
 
-    probe_map = probe_establishments(target_ids)
+    probe_map = probe_establishments(
+        target_ids,
+        max_workers=max_workers,
+        sleep_seconds=sleep_seconds,
+    )
     n_200 = sum(1 for p in probe_map.values() if p.get("status_code") == 200)
     n_404 = sum(1 for p in probe_map.values() if p.get("status_code") == 404)
     n_err = sum(1 for p in probe_map.values() if p.get("fsa_status") is None)
@@ -872,16 +918,32 @@ def reconcile_fsa_liveness(
             "after_rows": after_rows,
         }
 
-    staging_sql = build_staging_table_sql(staging_path, list(probe_map.values()), today_str)
-    _run_query(client, project_id, staging_sql)
+    all_probes = [
+        p for p in probe_map.values() if p.get("fsa_status") in ("active", "delisted")
+    ]
+    chunk_size = 500
+    if len(all_probes) <= chunk_size:
+        staging_sql = build_staging_table_sql(staging_path, list(probe_map.values()), today_str)
+        _run_query(client, project_id, staging_sql)
+    else:
+        first_chunk = all_probes[:chunk_size]
+        _run_query(client, project_id, build_staging_table_sql(staging_path, first_chunk, today_str))
+        for offset in range(chunk_size, len(all_probes), chunk_size):
+            chunk = all_probes[offset : offset + chunk_size]
+            _run_query(client, project_id, build_staging_insert_sql(staging_path, chunk, today_str))
 
     merge_sql = build_liveness_merge_sql(bq_path, staging_path, today_str)
     _run_query(client, project_id, merge_sql)
 
-    link_sql = build_link_superseded_sql(bq_path, new_ids=target_ids if (only_duplicates or fhrsids) else None)
+    scoped_ids = (
+        target_ids
+        if (only_duplicates or only_non_standard_ratings or fhrsids) and len(target_ids) <= chunk_size
+        else None
+    )
+    link_sql = build_link_superseded_sql(bq_path, new_ids=scoped_ids)
     _run_query(client, project_id, link_sql)
 
-    carry_sql = build_carry_over_sql(bq_path, new_ids=target_ids if (only_duplicates or fhrsids) else None)
+    carry_sql = build_carry_over_sql(bq_path, new_ids=scoped_ids)
     _run_query(client, project_id, carry_sql)
 
     # Also backfill coordinates from staging onto active rows that still lack latitude/longitude
@@ -897,7 +959,17 @@ def reconcile_fsa_liveness(
     """
     _run_query(client, project_id, coord_fill_sql)
 
-    after_sql = build_candidates_query(bq_path=bq_path, fhrsids=target_ids) if target_ids else cand_sql
+    if target_ids and len(target_ids) <= chunk_size:
+        after_sql = build_candidates_query(bq_path=bq_path, fhrsids=target_ids)
+    elif target_ids:
+        after_sql = f"""
+        SELECT *
+        FROM `{bq_path}`
+        WHERE fhrsid IN (SELECT fhrsid FROM `{staging_path}`)
+        ORDER BY businessname, postcode, first_seen, fhrsid
+        """
+    else:
+        after_sql = cand_sql
     after_rows = [dict(r) for r in _run_query(client, project_id, after_sql)]
     print_reconciliation_report(before_rows, after_rows, mode_label="EXECUTED")
 
@@ -943,9 +1015,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Only check rows belonging to name+postcode duplicate groups.",
     )
     parser.add_argument(
+        "--only-non-standard-ratings",
+        action="store_true",
+        help="Only check active rows whose ratingvalue is NULL or not in ('1','2','3','4','5') (e.g. '0', 'AwaitingInspection', 'Exempt').",
+    )
+    parser.add_argument(
         "--fhrsids",
         default=None,
         help="Optional comma-separated list of FHRSIDs to probe and reconcile.",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=1,
+        help="Number of concurrent threads for FSA API probing (default: 1).",
+    )
+    parser.add_argument(
+        "--sleep-seconds",
+        type=float,
+        default=0.2,
+        help="Sleep seconds between sequential probes when max_workers=1 (default: 0.2).",
     )
     args = parser.parse_args(argv)
 
@@ -957,7 +1046,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         bq_path=args.bq_path,
         execute=bool(args.execute),
         only_duplicates=bool(args.only_duplicates),
+        only_non_standard_ratings=bool(args.only_non_standard_ratings),
         fhrsids=fhrsids_list,
+        max_workers=int(args.max_workers),
+        sleep_seconds=float(args.sleep_seconds),
     )
     return 0
 

@@ -1350,7 +1350,29 @@ class TestFsaLivenessBqUtils(unittest.TestCase):
         self.assertEqual(ids, ["1599285"])
         sql = mock_client.query.call_args.args[0]
         self.assertIn("fsa_status IS DISTINCT FROM 'delisted'", sql)
+        self.assertIn("ratingvalue NOT IN ('1', '2', '3', '4', '5')", sql)
         self.assertIn("latitude BETWEEN @min_lat AND @max_lat", sql)
+
+    @patch('app.services.bq_utils.bigquery.Client')
+    def test_touch_seen_fhrsids_refreshes_ratingvalue_when_rating_updates_provided(self, mock_client_cls):
+        from app.services.bq_utils import touch_seen_fhrsids
+
+        mock_client = mock_client_cls.return_value
+        job = MagicMock()
+        job.num_dml_affected_rows = 1
+        mock_client.query.return_value = job
+
+        updated = touch_seen_fhrsids(
+            "p", "d", "t",
+            ["150858"],
+            today="2026-10-16",
+            rating_updates={"150858": {"ratingvalue": "4", "newratingpending": False}},
+        )
+        self.assertEqual(updated, 1)
+        sql = mock_client.query.call_args.args[0]
+        self.assertIn("ratingvalue = COALESCE(S.ratingvalue, T.ratingvalue)", sql)
+        self.assertIn("newratingpending = COALESCE(S.newratingpending, T.newratingpending)", sql)
+        self.assertIn("'150858' AS fhrsid, '4' AS ratingvalue, FALSE AS newratingpending", sql)
 
     @patch('app.services.bq_utils.bigquery.Client')
     def test_link_superseded_enforces_delisted_to_active_100m_and_newest_rating_wins(self, mock_client_cls):

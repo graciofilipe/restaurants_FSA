@@ -874,30 +874,68 @@ def touch_seen_fhrsids(
     table_id: str,
     ids: Iterable[str],
     today: Optional[str] = None,
+    rating_updates: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> int:
-    """Single parameterized MERGE updating `last_seen = @today, fsa_status = 'active', delisted_at = NULL`."""
+    """Single parameterized MERGE updating `last_seen = @today, fsa_status = 'active', delisted_at = NULL`
+    (and optionally refreshing `ratingvalue` / `newratingpending` when `rating_updates` is provided)."""
     clean_ids = sorted({str(fid).strip() for fid in ids if fid is not None and str(fid).strip()})
     if not clean_ids:
         return 0
     today_str = today or datetime.date.today().strftime("%Y-%m-%d")
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
-    sql = f"""
-    MERGE `{table_ref}` AS T
-    USING (SELECT id AS fhrsid FROM UNNEST(@ids) AS id) AS S
-    ON T.fhrsid = S.fhrsid
-    WHEN MATCHED THEN
-      UPDATE SET
-        last_seen = @today,
-        fsa_status = 'active',
-        delisted_at = NULL
-    """
     client = bigquery.Client(project=project_id)
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ArrayQueryParameter("ids", "STRING", clean_ids),
-            bigquery.ScalarQueryParameter("today", "DATE", today_str),
-        ]
-    )
+
+    if rating_updates:
+        structs: List[str] = []
+        for fid in clean_ids:
+            upd = rating_updates.get(fid) or {}
+            rv = upd.get("ratingvalue")
+            nrp = upd.get("newratingpending")
+            rv_sql = _sql_quote(str(rv).strip()) if rv is not None and str(rv).strip() else "CAST(NULL AS STRING)"
+            if isinstance(nrp, bool):
+                nrp_sql = "TRUE" if nrp else "FALSE"
+            elif isinstance(nrp, str) and nrp.strip().lower() in ("true", "false"):
+                nrp_sql = "TRUE" if nrp.strip().lower() == "true" else "FALSE"
+            else:
+                nrp_sql = "CAST(NULL AS BOOL)"
+            structs.append(
+                f"STRUCT({_sql_quote(fid)} AS fhrsid, {rv_sql} AS ratingvalue, {nrp_sql} AS newratingpending)"
+            )
+        unnest_sql = ", ".join(structs)
+        sql = f"""
+        MERGE `{table_ref}` AS T
+        USING (SELECT * FROM UNNEST([{unnest_sql}])) AS S
+        ON T.fhrsid = S.fhrsid
+        WHEN MATCHED THEN
+          UPDATE SET
+            last_seen = @today,
+            fsa_status = 'active',
+            delisted_at = NULL,
+            ratingvalue = COALESCE(S.ratingvalue, T.ratingvalue),
+            newratingpending = COALESCE(S.newratingpending, T.newratingpending)
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("today", "DATE", today_str),
+            ]
+        )
+    else:
+        sql = f"""
+        MERGE `{table_ref}` AS T
+        USING (SELECT id AS fhrsid FROM UNNEST(@ids) AS id) AS S
+        ON T.fhrsid = S.fhrsid
+        WHEN MATCHED THEN
+          UPDATE SET
+            last_seen = @today,
+            fsa_status = 'active',
+            delisted_at = NULL
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("ids", "STRING", clean_ids),
+                bigquery.ScalarQueryParameter("today", "DATE", today_str),
+            ]
+        )
     job = client.query(sql, job_config=job_config)
     _wait_for_job(job, timeout=GEMINI_BQ_TIMEOUT_SECONDS)
     affected = getattr(job, "num_dml_affected_rows", None)
@@ -911,7 +949,8 @@ def candidates_for_liveness_check(
     area_bbox: Tuple[float, float, float, float],
     today: Optional[str] = None,
 ) -> List[str]:
-    """Return active FHRSIDs inside `area_bbox = (min_lat, max_lat, min_lon, max_lon)` not seen on `@today`."""
+    """Return active FHRSIDs inside `area_bbox = (min_lat, max_lat, min_lon, max_lon)` not seen on `@today`
+    or carrying a non-standard rating (`NULL`, `'0'`, `'AwaitingInspection'`, `'Exempt'`)."""
     min_lat, max_lat, min_lon, max_lon = (float(x) for x in area_bbox)
     today_str = today or datetime.date.today().strftime("%Y-%m-%d")
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
@@ -919,7 +958,12 @@ def candidates_for_liveness_check(
     SELECT fhrsid
     FROM `{table_ref}`
     WHERE fsa_status IS DISTINCT FROM 'delisted'
-      AND (last_seen IS NULL OR last_seen < @today)
+      AND (
+        last_seen IS NULL
+        OR last_seen < @today
+        OR ratingvalue IS NULL
+        OR ratingvalue NOT IN ('1', '2', '3', '4', '5')
+      )
       AND latitude IS NOT NULL
       AND longitude IS NOT NULL
       AND latitude BETWEEN @min_lat AND @max_lat
