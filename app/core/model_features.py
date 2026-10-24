@@ -110,7 +110,7 @@ def is_stage1_gated_sql(master: str = 'm', branch: str = 'b') -> str:
     the Two-Stage Hurdle): out-of-scope rows, takeaways/counters, non-restaurant
     establishment types, or chains with >= 5 branches in `fsa_master`."""
     return (
-        f"(COALESCE({master}.in_scope, FALSE) IS FALSE "
+        f"(COALESCE({master}.in_scope, TRUE) IS FALSE "
         f"OR COALESCE({master}.pillar_is_sit_down, FALSE) IS FALSE "
         f"OR COALESCE({master}.pillar_establishment_type, '') != 'RESTAURANT_DINING' "
         f"OR COALESCE({branch}.branch_count_in_fsa, 1) >= 5)"

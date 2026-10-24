@@ -52,7 +52,7 @@ def build_prediction_input_select(project_id: str, dataset_id: str, table_ref: s
         if id_list_str
         else (
             "WHERE (m.in_scope = TRUE OR m.in_scope IS NULL) "
-            "AND (m.predicted_user_rating IS NOT NULL OR m.gemini_insights_structured IS NOT NULL) "
+            "AND m.gemini_insights_structured IS NOT NULL "
             "AND m.fsa_status IS DISTINCT FROM 'delisted'"
         )
     )
@@ -165,7 +165,7 @@ def build_find_query(project_id: str, dataset_id: str, table_id: str,
               AND m.fsa_status IS DISTINCT FROM 'delisted'
         '''
     return f'''{projection}
-            WHERE (m.in_scope = TRUE OR m.in_scope IS NULL) AND m.user_rating IS NULL AND m.predicted_user_rating IS NULL AND m.BusinessName IS NOT NULL AND m.fsa_status IS DISTINCT FROM 'delisted'
+            WHERE (m.in_scope = TRUE OR m.in_scope IS NULL) AND m.user_rating IS NULL AND (m.predicted_user_rating IS NULL OR m.gemini_insights_structured IS NULL) AND m.BusinessName IS NOT NULL AND m.fsa_status IS DISTINCT FROM 'delisted'
             LIMIT {limit}
         '''
 

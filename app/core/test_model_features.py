@@ -167,7 +167,7 @@ class TestStage1AndStage2SqlHelpers(unittest.TestCase):
 
     def test_stage1_gate_checks_scope_sit_down_type_and_branches(self):
         sql = is_stage1_gated_sql('m', 'b')
-        self.assertIn('m.in_scope', sql)
+        self.assertIn('COALESCE(m.in_scope, TRUE) IS FALSE', sql)
         self.assertIn('m.pillar_is_sit_down', sql)
         self.assertIn("!= 'RESTAURANT_DINING'", sql)
         self.assertIn('b.branch_count_in_fsa, 1) >= 5', sql)
