@@ -162,3 +162,12 @@ class TestMergeWritesTypedColumns:
         KeyError mid-enrichment, after the AI.GENERATE call has been paid for."""
         assert sql_json_object_regex(for_format_template=True) in SCRIPT_MERGE_INSIGHTS
         assert sql_json_object_regex() not in SCRIPT_MERGE_INSIGHTS
+
+    def test_untriaged_in_scope_auto_resolves_from_pillar_6_without_overwriting_triage(self):
+        """When `T.in_scope` is NULL, `SCRIPT_MERGE_INSIGHTS` auto-resolves it
+        from Pillar 6 (`is_sit_down_restaurant IS TRUE AND type = 'RESTAURANT_DINING'`)
+        while preserving any existing human triage (`T.in_scope IS NOT NULL`)."""
+        assert 'T.in_scope = IF(' in SCRIPT_MERGE_INSIGHTS
+        assert 'T.in_scope IS NOT NULL' in SCRIPT_MERGE_INSIGHTS
+        assert "'RESTAURANT_DINING'" in SCRIPT_MERGE_INSIGHTS
+

@@ -7,6 +7,7 @@ import pandas as pd
 from typing import List, Set, Tuple
 
 from app.core.data_processing import (
+    extract_fsa_coordinates,
     normalize_fhrsid,
     parse_coordinates,
     fetch_data_for_all_coordinates,
@@ -66,10 +67,19 @@ def _unpack_process_result(res, all_api_establishments) -> Tuple[List[dict], Set
 
 
 def get_config_params() -> List[dict]:
-    """Reads configuration parameters from BigQuery."""
+    """Reads deduplicated configuration parameters from BigQuery."""
     client = bigquery.Client(project=PROJECT_ID)
     table_ref = f"{PROJECT_ID}.{DATASET_ID}.{CONFIG_TABLE_ID}"
-    query = f"SELECT * FROM `{table_ref}`"
+    query = f"""
+    SELECT
+      ANY_VALUE(latitude) AS latitude,
+      ANY_VALUE(longitude) AS longitude,
+      max_results,
+      COALESCE(radius, 5.0) AS radius,
+      target_bq_table
+    FROM `{table_ref}`
+    GROUP BY ROUND(latitude, 4), ROUND(longitude, 4), max_results, COALESCE(radius, 5.0), target_bq_table
+    """
     
     logger.info(f"Reading config from {table_ref}")
     try:
@@ -174,10 +184,13 @@ def run_sync_for_config(config: dict):
                 fid_norm = normalize_fhrsid(est["FHRSID"])
                 rv = est.get("RatingValue")
                 nrp = est.get("NewRatingPending")
-                if rv is not None or nrp is not None:
+                est_lat, est_lon = extract_fsa_coordinates(est)
+                if rv is not None or nrp is not None or est_lat is not None or est_lon is not None:
                     api_rating_updates[fid_norm] = {
                         "ratingvalue": rv,
                         "newratingpending": nrp,
+                        "latitude": est_lat,
+                        "longitude": est_lon,
                     }
         touch_kwargs = {"today": today_str}
         if api_rating_updates:

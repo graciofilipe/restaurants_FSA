@@ -1659,14 +1659,25 @@ def main():
                 if "in_scope" in df_candidates.columns:
                     df_candidates = df_candidates[df_candidates["in_scope"] != False]
 
+                pred_na = (
+                    df_candidates["predicted_user_rating"].isna()
+                    if "predicted_user_rating" in df_candidates.columns
+                    else pd.Series(True, index=df_candidates.index)
+                )
+                prof_col = (
+                    "gemini_profiled_at"
+                    if "gemini_profiled_at" in df_candidates.columns
+                    else ("gemini_insights_structured" if "gemini_insights_structured" in df_candidates.columns else None)
+                )
+                prof_na = df_candidates[prof_col].isna() if prof_col else pd.Series(False, index=df_candidates.index)
+                is_unscored_candidate = pred_na | prof_na
+
                 if target_mode == "Unscored Candidates Only":
-                    if "predicted_user_rating" in df_candidates.columns:
-                        df_candidates = df_candidates[df_candidates["predicted_user_rating"].isna()]
+                    df_candidates = df_candidates[is_unscored_candidate]
                     if "user_rating" in df_candidates.columns:
                         df_candidates = df_candidates[df_candidates["user_rating"].isna()]
                 elif target_mode == "Stale Rescores Only":
-                    if "predicted_user_rating" in df_candidates.columns:
-                        df_candidates = df_candidates[df_candidates["predicted_user_rating"].notna()]
+                    df_candidates = df_candidates[~is_unscored_candidate]
                     if "user_rating" in df_candidates.columns:
                         df_candidates = df_candidates[df_candidates["user_rating"].isna()]
 

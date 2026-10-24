@@ -219,6 +219,10 @@ _TYPED_COLUMN_ASSIGNMENTS = ",\n    ".join(
     f"T.{field.column} = {sql_extract(field, 'S.gemini_insights', for_format_template=True)}"
     for field in PILLAR_FIELDS
 )
+_IS_SIT_DOWN_FIELD = next(f for f in PILLAR_FIELDS if f.column == "pillar_is_sit_down")
+_EST_TYPE_FIELD = next(f for f in PILLAR_FIELDS if f.column == "pillar_establishment_type")
+_IS_SIT_DOWN_SQL = sql_extract(_IS_SIT_DOWN_FIELD, "S.gemini_insights", for_format_template=True)
+_EST_TYPE_SQL = sql_extract(_EST_TYPE_FIELD, "S.gemini_insights", for_format_template=True)
 
 SCRIPT_MERGE_INSIGHTS = """
 MERGE `{project_id}.{dataset_id}.{target_table_master}` T
@@ -228,6 +232,15 @@ WHEN MATCHED AND S.gemini_insights IS NOT NULL THEN
   UPDATE SET
     T.gemini_insights_structured = S.gemini_insights,
     T.gemini_profiled_at = CURRENT_TIMESTAMP(),
+    T.in_scope = IF(
+      T.in_scope IS NOT NULL,
+      T.in_scope,
+      IF(
+        """ + _EST_TYPE_SQL + """ IS NULL,
+        NULL,
+        (""" + _IS_SIT_DOWN_SQL + """ IS TRUE AND """ + _EST_TYPE_SQL + """ = 'RESTAURANT_DINING')
+      )
+    ),
     """ + _TYPED_COLUMN_ASSIGNMENTS + """
 """
 

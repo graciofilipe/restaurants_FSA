@@ -76,6 +76,8 @@ adk eval app tests/eval/evalsets/restaurant_eval.evalset.json
 *   **Code Simplification & Cleanliness:** Avoid redundant boilerplate, verbose duplicate logging, and root-level scratch files. Keep scripts and services modular and concise.
 *   **FastAPI & Telemetry Resiliency:** Local test suites execute with `INTEGRATION_TEST=TRUE` to disable live Cloud Trace network roundtrips, while Cloud Run uses full OpenTelemetry tracing.
 *   **BigQuery Schemas & Column Sanitization:** Explicit schemas are defined in `bq_utils.py`. Strict column sanitization (`sanitize_column_name`) ensures BigQuery compatibility.
+*   **Pipeline Queue Sentinels & Stage-1 Gating Invariants:** Never stamp `predicted_user_rating` on unprofiled rows (`gemini_insights_structured IS NULL`), as a non-null fallback score (`1.00`) hides unprocessed rows from `WHERE predicted_user_rating IS NULL` queues. Untriaged (`in_scope IS NULL`) rows must auto-resolve `in_scope` when `SCRIPT_MERGE_INSIGHTS` merges Pillar 6 (`is_sit_down_restaurant AND type = 'RESTAURANT_DINING'`) and must not be Stage-1 capped prior to profiling.
+*   **Grounded `AI.GENERATE` Batching:** Keep grounded `AI.GENERATE` (Google Search + Maps tools) batches at `<= 15` rows per query; for large backfills, fan out `10–15` row chunks into isolated temporary tables and run a single consolidated `MERGE` into `fsa_master` to avoid timeouts and BigQuery DML lock contention.
 
 ## Cloud Deployment
 The application is deployed to Google Cloud Run via Cloud Build.

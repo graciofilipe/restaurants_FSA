@@ -24,8 +24,8 @@ from scripts.bq_scripts import (
 
 logger = logging.getLogger(__name__)
 
-GEMINI_ENRICHMENT_BATCH_SIZE = 25
-GEMINI_BQ_TIMEOUT_SECONDS = 180.0
+GEMINI_ENRICHMENT_BATCH_SIZE = 15
+GEMINI_BQ_TIMEOUT_SECONDS = 240.0
 
 # The fields the weekly ingest copies out of an FSA establishment. Flat keys
 # only -- `process_and_update_master_data` copies by key, so `latitude` and
@@ -891,6 +891,8 @@ def touch_seen_fhrsids(
             upd = rating_updates.get(fid) or {}
             rv = upd.get("ratingvalue")
             nrp = upd.get("newratingpending")
+            lat_val = upd.get("latitude")
+            lon_val = upd.get("longitude")
             rv_sql = _sql_quote(str(rv).strip()) if rv is not None and str(rv).strip() else "CAST(NULL AS STRING)"
             if isinstance(nrp, bool):
                 nrp_sql = "TRUE" if nrp else "FALSE"
@@ -898,8 +900,18 @@ def touch_seen_fhrsids(
                 nrp_sql = "TRUE" if nrp.strip().lower() == "true" else "FALSE"
             else:
                 nrp_sql = "CAST(NULL AS BOOL)"
+            lat_sql = (
+                f"CAST({float(lat_val)} AS FLOAT64)"
+                if isinstance(lat_val, (int, float)) and not isinstance(lat_val, bool)
+                else "CAST(NULL AS FLOAT64)"
+            )
+            lon_sql = (
+                f"CAST({float(lon_val)} AS FLOAT64)"
+                if isinstance(lon_val, (int, float)) and not isinstance(lon_val, bool)
+                else "CAST(NULL AS FLOAT64)"
+            )
             structs.append(
-                f"STRUCT({_sql_quote(fid)} AS fhrsid, {rv_sql} AS ratingvalue, {nrp_sql} AS newratingpending)"
+                f"STRUCT({_sql_quote(fid)} AS fhrsid, {rv_sql} AS ratingvalue, {nrp_sql} AS newratingpending, {lat_sql} AS latitude, {lon_sql} AS longitude)"
             )
         unnest_sql = ", ".join(structs)
         sql = f"""
@@ -912,7 +924,9 @@ def touch_seen_fhrsids(
             fsa_status = 'active',
             delisted_at = NULL,
             ratingvalue = COALESCE(S.ratingvalue, T.ratingvalue),
-            newratingpending = COALESCE(S.newratingpending, T.newratingpending)
+            newratingpending = COALESCE(S.newratingpending, T.newratingpending),
+            latitude = COALESCE(T.latitude, S.latitude),
+            longitude = COALESCE(T.longitude, S.longitude)
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[

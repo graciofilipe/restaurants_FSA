@@ -988,6 +988,7 @@ class TestGeminiChunkingTimeoutsAndMergeGate(unittest.TestCase):
             dataset_id='d',
             master_table_id='t',
             fhrsids=[str(i) for i in range(20)],
+            batch_size=20,
         )
         self.assertFalse(ok)
 
@@ -1010,6 +1011,7 @@ class TestGeminiChunkingTimeoutsAndMergeGate(unittest.TestCase):
             dataset_id='d',
             master_table_id='t',
             fhrsids=[str(i) for i in range(20)],
+            batch_size=20,
         )
         self.assertTrue(ok)
 
@@ -1366,13 +1368,17 @@ class TestFsaLivenessBqUtils(unittest.TestCase):
             "p", "d", "t",
             ["150858"],
             today="2026-10-16",
-            rating_updates={"150858": {"ratingvalue": "4", "newratingpending": False}},
+            rating_updates={"150858": {"ratingvalue": "4", "newratingpending": False, "latitude": 51.4184, "longitude": -0.083}},
         )
         self.assertEqual(updated, 1)
         sql = mock_client.query.call_args.args[0]
         self.assertIn("ratingvalue = COALESCE(S.ratingvalue, T.ratingvalue)", sql)
         self.assertIn("newratingpending = COALESCE(S.newratingpending, T.newratingpending)", sql)
+        self.assertIn("latitude = COALESCE(T.latitude, S.latitude)", sql)
+        self.assertIn("longitude = COALESCE(T.longitude, S.longitude)", sql)
         self.assertIn("'150858' AS fhrsid, '4' AS ratingvalue, FALSE AS newratingpending", sql)
+        self.assertIn("CAST(51.4184 AS FLOAT64) AS latitude", sql)
+        self.assertIn("CAST(-0.083 AS FLOAT64) AS longitude", sql)
 
     @patch('app.services.bq_utils.bigquery.Client')
     def test_link_superseded_enforces_delisted_to_active_100m_and_newest_rating_wins(self, mock_client_cls):

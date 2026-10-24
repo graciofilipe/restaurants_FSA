@@ -302,6 +302,55 @@ class TestLivenessInWeeklyCron(unittest.TestCase):
         self.assertLess(min_lon, -0.1278)
         self.assertGreater(max_lon, -0.1278)
 
+    @patch('app.cron.fetch_weekly.bigquery.Client')
+    def test_get_config_params_deduplicates_search_anchors(self, mock_client_cls):
+        mock_client = mock_client_cls.return_value
+        mock_job = MagicMock()
+        mock_job.result.return_value = [
+            {'latitude': 51.4189, 'longitude': -0.0715, 'max_results': 5000, 'radius': 5.0, 'target_bq_table': 'p.d.t'}
+        ]
+        mock_client.query.return_value = mock_job
+
+        rows = fetch_weekly.get_config_params()
+
+        self.assertEqual(len(rows), 1)
+        sql = mock_client.query.call_args.args[0]
+        self.assertIn("GROUP BY ROUND(latitude, 4), ROUND(longitude, 4)", sql)
+
+    @patch('app.cron.fetch_weekly.candidates_for_liveness_check', return_value=[])
+    @patch('app.cron.fetch_weekly.touch_seen_fhrsids', return_value=1)
+    @patch('app.cron.fetch_weekly.process_and_update_master_data')
+    @patch('app.cron.fetch_weekly.load_fhrsids_from_bq')
+    @patch('app.cron.fetch_weekly.fetch_data_for_all_coordinates')
+    def test_weekly_cron_passes_geocode_coordinates_into_rating_updates(
+        self, mock_fetch, mock_load, mock_process, mock_touch, mock_candidates
+    ):
+        mock_fetch.return_value = [
+            {
+                'FHRSID': '150858',
+                'BusinessName': 'Domali',
+                'RatingValue': '5',
+                'NewRatingPending': False,
+                'Geocode': {'Latitude': '51.4184', 'Longitude': '-0.0830'},
+            }
+        ]
+        mock_load.return_value = {'150858'}
+        mock_process.return_value = ([], {'150858'}, 'Summary')
+
+        fetch_weekly.run_sync_for_config({
+            'latitude': 51.4189,
+            'longitude': -0.0715,
+            'max_results': 5000,
+            'target_bq_table': 'p.d.t',
+            'radius': 5,
+        })
+
+        mock_touch.assert_called_once()
+        rating_updates = mock_touch.call_args.kwargs['rating_updates']
+        self.assertAlmostEqual(rating_updates['150858']['latitude'], 51.4184)
+        self.assertAlmostEqual(rating_updates['150858']['longitude'], -0.0830)
+
+
 
 if __name__ == '__main__':
     unittest.main()
