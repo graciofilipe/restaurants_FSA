@@ -4,7 +4,7 @@
 
 Build a feature in the Streamlit application that allows the user to trigger the BigQuery ML (`train_bqml_model`) training pipeline directly from the UI. The training process should automatically use all restaurants that have an assigned `user_rating` as the training data.
 
-Working directory: /usr/local/google/home/filipegracio/restaurants/restaurants_FSA
+Working directory: /usr/local/google/home/filipegracio/Personal/dining_out/restaurants/restaurants_FSA
 
 ## Requirements
 
