@@ -20,6 +20,7 @@ Do the full culinary-science, fermentation, and native-language menu archaeology
 1. **Menus & Pricing**: Search official site + delivery apps (`site:deliveroo.co.uk OR site:ubereats.com OR site:hungrypanda.co OR site:just-eat.co.uk`) to compare dine-in vs delivery prices and reconstruct the full dish list.
 2. **Reviews & Food Press**: Search Google Reviews, Reddit (`r/LondonFood`), *Time Out*, *Vittles*, and *Eater* for standout dishes.
 3. **Native-Language & Culinary Science**: Search native-script dish terms and diaspora reviews to uncover regional lineage, day-of-week specials, traditional techniques, and whole-food/fermentation profile.
+4. **The "Unique and Health-Leaning" Balance**: First isolate what is genuinely unique, regional, special, different, and harder to find compared to generic and regional competitors. Then, within those special dishes, select and highlight the **health-leaning options and preparations** (steamed, poached, grilled, broth-simmered, or spice-braised; low in refined sugar and fryer oil) across both lean marine/poultry and vegetarian/plant-protein dishes—including the healthiest preparation of foundational regional ferments (such as tempeh, tofu, or legumes).
 
 ---
 
@@ -38,14 +39,15 @@ Do the full culinary-science, fermentation, and native-language menu archaeology
 
 #### What Would I Order? (`Uniqueness: XX/100`)
 
-##### Top 5 Unique Dishes (1 Single Bullet Per Dish — Max 25 Words Each)
-1. **`English Name`** (`Native Script` — £Price): Why it's rare in the UK + flavor, texture, and whole-food/fermentation takeaway.
-2. *(Repeat for 5 dishes, strictly excluding common UK high-street baseline dishes).*
+##### 1. What to skip or modify (top guardrail — place first)
+- **Generic high-street staples and over-ordered defaults**: Common dishes available anywhere else that waste appetite.
+- **High-sugar glazes and hidden Stage 2 fryer traps**: Dishes to skip or swap for a healthier regional preparation.
 
-##### Feast for 2 (F&A) Blueprint (4 One-Line Bullets)
-- **Opener**: ...
-- **Centerpiece**: ...
-- **Fibre & Starch**: ...
-- **Tip & Finish**: ...
-- **Skip**: 1 single comma-separated line of generic filler/pander traps on this menu.
+##### 2. Unique and health-leaning fish and poultry highlights
+- **`Dish Name`** (£Price · Region · Cooking/Dietary Tags)
+  - **What it is**: Maximum 2 sentences on ingredients, regional technique, and health-leaning cooking method.
+  - **What makes it unique**: 1 single sentence on why it is rare, special, and worth ordering here vs. other restaurants.
+
+##### 3. Unique vegetarian, plant-based, and regional egg highlights
+- *(Same 2-sentence "What it is" and 1-sentence "What makes it unique" format, covering rare regional greens, slow-braised eggs, and the healthiest version of foundational ferments and plant proteins).*
 ```
